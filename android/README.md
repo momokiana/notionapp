@@ -4,6 +4,8 @@ Kotlin 2.1.20 / Compose / Material3；minSdk 26，target/compile 35；AGP 8.9.1�
 
 当前为作者独立冻结的59项 android-001 源码：namespace隔离的本机回应草稿、联网重新核对/确认，以及本机快捷回复。交接报告同一独审限定 FINAL PASS；范围、审查哈希、作者/独审/发布者各自验证和源/公开哈希见 [本次增量](../docs/releases/android-001.md)。**不含 android-002 缓存窗口/容量后续功能，也不是物理设备或生产验收。**
 
+> **已知缓存隔离限制：当前001及既有缓存的分页GET沿用“每页临时取当前凭据、末尾才核namespace”的旧模式。跨owner A→B→A并发切换不在001限定PASS/111项测试已验证范围内，不能据末尾namespace相同宣称整轮缓存读取隔离安全。** 002后继缓存隔离修复尚未整体最终通过，也未导入本公开源码；原有PASS与旧BLOCK历史不迁签。详见 [范围更正](../docs/releases/android-001.md)。
+
 ## 构建
 
 准备 JDK 17、Android SDK platform 35 / build-tools 35.0.0，设置 `JAVA_HOME`、`ANDROID_HOME`，或在不提交的 `local.properties` 配置 `sdk.dir`。
