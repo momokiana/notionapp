@@ -1,0 +1,3 @@
+# Preserve upstream Windows launcher bytes and official wrapper checksum.
+android/gradlew.bat -text whitespace=cr-at-eol
+*.jar binary

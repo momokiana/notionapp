@@ -1,0 +1,19 @@
+Third-party notices only. This is not a license grant for the application itself; its project license remains undecided.
+
+UnifiedPush android-connector 2.4.0
+https://github.com/UnifiedPush/android-connector
+Published artifact: com.github.UnifiedPush:android-connector:2.4.0 (JitPack)
+License: Apache License, Version 2.0 (declared in its published POM).
+Unmodified library; this application serializes connector calls and sanitizes distributor-supplied registration error text in its own wrapper.
+
+AndroidX (Compose, Material3, Activity, Lifecycle, Core, WorkManager, and their AndroidX dependencies)
+https://android.googlesource.com/platform/frameworks/support/
+License: Apache License, Version 2.0.
+
+Kotlin standard library; kotlinx.coroutines; kotlinx.serialization
+https://github.com/JetBrains/kotlin
+https://github.com/Kotlin/kotlinx.coroutines
+https://github.com/Kotlin/kotlinx.serialization
+License: Apache License, Version 2.0.
+
+Exact dependency versions are recorded in android/app/gradle.lockfile in the source distribution. The Apache License copy is provided alongside this file as Apache-2.0.txt. These notices do not imply endorsement by the upstream authors.

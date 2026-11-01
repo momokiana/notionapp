@@ -1,0 +1,331 @@
+{
+  "format": 1,
+  "description": "Exact allowlist for initial public component export. Source snapshot hashes are provenance, not test or review approvals. Git history identifies upload commits.",
+  "components": [
+    {
+      "component": "android",
+      "baseline": "Existing frozen baseline; excludes android-001",
+      "source_manifest_sha256": "b02c8fd3505eaae16fd74f6e322bdd111d0d3937b4c147ecc249d0a7da7c76eb",
+      "files": [
+        {
+          "path": "android/README.md",
+          "source_sha256": "ca7c539d4103970f192f145598e94f31d01b4310bbca10df7591438fd46aa801",
+          "public_sha256": "2903c6070f4f2e99d3f66d39268f148dff2816fb95b2f5a559e7b5c2add43213",
+          "change": "public documentation rewrite"
+        },
+        {
+          "path": "android/app/build.gradle.kts",
+          "source_sha256": "dabc90a3fbd4831e7df721938b2676e60b9ab9ab3d60b3d2ff5971b3bb9ad37e",
+          "public_sha256": "dabc90a3fbd4831e7df721938b2676e60b9ab9ab3d60b3d2ff5971b3bb9ad37e",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/gradle.lockfile",
+          "source_sha256": "3c950a54e278c5b027993a45e4961efd841c52aefdf2fce9026f2c571320ddfd",
+          "public_sha256": "3c950a54e278c5b027993a45e4961efd841c52aefdf2fce9026f2c571320ddfd",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/androidTest/java/dev/notifier/app/StateEvidence.kt",
+          "source_sha256": "416e946abed6fec2b1579e4cbe654de7c32a3ac283efd81863b573dc689dc27a",
+          "public_sha256": "416e946abed6fec2b1579e4cbe654de7c32a3ac283efd81863b573dc689dc27a",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/debug/res/xml/network_security_config.xml",
+          "source_sha256": "10ea8055938b4a43c7f871291ebcc77f43ccce6a1566220c0a5a9806309fd1ad",
+          "public_sha256": "10ea8055938b4a43c7f871291ebcc77f43ccce6a1566220c0a5a9806309fd1ad",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/AndroidManifest.xml",
+          "source_sha256": "41a79de23e9f6a2bd2d73654509415b25981eb5744e41587de3e2b7ea8725daf",
+          "public_sha256": "41a79de23e9f6a2bd2d73654509415b25981eb5744e41587de3e2b7ea8725daf",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/assets/third_party/Apache-2.0.txt",
+          "source_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "public_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/assets/third_party/NOTICES.txt",
+          "source_sha256": "8ca956782113da126e5f97e91423a43fee18ed627a4118f804a0907c44bb61c5",
+          "public_sha256": "8ca956782113da126e5f97e91423a43fee18ed627a4118f804a0907c44bb61c5",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/DeviceClient.kt",
+          "source_sha256": "629a71088b0105eaca4b4d4f20504ea9429f7615f141905c07239f8bf1aba4af",
+          "public_sha256": "629a71088b0105eaca4b4d4f20504ea9429f7615f141905c07239f8bf1aba4af",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/DeviceIdentity.kt",
+          "source_sha256": "e14b8ca88be08a9526c9a18766a36b06ce6b080f4243d67b2ba38f4726a26f46",
+          "public_sha256": "e14b8ca88be08a9526c9a18766a36b06ce6b080f4243d67b2ba38f4726a26f46",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/DeviceSettings.kt",
+          "source_sha256": "d949e8f100ad8be0de32fbeab2e9dcda422e13ea481eb455b9ef90e96265d083",
+          "public_sha256": "d949e8f100ad8be0de32fbeab2e9dcda422e13ea481eb455b9ef90e96265d083",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/HistoryText.kt",
+          "source_sha256": "cd5cace001ee0ab606c23f7b199a71d75ef984df2a885cb24c61906503c94dec",
+          "public_sha256": "cd5cace001ee0ab606c23f7b199a71d75ef984df2a885cb24c61906503c94dec",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/InboxCipher.kt",
+          "source_sha256": "1db6d690035f5e54c77c6d1edc9899a2986dec3793134fa341eeb9f93af465ca",
+          "public_sha256": "1db6d690035f5e54c77c6d1edc9899a2986dec3793134fa341eeb9f93af465ca",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/Ledger.kt",
+          "source_sha256": "136c28b7c9aef7f14752078b44cca0d068993ba06e7cdb0f58c5bb54ddbaa739",
+          "public_sha256": "136c28b7c9aef7f14752078b44cca0d068993ba06e7cdb0f58c5bb54ddbaa739",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/MainActivity.kt",
+          "source_sha256": "e3861f1a362ed8222e6b759b60bef61de278dcce53a5f5317e39131649340c0d",
+          "public_sha256": "e3861f1a362ed8222e6b759b60bef61de278dcce53a5f5317e39131649340c0d",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/NoticePreferences.kt",
+          "source_sha256": "48017d3bdcc6119bbdf5f89f007b59ac7d1f77e2da06b8b1b203d5c063275d6b",
+          "public_sha256": "48017d3bdcc6119bbdf5f89f007b59ac7d1f77e2da06b8b1b203d5c063275d6b",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/NoticeSettings.kt",
+          "source_sha256": "378c52b8a546f848e0d2c9de26ef5549c97fe8e8eac8453bfe2e1794805e0bf5",
+          "public_sha256": "378c52b8a546f848e0d2c9de26ef5549c97fe8e8eac8453bfe2e1794805e0bf5",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/OfflineInbox.kt",
+          "source_sha256": "ebc9377da0edc45d5f8b4388dd8432c23158f228f3140c71bbac00175dfb1077",
+          "public_sha256": "ebc9377da0edc45d5f8b4388dd8432c23158f228f3140c71bbac00175dfb1077",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/PrivateInbox.kt",
+          "source_sha256": "bbe48e1cf933967fec89a89cf9d44108c018dd78faf493e85d2f99bfd5eaffa9",
+          "public_sha256": "bbe48e1cf933967fec89a89cf9d44108c018dd78faf493e85d2f99bfd5eaffa9",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/PrivateNoticePreferences.kt",
+          "source_sha256": "971ae0470357a0565942e9f73995f9266ed92242bf1ff97f27f9825538d8302f",
+          "public_sha256": "971ae0470357a0565942e9f73995f9266ed92242bf1ff97f27f9825538d8302f",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/PrivateState.kt",
+          "source_sha256": "3c233ca7734d6fe4e345d140ffba9b0b3185e43a34877c7460ca1f85ec32d6b8",
+          "public_sha256": "3c233ca7734d6fe4e345d140ffba9b0b3185e43a34877c7460ca1f85ec32d6b8",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/PushPrivateState.kt",
+          "source_sha256": "8941580a66eef5c76d3e29b100d35ded1028d144ef7c5c2cd168d07c16dd5a21",
+          "public_sha256": "8941580a66eef5c76d3e29b100d35ded1028d144ef7c5c2cd168d07c16dd5a21",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/PushProtocol.kt",
+          "source_sha256": "698dc63df0142f7ae56640904d18dd2a227ab234305c07d44bbc11df4fb1e834",
+          "public_sha256": "698dc63df0142f7ae56640904d18dd2a227ab234305c07d44bbc11df4fb1e834",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/PushSettings.kt",
+          "source_sha256": "ad43ab9fdd5067ae9695d5c11cdf40258b2e5d871767a299af37260d0a9fd09d",
+          "public_sha256": "ad43ab9fdd5067ae9695d5c11cdf40258b2e5d871767a299af37260d0a9fd09d",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/PushWorkers.kt",
+          "source_sha256": "fc7d653923b24d48fc71a0779485068f0a6d23e1b0e3150d547b432c0b3e6ca2",
+          "public_sha256": "fc7d653923b24d48fc71a0779485068f0a6d23e1b0e3150d547b432c0b3e6ca2",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/ReadOnlyAutoSync.kt",
+          "source_sha256": "79eed96ab8223c8d54ccb4b9b435c95e1032e863186490d87cfb7abe172ae899",
+          "public_sha256": "79eed96ab8223c8d54ccb4b9b435c95e1032e863186490d87cfb7abe172ae899",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/java/dev/notifier/app/SourceRuntime.kt",
+          "source_sha256": "37c827fd0bf43b9b531257891b06fa86d29f6b0585f9c7bd714cf57fb0d37eae",
+          "public_sha256": "37c827fd0bf43b9b531257891b06fa86d29f6b0585f9c7bd714cf57fb0d37eae",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/res/drawable/ic_notification.xml",
+          "source_sha256": "4b760fd9514359d078b83ec846bac741224d04ea3387a7455fce693ca21b9723",
+          "public_sha256": "4b760fd9514359d078b83ec846bac741224d04ea3387a7455fce693ca21b9723",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/res/xml/data_extraction_rules.xml",
+          "source_sha256": "35158492b05f5d8831f6148b1a91a13da23d5aad2b15e4fbf611cd31fe0ecfea",
+          "public_sha256": "35158492b05f5d8831f6148b1a91a13da23d5aad2b15e4fbf611cd31fe0ecfea",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/main/res/xml/network_security_config.xml",
+          "source_sha256": "7bd91344689d618bf440dd803fef5d1c05dfbd1b12ea27379625b3388aee1846",
+          "public_sha256": "7bd91344689d618bf440dd803fef5d1c05dfbd1b12ea27379625b3388aee1846",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/test/java/dev/notifier/app/DeviceClientTest.kt",
+          "source_sha256": "72d8af70d2dc80ab9c5393bc58e3e5b355819d2e8d37a6913a766f2bb1c93877",
+          "public_sha256": "72d8af70d2dc80ab9c5393bc58e3e5b355819d2e8d37a6913a766f2bb1c93877",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/test/java/dev/notifier/app/DeviceSocketTest.kt",
+          "source_sha256": "3cb28ab4c2f4647c48831872dbd0a108cbef5e587e977327afb2b129a83ea5d2",
+          "public_sha256": "3cb28ab4c2f4647c48831872dbd0a108cbef5e587e977327afb2b129a83ea5d2",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/test/java/dev/notifier/app/DisplayAndBoundsTest.kt",
+          "source_sha256": "df9c5b694e0f01ff3dc93d0cbea9f30552a57773e6e4e7ad6fd41fa23dda09be",
+          "public_sha256": "df9c5b694e0f01ff3dc93d0cbea9f30552a57773e6e4e7ad6fd41fa23dda09be",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/test/java/dev/notifier/app/LedgerTest.kt",
+          "source_sha256": "00ef8c827e31e183da5f3ad4a49ab9e748f2a0722902740cb725d2f91845a351",
+          "public_sha256": "00ef8c827e31e183da5f3ad4a49ab9e748f2a0722902740cb725d2f91845a351",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/test/java/dev/notifier/app/NoticePreferencesTest.kt",
+          "source_sha256": "b3eda3be128219dcb5522515e875e3ff3de384de2e9607d4abc941c521e9a4d5",
+          "public_sha256": "b3eda3be128219dcb5522515e875e3ff3de384de2e9607d4abc941c521e9a4d5",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/test/java/dev/notifier/app/OfflineInboxTest.kt",
+          "source_sha256": "c1aa668b6d9003c53382a4ca96dd18b213c4d10dde3913201492f9541cb6bba8",
+          "public_sha256": "c1aa668b6d9003c53382a4ca96dd18b213c4d10dde3913201492f9541cb6bba8",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/test/java/dev/notifier/app/PushProtocolTest.kt",
+          "source_sha256": "ea115afd52bab1c105269f077df42ff0b41ce8c3e4cf9d602ca54220235f64a5",
+          "public_sha256": "ea115afd52bab1c105269f077df42ff0b41ce8c3e4cf9d602ca54220235f64a5",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/test/java/dev/notifier/app/RealContractTest.kt",
+          "source_sha256": "c5ffaabb42fba3d55343967b2e8b74c723f43c86e8fbd674e2bbc0c6b0043d06",
+          "public_sha256": "c5ffaabb42fba3d55343967b2e8b74c723f43c86e8fbd674e2bbc0c6b0043d06",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/test/java/dev/notifier/app/SourceRuntimeSocketTest.kt",
+          "source_sha256": "c75ae6dc3fa480cddb43cf28d98e92c2a46aa5d73d8c6ed69851c15c4ba9155c",
+          "public_sha256": "c75ae6dc3fa480cddb43cf28d98e92c2a46aa5d73d8c6ed69851c15c4ba9155c",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/app/src/test/java/dev/notifier/app/SourceRuntimeTest.kt",
+          "source_sha256": "5e0fadd2828f449cd740b78a170364af9b81eca482ea295d17f6bb449cc5264a",
+          "public_sha256": "5e0fadd2828f449cd740b78a170364af9b81eca482ea295d17f6bb449cc5264a",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/build.gradle.kts",
+          "source_sha256": "5398e53da677b2c41c7158c9a38d1490165f3b29fcad1407a08eef2f1c815c6e",
+          "public_sha256": "5398e53da677b2c41c7158c9a38d1490165f3b29fcad1407a08eef2f1c815c6e",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/gradle.properties",
+          "source_sha256": "782f39e29894758ffbc7acb255e39a6b644d7a22d695ab89aceb6d7ea0ecebb3",
+          "public_sha256": "782f39e29894758ffbc7acb255e39a6b644d7a22d695ab89aceb6d7ea0ecebb3",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/gradle/wrapper/gradle-wrapper.jar",
+          "source_sha256": "81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f",
+          "public_sha256": "81a82aaea5abcc8ff68b3dfcb58b3c3c429378efd98e7433460610fecd7ae45f",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/gradle/wrapper/gradle-wrapper.properties",
+          "source_sha256": "771795cf9eded83bfe7d538887684504469545246afa414b08c25b38fd6afcf8",
+          "public_sha256": "771795cf9eded83bfe7d538887684504469545246afa414b08c25b38fd6afcf8",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/gradlew",
+          "source_sha256": "734b3879d3501dce471cf0522d3bcbafe76873d9fc5129345b67fb43bd15e933",
+          "public_sha256": "734b3879d3501dce471cf0522d3bcbafe76873d9fc5129345b67fb43bd15e933",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/gradlew.bat",
+          "source_sha256": "57931b17dd228e5c24dac90e815d0bf82477e831a4618dfab4136f5446b42a9f",
+          "public_sha256": "57931b17dd228e5c24dac90e815d0bf82477e831a4618dfab4136f5446b42a9f",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/settings.gradle.kts",
+          "source_sha256": "727d30edcf4db467f064200c4d55a78a698502f74025c6770c300423e5473874",
+          "public_sha256": "727d30edcf4db467f064200c4d55a78a698502f74025c6770c300423e5473874",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/tools/contract-fixture.mjs",
+          "source_sha256": "b3907faa40ca9e6c0c4342a54e62f22c8b16ff0f5b66f1aad1ad09e9d9819d1e",
+          "public_sha256": "b3907faa40ca9e6c0c4342a54e62f22c8b16ff0f5b66f1aad1ad09e9d9819d1e",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/tools/device-ack-proxy.mjs",
+          "source_sha256": "b850d5d450a78042d8c9fca20f97d9eb37d1f1cbd602e15c84832e973b57efcc",
+          "public_sha256": "b850d5d450a78042d8c9fca20f97d9eb37d1f1cbd602e15c84832e973b57efcc",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/tools/device-emulator-fixture.mts",
+          "source_sha256": "5aa5a7555c7445d04bcb62cdc40e103698ed06a46a73648349becaf5cedb6cbe",
+          "public_sha256": "5aa5a7555c7445d04bcb62cdc40e103698ed06a46a73648349becaf5cedb6cbe",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/tools/notification-emulator-fixture.mts",
+          "source_sha256": "0030ca05975a095f3457c0ef6388bbf37648a2ab07b2ecb85fce54e04ed67396",
+          "public_sha256": "0030ca05975a095f3457c0ef6388bbf37648a2ab07b2ecb85fce54e04ed67396",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/tools/offline-emulator-fixture.mjs",
+          "source_sha256": "db7afac48caf650eb77c844b92ebd4e98df65dc2e0265812161657fccfb7be5c",
+          "public_sha256": "db7afac48caf650eb77c844b92ebd4e98df65dc2e0265812161657fccfb7be5c",
+          "change": "byte-identical"
+        },
+        {
+          "path": "android/tools/source-paused-emulator-fixture.mts",
+          "source_sha256": "f0cf0adf23ccd26a3846e5dd69740849121c1f0c2ce425c199a71b9ea165c83f",
+          "public_sha256": "f0cf0adf23ccd26a3846e5dd69740849121c1f0c2ce425c199a71b9ea165c83f",
+          "change": "byte-identical"
+        }
+      ]
+    }
+  ]
+}

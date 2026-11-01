@@ -3,7 +3,12 @@
 .env.*
 !.env.example
 **/data/
-**/*private*
+**/operator-private.json
+**/device-access.json
+**/credentials.json
+**/auth.json
+**/pairing.json
+**/app-config.json
 **/*.sqlite
 **/*.sqlite-*
 **/*.db
