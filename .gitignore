@@ -1,0 +1,26 @@
+# Private runtime/configuration
+.env
+.env.*
+!.env.example
+**/data/
+**/*private*
+**/*.sqlite
+**/*.sqlite-*
+**/*.db
+**/*.db-*
+**/*.jsonl
+**/*.backup
+**/*.key
+**/*.jks
+**/*.keystore
+**/local.properties
+# Dependencies and build output
+**/node_modules/
+**/dist/
+**/.gradle/
+**/.kotlin/
+**/build/
+*.apk
+*.aab
+*.log
+.DS_Store
