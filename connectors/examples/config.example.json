@@ -1,0 +1,17 @@
+{
+  "spool": "/private/app-connector/spool.sqlite",
+  "server": {
+    "base": "https://app.example.org",
+    "owner_id": "example_owner",
+    "id": "example_source_actor",
+    "source_id": "example_source",
+    "source_epoch": "example_epoch_1",
+    "installation": "example_installation_1",
+    "token": "SUPPLY_64_LOWERCASE_HEX_FROM_PRIVATE_REGISTRY"
+  },
+  "uniflo": {
+    "origin": "http://127.0.0.1:7311",
+    "token": "SUPPLY_PRIVATE_UNIFLO_TOKEN_OR_REMOVE_FIELD",
+    "sessions": [{ "key": "demo:synthetic_session", "alias": "Explicit example selection" }]
+  }
+}

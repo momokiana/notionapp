@@ -1,0 +1,157 @@
+{
+  "format": 1,
+  "component": "connectors",
+  "candidate": "A",
+  "branch": "wip/connectors-candidate-a",
+  "base_main_commit": "0f9489bb316f921f24ad88c949e56e84aee1358c",
+  "source_manifest_sha256": "f9646ff838ff0dda7100131c4b75da58d9a9e6a1f72051e48ca551321c0338fe",
+  "source_file_count": 20,
+  "publication_status": "WIP candidate only, not merged into main or a stable release",
+  "review": {
+    "plan": "PASS reported by implementation author; not independently re-reviewed by publisher",
+    "final": "PENDING; no FINAL PASS claimed"
+  },
+  "publisher_validation": {
+    "install_exit": 0,
+    "syntax_check_and_tests": {
+      "pass": 30,
+      "fail": 0,
+      "skip": 0
+    },
+    "published_legacy_backend_fail_closed": {
+      "pass": 1,
+      "fail": 0,
+      "skip": 0
+    },
+    "new_binding_backend_normal_integration": "NOT RUN; required backend is not in this branch"
+  },
+  "not_verified": [
+    "new binding backend integration",
+    "real Uniflo daemon/harness",
+    "Android and physical devices",
+    "production",
+    "complete A15/A16/A29"
+  ],
+  "files": [
+    {
+      "path": "connectors/.gitignore",
+      "source_sha256": "5d568d0b250eddee4441d65ebc8dbb96f2f2e7125b752fbdc4f984b3d07e0704",
+      "public_sha256": "5d568d0b250eddee4441d65ebc8dbb96f2f2e7125b752fbdc4f984b3d07e0704",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/README.md",
+      "source_sha256": "34afa8e249a7515b1372b95411a0820a8a2305694add29fb0a0bf5a7891dea4a",
+      "public_sha256": "ac0300c163ad1b5519c10b6c7d0990490574b40ddbb02d5d9d39033a20c924bc",
+      "change": "candidate warning and public documentation links"
+    },
+    {
+      "path": "connectors/examples/config.example.json",
+      "source_sha256": "56aa45606a69c79baaaf5ac6cc29e856aa7f9acea8a093630308cd1b2563d0f1",
+      "public_sha256": "56aa45606a69c79baaaf5ac6cc29e856aa7f9acea8a093630308cd1b2563d0f1",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/examples/create.json",
+      "source_sha256": "f8d303b2b059da240ad3758cba0a8630c8b4513682f75cccbaf97dd609f663ee",
+      "public_sha256": "f8d303b2b059da240ad3758cba0a8630c8b4513682f75cccbaf97dd609f663ee",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/examples/update.json",
+      "source_sha256": "8d20ce6059440c7a662130fd8229d5347d8dfd659b9a5b090eba49461476f27d",
+      "public_sha256": "8d20ce6059440c7a662130fd8229d5347d8dfd659b9a5b090eba49461476f27d",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/package-lock.json",
+      "source_sha256": "7e78eb725796eb8506be07b1d4cf3db0245b6606f4bbb6d210b90e1fefde880d",
+      "public_sha256": "7e78eb725796eb8506be07b1d4cf3db0245b6606f4bbb6d210b90e1fefde880d",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/package.json",
+      "source_sha256": "4b58e3437eb588554d68a61aa424ef97dedb81d76df9932e899aae971e2b4860",
+      "public_sha256": "4b58e3437eb588554d68a61aa424ef97dedb81d76df9932e899aae971e2b4860",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/src/cli.mjs",
+      "source_sha256": "e73ddd55c77fc0745575139415bc4adba0cf52985f7872ca076b6ef47b6b81a8",
+      "public_sha256": "e73ddd55c77fc0745575139415bc4adba0cf52985f7872ca076b6ef47b6b81a8",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/src/spool.mjs",
+      "source_sha256": "0558f7bd8eeeae3de93372ea4aee94ab923493c0c1e570aabae98ed96cf8673d",
+      "public_sha256": "0558f7bd8eeeae3de93372ea4aee94ab923493c0c1e570aabae98ed96cf8673d",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/src/transport.mjs",
+      "source_sha256": "d519555e51a9b7abe1ae165a0f2fec75d860d16333f84f86d294d7a7487c1397",
+      "public_sha256": "d519555e51a9b7abe1ae165a0f2fec75d860d16333f84f86d294d7a7487c1397",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/src/uniflo.mjs",
+      "source_sha256": "7dce03571d4cb01b9e9d4983dd8fd31c754c85a36e11e71f1b9b163f630b95b3",
+      "public_sha256": "7dce03571d4cb01b9e9d4983dd8fd31c754c85a36e11e71f1b9b163f630b95b3",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/src/validation.mjs",
+      "source_sha256": "4bd7abf6bb5538aea548fcc751d69c9ea3d75751850e7334f222a0ea4a8cdaab",
+      "public_sha256": "4bd7abf6bb5538aea548fcc751d69c9ea3d75751850e7334f222a0ea4a8cdaab",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/crash-child.mjs",
+      "source_sha256": "6cc8d74d39d9eb6d73b4c83bbf8f3ce0a6b77f8bb6ba083207fdb5a36111aed3",
+      "public_sha256": "6cc8d74d39d9eb6d73b4c83bbf8f3ce0a6b77f8bb6ba083207fdb5a36111aed3",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/helpers.mjs",
+      "source_sha256": "12fd16ddadc8bc35600a1b612469a802b2764ccb483a01447fa6fee44578d70a",
+      "public_sha256": "12fd16ddadc8bc35600a1b612469a802b2764ccb483a01447fa6fee44578d70a",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/integration-runner.mjs",
+      "source_sha256": "7d5f0085e19acab0b08400aa00ca0bf389046da7064eb66c0f028f4230908a9c",
+      "public_sha256": "7d5f0085e19acab0b08400aa00ca0bf389046da7064eb66c0f028f4230908a9c",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/integration.mjs",
+      "source_sha256": "b9c880b4a59265d3e3417eeec9599dea6ad481cb4d06a6fb872f94f77c7c600a",
+      "public_sha256": "b9c880b4a59265d3e3417eeec9599dea6ad481cb4d06a6fb872f94f77c7c600a",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/process.test.mjs",
+      "source_sha256": "39336435438dd530ca58bdd3382c52319290a2222b8c4987b08a0416628e9a59",
+      "public_sha256": "39336435438dd530ca58bdd3382c52319290a2222b8c4987b08a0416628e9a59",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/spool.test.mjs",
+      "source_sha256": "9fe83b625e03cd9e222d2ecf2a6491736411d3fbf76747941f1c9d50ab04f965",
+      "public_sha256": "9fe83b625e03cd9e222d2ecf2a6491736411d3fbf76747941f1c9d50ab04f965",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/transport.test.mjs",
+      "source_sha256": "270b49f97eac7aae1abfe261632f14c2759ec0de59c43c153e42a8aa1af5588c",
+      "public_sha256": "270b49f97eac7aae1abfe261632f14c2759ec0de59c43c153e42a8aa1af5588c",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/uniflo.test.mjs",
+      "source_sha256": "40254454bd32c009b906546d81e95f59899171731a6cd2cd5edf5a35625acce2",
+      "public_sha256": "40254454bd32c009b906546d81e95f59899171731a6cd2cd5edf5a35625acce2",
+      "change": "byte-identical"
+    }
+  ]
+}

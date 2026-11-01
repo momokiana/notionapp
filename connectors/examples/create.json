@@ -1,0 +1,16 @@
+{
+  "id": "synthetic_build_operation_1",
+  "kind": "create",
+  "payload": {
+    "request_id": "synthetic_build_request_1",
+    "title": "Synthetic build needs a choice",
+    "body": "Example data only; no command will be executed by the connector.",
+    "session_ref": "synthetic_build_1",
+    "target_revision": "synthetic_revision_1",
+    "expires_at": "2099-01-01T00:00:00Z",
+    "interaction": {
+      "id": "synthetic_question_1",
+      "actions": [{ "id": "explain", "label": "补充说明", "type": "text" }]
+    }
+  }
+}
