@@ -8,14 +8,14 @@
 
 - 安卓首发：Kotlin / Jetpack Compose；事件服务：Fastify / TypeScript / SQLite。
 - 可选独立 Pi SDK 宿主；可选自托管 ntfy / UnifiedPush 通知，不默认连接 AI、推送服务器或现有工作会话。
-- 安卓已增量公开 [android-001 本机草稿与快捷回复](docs/releases/android-001.md)；其余仍为既有开发基线，不是正式发行、生产可用声明或完整产品验收。不含 android-002、T014 受控启用或尚待最终结论的新后端绑定接口；连接器 A 仅在独立 WIP 分支保留并标为 FINAL BLOCK，不在 main。
+- 安卓已增量公开 [android-002 缓存区间与后继隔离修复](docs/releases/android-002.md)，保留 [001草稿/快捷回复及其历史范围](docs/releases/android-001.md)；不是正式发行、生产可用声明或完整产品验收。不含未就绪的新对话/媒体/复杂卡片、T014或待最终结论的新后端绑定接口；连接器候选仅在独立分支，不在 main。
 - 本仓库不包含私人部署、账号、人格、原始聊天、设备/原生会话标识、运行数据库或原始验收证据。
 
 已读 ≠ 平台接受 ≠ 设备收到 ≠ 系统请求提醒 ≠ 来源收件 ≠ 已执行 ≠ 完成或独立验收。
 
 ## 构建入口
 
-已按冻结白名单导入 [服务端](server/README.md)、[安卓](android/README.md) 和 [可选 Pi 宿主](pi-host/README.md) 源码、合成测试及依赖锁；各次导入与验证边界见 [公开状态](docs/status.md)，准确文件及前后哈希见 [首轮导出清单](docs/releases/initial-export.json) 和 [android-001 当前59项清单](docs/releases/android-001.json)。
+已按冻结白名单导入 [服务端](server/README.md)、[安卓](android/README.md) 和 [可选 Pi 宿主](pi-host/README.md) 源码、合成测试及依赖锁；各次导入与验证边界见 [公开状态](docs/status.md)，准确文件及前后哈希见 [首轮导出清单](docs/releases/initial-export.json)、[android-001 历史59项清单](docs/releases/android-001.json) 和 [android-002 当前63项清单](docs/releases/android-002.json)。
 
 ```sh
 # 后端/Pi宿主仅记录 Node.js 22.23.2 的实际验证；npm 10+

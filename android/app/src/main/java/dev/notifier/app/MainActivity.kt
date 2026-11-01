@@ -83,6 +83,7 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
     var receipt by mutableStateOf<String?>(null); private set
     var lastSync by mutableStateOf<String?>(null); private set
     var cacheUnavailable by mutableStateOf(false); private set
+    var cacheView by mutableStateOf<InboxView?>(null); private set
     var currentAt by mutableStateOf<String?>(null); private set
     var historyAt by mutableStateOf<String?>(null); private set
     var receiptAt by mutableStateOf<String?>(null); private set
@@ -112,7 +113,7 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) {
                 currentFresh = false
-                if (e is InboxCacheReadFailure) cacheUnavailable = true
+                if (e is InboxCacheReadFailure) { cacheUnavailable = true; cacheView = null }
                 error = if (e is ApiFailure || e is IllegalArgumentException || e is IllegalStateException) e.message else "连接或安全存储操作失败，已显示内容可能是缓存。若有未决提交，请保留原请求对账。"
             }
             finally {
@@ -133,7 +134,7 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
         templates = state.templates
         workspaceBytes = wire.encodeToString(LocalState.serializer(), state).toByteArray(Charsets.UTF_8).size + 28
         if (connection?.namespace != state.connection?.namespace) {
-            deviceEntries = emptyList(); deviceListObserved = null; events = emptyList(); current = null; history = emptyList(); receipt = null; lastSync = null; currentFresh = false; sourceRuntimeRead = null
+            deviceEntries = emptyList(); deviceListObserved = null; events = emptyList(); current = null; history = emptyList(); receipt = null; lastSync = null; currentFresh = false; sourceRuntimeRead = null; cacheView = null
         }
         connection = state.connection; pending = state.pending != null; pendingId = state.pending?.id; device = state.device
         authOperation = state.auth_intent?.let { AuthSummary(it.kind, it.id, it.root, it.target_device) }
@@ -176,8 +177,9 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
             withContext(Dispatchers.IO) { if (replay) devices.replayOriginal(expected, operation.id) else devices.reconcile(expected, operation.id) }; identityResult(expected.namespace, operation.kind)
         }
     }
-    private fun show(cache: InboxCache) {
-        cacheUnavailable = false
+    private fun show(view: InboxView) {
+        val cache = view.cache
+        cacheView = view; cacheUnavailable = false
         events = cache.list_ids.mapNotNull { cache.events[it]?.event }; lastSync = cache.scanned_at
         current?.let { previous ->
             current = cache.events[previous.id]?.event
@@ -198,9 +200,19 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
             }.getOrDefault("本机提醒账本不可读，无法确认本机投递状态；原记录未重置。")
         }
     }
-    private suspend fun showCache() { show(withContext(Dispatchers.IO) { inbox.snapshot() }); readLocalNotice() }
-    private suspend fun refreshInside() { show(withContext(Dispatchers.IO) { inbox.refresh() }); readLocalNotice() }
+    private suspend fun showCache() { show(withContext(Dispatchers.IO) { OfflineInbox.inspect(inbox.snapshot()) }); readLocalNotice() }
+    private suspend fun refreshInside() { show(withContext(Dispatchers.IO) { OfflineInbox.inspect(inbox.refresh()) }); readLocalNotice() }
     fun refresh() = work { refreshInside() }
+    fun changeCache(change: CacheChange, token: String) = boundWork { expected ->
+        currentFresh = false; sourceRuntimeRead = null
+        val view = withContext(Dispatchers.IO) { checkConnectionSnapshot(ledger.state(), expected); OfflineInbox.inspect(inbox.change(change, token)) }
+        show(view); readLocalNotice(); message = "本机只读缓存已更新；原提交、草稿、设备身份与通知记录没有清理或重放。"
+    }
+    fun changeHistoryWindow(id: String, change: HistoryWindow, token: String) = boundWork { expected ->
+        check(current?.id == id) { "当前详情已改变，未采用迟到的历史切换" }
+        withContext(Dispatchers.IO) { checkConnectionSnapshot(ledger.state(), expected); inbox.historyWindow(id, change, token) }
+        showCache(); message = "已更换本机历史区间，不删除服务历史或重放原请求。"
+    }
     private suspend fun readSourceRuntime(event: Event) {
         val expected = ConnectionSnapshot(connection?.namespace)
         sourceRuntimeRead = null
@@ -222,9 +234,9 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
     }
     fun open(id: String) = work {
         currentFresh = false; current = null; history = emptyList(); historyNext = null; receipt = null; currentAt = null; historyAt = null; receiptAt = null; sourceRuntimeRead = null
-        val cache = withContext(Dispatchers.IO) { inbox.snapshot() }
-        current = cache.events[id]?.event
-        if (current != null) { show(cache); readLocalNotice() } else localNotice = null
+        val view = withContext(Dispatchers.IO) { OfflineInbox.inspect(inbox.snapshot()) }
+        current = view.cache.events[id]?.event
+        if (current != null) { show(view); readLocalNotice() } else localNotice = null
         // A new notification may refer to an event not yet in the cached list.
         detailInside(id)
     }
@@ -299,6 +311,8 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
     var token by remember { mutableStateOf("") }
     var advanced by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().verticalScrollCompat(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        CacheControls(m, management = true)
+        HorizontalDivider()
         WorkspaceSettings(m)
         HorizontalDivider()
         DeviceSettings(m)
@@ -333,7 +347,7 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
         m.drafts.forEach { DraftRow(m, it) }
         HorizontalDivider()
     }
-    Text(if (m.cacheUnavailable) "本机离线缓存不可用，原文件保留；这不表示服务端没有事件。" else m.lastSync?.let { "本机缓存 · 最后完整扫描 $it\n非实时状态；刷新会从头检查所有已创建事件。" } ?: "尚未完成同步。联网刷新后可离线阅读。", style = MaterialTheme.typography.labelSmall)
+    CacheControls(m)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(unread, { unread = !unread }, label = { Text("未读") })
         FilterChip(actionable, { actionable = !actionable }, label = { Text("待回应") })
@@ -345,8 +359,8 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
-    Text("过滤仅限本机已同步内容；待回应状态可能已变化。", style = MaterialTheme.typography.labelSmall)
-    if (shown.isEmpty() && !m.busy && !m.cacheUnavailable) Text(if (m.lastSync == null) "没有可离线查看的内容，请连接服务后刷新。" else if (m.events.isEmpty()) "上次完整扫描没有可见事件。" else "当前过滤下没有事件。", modifier = Modifier.padding(vertical = 24.dp))
+    Text("过滤仅限当前缓存列表区间，不是服务器搜索；待回应状态可能已变化。", style = MaterialTheme.typography.labelSmall)
+    if (shown.isEmpty() && !m.busy && !m.cacheUnavailable) Text(if (m.lastSync == null) "没有可离线查看的内容，请连接服务后刷新。" else if (m.events.isEmpty()) "上次本区间扫描没有可见事件，不代表其他区间为空。" else "当前过滤下没有事件。",  modifier = Modifier.padding(vertical = 24.dp))
         }
         items(shown, key = { it.id }) { e ->
             Column(Modifier.fillMaxWidth().clickable(enabled = !m.busy) { m.open(e.id) }.padding(vertical = 16.dp)) {
@@ -393,11 +407,12 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
                 Row { Button(onClick = { confirm = null; m.decide(d) }, enabled = m.currentFresh && !m.busy && !m.pending && m.canWrite) { Text("保存事项决定") }; TextButton(onClick = { confirm = null }) { Text("保留原状态") } }
             }
         }
-        item { HorizontalDivider(); Text("事件历史", style = MaterialTheme.typography.titleMedium); Text("已缓存 ${m.history.size} 条 · 前缀观察 ${m.historyAt ?: "未同步"}${if (m.historyNext != null) " · 后续尚未全部加载" else ""}", style = MaterialTheme.typography.labelSmall) }
+        item { HorizontalDivider(); Text("事件历史", style = MaterialTheme.typography.titleMedium); HistoryControls(m, e.id) }
         items(m.history, key = { it.seq }) { h ->
             Column { Text("${h.kind} · ${h.created_at}", style = MaterialTheme.typography.labelMedium); Text(historyText(h), style = MaterialTheme.typography.bodyMedium) }
         }
-        if (m.historyNext != null) item { OutlinedButton(onClick = { m.moreHistory() }, enabled = !m.busy) { Text("加载更多历史") } }
+        if (m.historyNext != null && m.history.size < MAX_CACHED_HISTORY) item { OutlinedButton(onClick = { m.moreHistory() }, enabled = !m.busy) { Text("加载更多历史（保留本区间前缀）") } }
+        item { CacheControls(m) }
         item { Spacer(Modifier.height(24.dp)) }
     }
 }

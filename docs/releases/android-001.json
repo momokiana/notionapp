@@ -2,6 +2,7 @@
   "format": 1,
   "component": "android",
   "increment": "android-001",
+  "historical_scope": "This 59-file manifest preserves android-001 source/export bytes, including the later known-limit README at 68fa58f. Current Android is separately recorded in android-002.json; no old source/export hash or review verdict is rewritten as fixed.",
   "base_main_commit": "0f9489bb316f921f24ad88c949e56e84aee1358c",
   "source_manifest_sha256": "e1647f226f484da676c69e3180f655fb301990b0938ddc77f8cecee85d206afb",
   "previous_source_manifest_sha256": "b02c8fd3505eaae16fd74f6e322bdd111d0d3937b4c147ecc249d0a7da7c76eb",
@@ -71,7 +72,7 @@
       "affected": "Public android-001 and earlier cache GETs fetch current credentials per page and check namespace only at the end; ending in namespace A does not prove all intermediate reads used owner A credentials",
       "provenance": "Development/review handoff correction; no new publisher reproduction or product test execution in this documentation-only change",
       "claim_limit": "Do not claim cross-owner A-to-B-to-A cache isolation verified by android-001 limited PASS, historical 111 tests or AVD results; old source is not fixed by this notice",
-      "successor": "android-002 old pre-review BLOCK/F1 remains historical; handoff reports original counterexample closed only on the repaired new source's six GETs by the same reviewer, with overall FINAL still pending; no 002 code/evidence imported or verdict migrated"
+      "successor": "At the 68fa58f notice, android-002 overall FINAL was pending. A later accepted handoff reports limited FINAL PASS/F1 closed for e334fd92f5dff032a22f9cea497286ad30159c4722d9a8666910dbad79351c50, review 2608d081974d62b245cf01c17957dca90effed8d08de721877b4a94db457fad5. That follow-up cache-isolation fix is separately exported in android-002.json; old pre-review BLOCK/F1 and old android-001 source/scope remain unchanged, no verdict migration or private evidence publication."
     }
   ],
   "excluded": [

@@ -131,13 +131,13 @@ class OfflineInboxTest {
         failWith { InboxCipher.encrypt(cache.copy(events = mapOf("event_1" to CachedEvent(event().copy(body = "x".repeat(MAX_CACHE_BYTES)), time))), disk.key) }
         assertEquals(cache, disk.load())
     }
-    @Test fun eventAndHistoryCountLimitsBackpressureWithoutEviction() {
-        val disk = Disk(); val first = fixture(disk) { page(listOf(event())) }; first.inbox().refresh(); val original = disk.file.readBytes()
+    @Test fun eventWindowStopsAtExactPageBoundaryWhileHistoryStillBackpressures() {
+        val disk = Disk(); val first = fixture(disk) { page(listOf(event())) }; first.inbox().refresh()
         val over = fixture(disk) { path ->
             val after = path.substringAfter("after=").toInt()
             page((after + 1..after + 50).map { event("event_$it") }, (after + 50).toString())
         }
-        failWith { over.inbox().refresh() }; assertArrayEquals(original, disk.file.readBytes())
+        val window = over.inbox().refresh(); assertEquals(1000, window.list_ids.size); assertEquals("1000", window.range_next); assertTrue("event_1" in window.list_ids)
         val historyCache = first.inbox().snapshot().copy(histories = mapOf("event_1" to CachedHistory((1L..1001).map { History(it, "x", time, buildJsonObject {}) }, null, time)))
         failWith { OfflineInbox.validate(historyCache) }
     }

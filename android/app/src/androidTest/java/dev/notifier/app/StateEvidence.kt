@@ -37,7 +37,7 @@ class StateEvidence : Instrumentation() {
                 })
                 if (File(context.noBackupFilesDir, "inbox.enc").isFile) {
                     val cache = PrivateInbox(context).load()
-                    put("inbox", buildJsonObject { put("namespace", cache.namespace); put("events", cache.events.size); put("listed", cache.list_ids.size); put("histories", cache.histories.size); put("record_hash", credentialDigest(wire.encodeToString(InboxCache.serializer(), cache))) })
+                    put("inbox", buildJsonObject { put("namespace", cache.namespace); put("events", cache.events.size); put("listed", cache.list_ids.size); put("histories", cache.histories.size); put("range_after", cache.range_after); cache.range_next?.let { put("range_next", it) }; put("prior_ranges", cache.previous_ranges.size); put("record_hash", credentialDigest(wire.encodeToString(InboxCache.serializer(), cache))) })
                 }
                 state.connection?.let { connection ->
                     if (File(context.noBackupFilesDir, "push.enc").isFile) {
