@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "description": "Exact allowlist for initial public component export. Source snapshot hashes are provenance, not test or review approvals. Git history identifies upload commits.",
+  "description": "Exact imported-file allowlist, excluding newly written public documentation. Original/public hashes bind the export, not test or review approval. Git history identifies upload commits.",
   "components": [
     {
       "component": "android",
@@ -326,6 +326,801 @@
           "change": "byte-identical"
         }
       ]
+    },
+    {
+      "component": "server",
+      "baseline": "Frozen historical T013 source subset; excludes T014; no inherited full-candidate approval",
+      "source_manifest_sha256": "0a8c2ff81c91d59f603549346a24c4726f5268962fd85e2dca751cea33de7135",
+      "files": [
+        {
+          "path": "server/package-lock.json",
+          "source_sha256": "d173e978c2be13de8087b8d0623577e6b0e26a95098395695aed57376d61214b",
+          "public_sha256": "d173e978c2be13de8087b8d0623577e6b0e26a95098395695aed57376d61214b",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/package.json",
+          "source_sha256": "a0a479c5f42ddd687476fe88a381d23b8a4e3141199b059f2a7b4dd06c52b9ec",
+          "public_sha256": "a0a479c5f42ddd687476fe88a381d23b8a4e3141199b059f2a7b4dd06c52b9ec",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/api-errors.ts",
+          "source_sha256": "1676232bdce5f98edfa44f62f1243e6a67b43805af52da159132d64f948ee63a",
+          "public_sha256": "1676232bdce5f98edfa44f62f1243e6a67b43805af52da159132d64f948ee63a",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/app.ts",
+          "source_sha256": "682d30c3f188c42ac3df31cf828599fbad19112b5d19d5691f832c41dc8ff5f8",
+          "public_sha256": "682d30c3f188c42ac3df31cf828599fbad19112b5d19d5691f832c41dc8ff5f8",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/auth.ts",
+          "source_sha256": "93dfa38bc077aa4e5b3ef7fece7126c8ba850fa81ecb74e88d4bb86519dee4f3",
+          "public_sha256": "93dfa38bc077aa4e5b3ef7fece7126c8ba850fa81ecb74e88d4bb86519dee4f3",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/backup-snapshot.ts",
+          "source_sha256": "7bd06be44ef937bef213d79ca24b6deffb1969a1b91e5ff839e97b4285f045ce",
+          "public_sha256": "7bd06be44ef937bef213d79ca24b6deffb1969a1b91e5ff839e97b4285f045ce",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/backup-validation.ts",
+          "source_sha256": "6f523ca380ef1b94de8b11587069e189180102b93e6c2444d393f11b0900b48b",
+          "public_sha256": "6f523ca380ef1b94de8b11587069e189180102b93e6c2444d393f11b0900b48b",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/config.ts",
+          "source_sha256": "e4f9eafad4ad819690e6bb2919497f72084cc1988ffbb5315a7481edcf65701a",
+          "public_sha256": "e4f9eafad4ad819690e6bb2919497f72084cc1988ffbb5315a7481edcf65701a",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/contracts.ts",
+          "source_sha256": "bf661d63fbe82f4c417d4b34a9969cd66a0a53d24fbcd4bfdd13c7aa204bdafb",
+          "public_sha256": "bf661d63fbe82f4c417d4b34a9969cd66a0a53d24fbcd4bfdd13c7aa204bdafb",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/core.ts",
+          "source_sha256": "a662d5f2b789918b6650fac7c840955cd3618872674b3e92934ebe7b4bd57096",
+          "public_sha256": "a662d5f2b789918b6650fac7c840955cd3618872674b3e92934ebe7b4bd57096",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/database.ts",
+          "source_sha256": "7074ddd271c873aa93f6b432558082808966ee40c5a6fc756bc5f58890e83769",
+          "public_sha256": "7074ddd271c873aa93f6b432558082808966ee40c5a6fc756bc5f58890e83769",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/delivery-routes.ts",
+          "source_sha256": "01ae7abd43b9543a9868275f83329d505afe623f77ac675d91bacb9f31dd2943",
+          "public_sha256": "01ae7abd43b9543a9868275f83329d505afe623f77ac675d91bacb9f31dd2943",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/delivery.ts",
+          "source_sha256": "75fe452bdcbb1ff2ba9537fb54f864b161cb4e15addd731f9f6140fc111098f9",
+          "public_sha256": "75fe452bdcbb1ff2ba9537fb54f864b161cb4e15addd731f9f6140fc111098f9",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/device-authority.ts",
+          "source_sha256": "44d7a613141964c81aa9dc3720596391ccad3bbe56df72984424ccbae0e86c7a",
+          "public_sha256": "44d7a613141964c81aa9dc3720596391ccad3bbe56df72984424ccbae0e86c7a",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/device-cli.ts",
+          "source_sha256": "72f488b8f04f3d4f761a5016bf6fc850e5df6e423ae59bef05daf2c30869b98d",
+          "public_sha256": "72f488b8f04f3d4f761a5016bf6fc850e5df6e423ae59bef05daf2c30869b98d",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/device-config.ts",
+          "source_sha256": "69009f2c46c8312412a7212ce4d8651142afd2fa865e4f2ee906475ad4aa4751",
+          "public_sha256": "69009f2c46c8312412a7212ce4d8651142afd2fa865e4f2ee906475ad4aa4751",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/device-handover.ts",
+          "source_sha256": "17090f36d5b9e6d42ada804934781459bdb7584b80bbc5e1d7783f08d1cc5397",
+          "public_sha256": "17090f36d5b9e6d42ada804934781459bdb7584b80bbc5e1d7783f08d1cc5397",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/device-routes.ts",
+          "source_sha256": "e486c063029430f7bba286fc19715f9be44ca8687ccecd801098a989abc24fe6",
+          "public_sha256": "e486c063029430f7bba286fc19715f9be44ca8687ccecd801098a989abc24fe6",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/device-store.ts",
+          "source_sha256": "b90cdc9247debad00eda9cd1fef36a437b0ae95293aed59746a24e43b5e2079e",
+          "public_sha256": "b90cdc9247debad00eda9cd1fef36a437b0ae95293aed59746a24e43b5e2079e",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/main.ts",
+          "source_sha256": "0b97bb831564ea9de13617267c57245c03e92e5975959df4bb880899311ec22f",
+          "public_sha256": "0b97bb831564ea9de13617267c57245c03e92e5975959df4bb880899311ec22f",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/notification-routes.ts",
+          "source_sha256": "3f976857ddf4dd132a204eb7bbc5f715da65e670339d23410dc6776da2d72d6a",
+          "public_sha256": "3f976857ddf4dd132a204eb7bbc5f715da65e670339d23410dc6776da2d72d6a",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/notifications.ts",
+          "source_sha256": "99f46b0d2ab6b9f001e0407432d2665335b7c658ad82db6d6a05829c28347a5d",
+          "public_sha256": "99f46b0d2ab6b9f001e0407432d2665335b7c658ad82db6d6a05829c28347a5d",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/pairing-package.ts",
+          "source_sha256": "9c5a312463f85bdcf8f186566df9a0f9c370acee17ce0cea9534fc6e38af7a0f",
+          "public_sha256": "9c5a312463f85bdcf8f186566df9a0f9c370acee17ce0cea9534fc6e38af7a0f",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/recovery-format.ts",
+          "source_sha256": "20259825f18fce92c7f6c0dd6192747e6079c3af2f20aa8d930b84905cd58b7b",
+          "public_sha256": "20259825f18fce92c7f6c0dd6192747e6079c3af2f20aa8d930b84905cd58b7b",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/recovery-gate.ts",
+          "source_sha256": "41c9d41b695e3269b72f03f81dd313fa5b40bac000028cff1f7b2632f41989b5",
+          "public_sha256": "41c9d41b695e3269b72f03f81dd313fa5b40bac000028cff1f7b2632f41989b5",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/routes.ts",
+          "source_sha256": "7d340e30ce9405ef88e5eceda01703a74190ad7af87debbaf028faaf76428966",
+          "public_sha256": "7d340e30ce9405ef88e5eceda01703a74190ad7af87debbaf028faaf76428966",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/schema.ts",
+          "source_sha256": "9c60e01c8b37270bceacc70349cdfddd7b21bd4087bebbdafe7dfec7e19df213",
+          "public_sha256": "9c60e01c8b37270bceacc70349cdfddd7b21bd4087bebbdafe7dfec7e19df213",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/source-adapter.ts",
+          "source_sha256": "ccf9ea50cbe4f573981fe282fd090a899353548733f666b57e8d9ec7285a897c",
+          "public_sha256": "ccf9ea50cbe4f573981fe282fd090a899353548733f666b57e8d9ec7285a897c",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/src/source-runtime.ts",
+          "source_sha256": "ffec2c576f44b70a2e2723acb869e090cab8052769aa37bd7a21320a9ca02890",
+          "public_sha256": "ffec2c576f44b70a2e2723acb869e090cab8052769aa37bd7a21320a9ca02890",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/app.test.ts",
+          "source_sha256": "0a79e8b2a930753d69f70bd2775628bbab39f1037d785c568c6df5c5837f9f20",
+          "public_sha256": "0a79e8b2a930753d69f70bd2775628bbab39f1037d785c568c6df5c5837f9f20",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/auth.test.ts",
+          "source_sha256": "08a2a49f0ef17d63c3e7f2d86d882aa6c9bf2e7c40838cfe58106c51ee43db8b",
+          "public_sha256": "08a2a49f0ef17d63c3e7f2d86d882aa6c9bf2e7c40838cfe58106c51ee43db8b",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/backup-snapshot.test.ts",
+          "source_sha256": "2747f7fb7e60de15fa089652600e1625502b537942d6c1b97219ead0bf411cab",
+          "public_sha256": "2747f7fb7e60de15fa089652600e1625502b537942d6c1b97219ead0bf411cab",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/backup-validation.test.ts",
+          "source_sha256": "bd52db3999d3e08643e3973199d5486fb84acf4aab015222ca1974a08d330097",
+          "public_sha256": "bd52db3999d3e08643e3973199d5486fb84acf4aab015222ca1974a08d330097",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/config.test.ts",
+          "source_sha256": "a080b991dcd47a6b281a86f14e503d2de803f440c9f1b28fc9b0e6040d83172d",
+          "public_sha256": "a080b991dcd47a6b281a86f14e503d2de803f440c9f1b28fc9b0e6040d83172d",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/core.test.ts",
+          "source_sha256": "419969a5ecf4fe3b3f617b52ddb47a5d81c95a80cfcf07467028b696eeb0fc98",
+          "public_sha256": "419969a5ecf4fe3b3f617b52ddb47a5d81c95a80cfcf07467028b696eeb0fc98",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/database.test.ts",
+          "source_sha256": "9bc2994e1bab29682b227dacca5286ee7821de3bd52e633e8d36572b4fb8508d",
+          "public_sha256": "9bc2994e1bab29682b227dacca5286ee7821de3bd52e633e8d36572b4fb8508d",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/delivery.test.ts",
+          "source_sha256": "acce766b6936149b7e21697166095a50da80a93c9c1413ab69371bff9c326f39",
+          "public_sha256": "acce766b6936149b7e21697166095a50da80a93c9c1413ab69371bff9c326f39",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/device-ack-loss.test.ts",
+          "source_sha256": "e576ba9284e87679d0ce7053ef72a8a695d8de7494d5acef74cf45f39b54997a",
+          "public_sha256": "e576ba9284e87679d0ce7053ef72a8a695d8de7494d5acef74cf45f39b54997a",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/device-api.test.ts",
+          "source_sha256": "ca26e0d3630cbbad928cd0cf48f030ede716e55fb41bf87ac3aeaf170ee1eeff",
+          "public_sha256": "ca26e0d3630cbbad928cd0cf48f030ede716e55fb41bf87ac3aeaf170ee1eeff",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/device-authority.test.ts",
+          "source_sha256": "bbb42d14dc39f0c8488d553faff4914b27ec3d65cc95b20e247e6d743ec5d809",
+          "public_sha256": "bbb42d14dc39f0c8488d553faff4914b27ec3d65cc95b20e247e6d743ec5d809",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/device-claim-race.test.ts",
+          "source_sha256": "ab15fd5188c05feb663d2cc294dc70b61b6182ea6620ae5540f0df8e9870e522",
+          "public_sha256": "ab15fd5188c05feb663d2cc294dc70b61b6182ea6620ae5540f0df8e9870e522",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/device-cli.test.ts",
+          "source_sha256": "a9deeb3973c36dd46c3dc001d60e9b5019ea4922bd5b1b60662c4651185b57ce",
+          "public_sha256": "a9deeb3973c36dd46c3dc001d60e9b5019ea4922bd5b1b60662c4651185b57ce",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/device-config.test.ts",
+          "source_sha256": "afbb29426c8855f4127ee3f79389529bdb7e8069d41c828cf7fe7296779ca1ef",
+          "public_sha256": "afbb29426c8855f4127ee3f79389529bdb7e8069d41c828cf7fe7296779ca1ef",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/device-handover.test.ts",
+          "source_sha256": "1819dd42db868052ce8c0e1f7c0d2ec88dd8eb1bb7b0cbbb2997c4c45278c93e",
+          "public_sha256": "1819dd42db868052ce8c0e1f7c0d2ec88dd8eb1bb7b0cbbb2997c4c45278c93e",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/device-http-gate.test.ts",
+          "source_sha256": "a439ef7b522caf99a3bb5589185491f487bb16f971f2347f3260f364496d0da4",
+          "public_sha256": "a439ef7b522caf99a3bb5589185491f487bb16f971f2347f3260f364496d0da4",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/device-notifications.test.ts",
+          "source_sha256": "b2ec097953a42bc980ddbd8233beff80bcd31d27e4e44b655c0d4977fcd305b2",
+          "public_sha256": "b2ec097953a42bc980ddbd8233beff80bcd31d27e4e44b655c0d4977fcd305b2",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/device-store.test.ts",
+          "source_sha256": "b7760e5aa08678f2c0c3cb086164249fbe5113b9df6104bc20add85920ff0960",
+          "public_sha256": "b7760e5aa08678f2c0c3cb086164249fbe5113b9df6104bc20add85920ff0960",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/fixtures/contender.ts",
+          "source_sha256": "5103c0a251dbb0ff4f2608cef63c434becc4d5b728caabe22fd664ead322114e",
+          "public_sha256": "5103c0a251dbb0ff4f2608cef63c434becc4d5b728caabe22fd664ead322114e",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/fixtures/delivery-process.ts",
+          "source_sha256": "b63248d726f21c20cd9181d5494b9d616913128742fc2d65c8811e0b81e23daf",
+          "public_sha256": "b63248d726f21c20cd9181d5494b9d616913128742fc2d65c8811e0b81e23daf",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/fixtures/device-api-process.ts",
+          "source_sha256": "355b88afb867fb28e354cf8429134ded431c28086094edc26235fa424caa94b8",
+          "public_sha256": "355b88afb867fb28e354cf8429134ded431c28086094edc26235fa424caa94b8",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/fixtures/device-claim-process.ts",
+          "source_sha256": "3d5422eaceece2dd76fb87bfcc01c33a71d9526b067580a3eac6a059d78b2ebd",
+          "public_sha256": "3d5422eaceece2dd76fb87bfcc01c33a71d9526b067580a3eac6a059d78b2ebd",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/fixtures/device-handover-process.ts",
+          "source_sha256": "a00910ac3134ef7aa67c2723a6d8a5bdad43b5db3e6dd5db49cea208241aa9e8",
+          "public_sha256": "a00910ac3134ef7aa67c2723a6d8a5bdad43b5db3e6dd5db49cea208241aa9e8",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/fixtures/device-process.ts",
+          "source_sha256": "719cca1b5fafb9eff8d22cf6f1092f34d973389f5026fd9abed959f5d99b4b7e",
+          "public_sha256": "719cca1b5fafb9eff8d22cf6f1092f34d973389f5026fd9abed959f5d99b4b7e",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/fixtures/notification-process.ts",
+          "source_sha256": "765011df4a908b9e6223c1e13296a9329272447b678bf8b08ccb994e9f43208e",
+          "public_sha256": "765011df4a908b9e6223c1e13296a9329272447b678bf8b08ccb994e9f43208e",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/helpers.ts",
+          "source_sha256": "5ce95c50bda3b0912ee676d19dc45d3d26e3bbae70f683130c53e45e05a35ce9",
+          "public_sha256": "5ce95c50bda3b0912ee676d19dc45d3d26e3bbae70f683130c53e45e05a35ce9",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/notification-integration.test.ts",
+          "source_sha256": "beac52c3ca4eb5b0b8ef985a8b5b2bbc3b18977721aa8e3a95ecd16604549cd1",
+          "public_sha256": "beac52c3ca4eb5b0b8ef985a8b5b2bbc3b18977721aa8e3a95ecd16604549cd1",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/notifications.test.ts",
+          "source_sha256": "4d4de44b4616bf25508ca5f5d10db2b4b3d432301cfc5989d402386c201a4533",
+          "public_sha256": "4d4de44b4616bf25508ca5f5d10db2b4b3d432301cfc5989d402386c201a4533",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/process.test.ts",
+          "source_sha256": "a2dbf48277ff09e1172d34ee7969bc78ed249bcb93daf620ce6cf27bd6522768",
+          "public_sha256": "a2dbf48277ff09e1172d34ee7969bc78ed249bcb93daf620ce6cf27bd6522768",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/recovery-format.test.ts",
+          "source_sha256": "6611bbd1e731ca684e8b8d5d768fd1a3c0b8736b447e9a240fc694841640d3ea",
+          "public_sha256": "6611bbd1e731ca684e8b8d5d768fd1a3c0b8736b447e9a240fc694841640d3ea",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/recovery-gate.test.ts",
+          "source_sha256": "e7f986722b9bd1a9eae2c88af04d4e7e5034e7afaa9508f10538a7712e273425",
+          "public_sha256": "e7f986722b9bd1a9eae2c88af04d4e7e5034e7afaa9508f10538a7712e273425",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/source-runtime.test.ts",
+          "source_sha256": "91129bf683c73912af7b38629ee19150ee045a6b70cb37af46905d39a9c117b3",
+          "public_sha256": "91129bf683c73912af7b38629ee19150ee045a6b70cb37af46905d39a9c117b3",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/test/storage.test.ts",
+          "source_sha256": "3f00c4fa87ac0d0688b84886516afa33f99b7d98ce28a7e2bdc696595b748887",
+          "public_sha256": "3f00c4fa87ac0d0688b84886516afa33f99b7d98ce28a7e2bdc696595b748887",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/tsconfig.build.json",
+          "source_sha256": "061376bba0c66809d9f8f9368c494c70a9af7a00478b289af4b7b05906fb502d",
+          "public_sha256": "061376bba0c66809d9f8f9368c494c70a9af7a00478b289af4b7b05906fb502d",
+          "change": "byte-identical"
+        },
+        {
+          "path": "server/tsconfig.json",
+          "source_sha256": "6a27bcad26af6c40e7125bf4d50738db6fc6acf23bba84a1eb0bc4dc6529f010",
+          "public_sha256": "6a27bcad26af6c40e7125bf4d50738db6fc6acf23bba84a1eb0bc4dc6529f010",
+          "change": "byte-identical"
+        }
+      ]
+    },
+    {
+      "component": "pi-host",
+      "baseline": "Frozen historical T013 source subset; excludes T014; no inherited full-candidate approval",
+      "source_manifest_sha256": "0a8c2ff81c91d59f603549346a24c4726f5268962fd85e2dca751cea33de7135",
+      "files": [
+        {
+          "path": "pi-host/package-lock.json",
+          "source_sha256": "b084ed5f73c9ff7e3a90e2ca9c7e953b233ca665288de74c2407c0639be35166",
+          "public_sha256": "b084ed5f73c9ff7e3a90e2ca9c7e953b233ca665288de74c2407c0639be35166",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/package.json",
+          "source_sha256": "e5b5339efdf3e16fe8b8ed6abfb15854e03e2de7166131c8884aeaacc476f5ce",
+          "public_sha256": "6ec38c61263ac21579a94c1e325863e0de487487f2bf08a737c49e556792246e",
+          "change": "check builds dist before whole-tree typecheck for clean source-only bootstrap"
+        },
+        {
+          "path": "pi-host/src/backup-capture.ts",
+          "source_sha256": "6b28666ae82635905d78e0de789aa376c41d7f3ee21ebae76d0855f524cf5205",
+          "public_sha256": "6b28666ae82635905d78e0de789aa376c41d7f3ee21ebae76d0855f524cf5205",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/backup-cli.ts",
+          "source_sha256": "4bdb8af3f370a3cfe852d02a277e95449617a2a44f3c955e1e14c6e9885c5180",
+          "public_sha256": "4bdb8af3f370a3cfe852d02a277e95449617a2a44f3c955e1e14c6e9885c5180",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/backup-files.ts",
+          "source_sha256": "ec98b66a04cfd2ebdfbf9b2823e8cf8d7f793772ea5fff518a7a288d96e0f100",
+          "public_sha256": "ec98b66a04cfd2ebdfbf9b2823e8cf8d7f793772ea5fff518a7a288d96e0f100",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/backup-format.ts",
+          "source_sha256": "243a27cbb72ca68a5090463d0cb417d8e03719a3bb419fece4374382d926a3db",
+          "public_sha256": "243a27cbb72ca68a5090463d0cb417d8e03719a3bb419fece4374382d926a3db",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/backup-validate.ts",
+          "source_sha256": "d47836aeab1acef9ad972c206ead839e553647887b403998fb001f88abff0e90",
+          "public_sha256": "d47836aeab1acef9ad972c206ead839e553647887b403998fb001f88abff0e90",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/config.ts",
+          "source_sha256": "750bea2d1a17317b619ebb96ccd4c09147ad785a1ce2f8fabcee94a9b4fc8c30",
+          "public_sha256": "750bea2d1a17317b619ebb96ccd4c09147ad785a1ce2f8fabcee94a9b4fc8c30",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/credentials.ts",
+          "source_sha256": "c151639abaea9db63426bd1971152cda39ef3bc79d1787dddda728ed5147c7ac",
+          "public_sha256": "c151639abaea9db63426bd1971152cda39ef3bc79d1787dddda728ed5147c7ac",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/identity.ts",
+          "source_sha256": "f856ef6aef38ed6fd6890452e6dd260610c12c3036e9038d1413b9ba0b38ff24",
+          "public_sha256": "f856ef6aef38ed6fd6890452e6dd260610c12c3036e9038d1413b9ba0b38ff24",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/main.ts",
+          "source_sha256": "40eb6770c73a5ad7cea4c5f1a52813b62c337671816c2cf4571121e5c92b57a1",
+          "public_sha256": "40eb6770c73a5ad7cea4c5f1a52813b62c337671816c2cf4571121e5c92b57a1",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/model-budget.ts",
+          "source_sha256": "5f921e402562fb07a9ff87234823b21e1aabab2e8eae5824a884e722a98c4191",
+          "public_sha256": "5f921e402562fb07a9ff87234823b21e1aabab2e8eae5824a884e722a98c4191",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/native.ts",
+          "source_sha256": "57f9b72a3df853e7027f5525d7db4c283d395944f67396b428ec8224bd016c42",
+          "public_sha256": "57f9b72a3df853e7027f5525d7db4c283d395944f67396b428ec8224bd016c42",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/private-files.ts",
+          "source_sha256": "fac283aebab898c64b1116527f82d041f986993143e7edc00ff0853d75aba56c",
+          "public_sha256": "fac283aebab898c64b1116527f82d041f986993143e7edc00ff0853d75aba56c",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/recovery-admission.ts",
+          "source_sha256": "a862f8e9af59f34072b27723a235f8a7492612fc74e1fb9558ee8e294dc5b86c",
+          "public_sha256": "a862f8e9af59f34072b27723a235f8a7492612fc74e1fb9558ee8e294dc5b86c",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/restore-cli.ts",
+          "source_sha256": "adb45e4a3243813e860a31eec0a1c56ce58fcc7ba53bd9dba73a8da17121dc52",
+          "public_sha256": "adb45e4a3243813e860a31eec0a1c56ce58fcc7ba53bd9dba73a8da17121dc52",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/restore-files.ts",
+          "source_sha256": "3d214aa004fc39b9c29a988e8742a0835a13bb6ae74e5a4bbdb312ef43274241",
+          "public_sha256": "3d214aa004fc39b9c29a988e8742a0835a13bb6ae74e5a4bbdb312ef43274241",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/restore-install.ts",
+          "source_sha256": "1fcca5ca1105396aed328f5e7d39125cfef410edc3e9cf2e4fed3b51cccda319",
+          "public_sha256": "1fcca5ca1105396aed328f5e7d39125cfef410edc3e9cf2e4fed3b51cccda319",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/restore-scope.ts",
+          "source_sha256": "ed7953dd52b39218de07091f9a6a6eb7e90d47067773258d6dc6b5f790df5380",
+          "public_sha256": "ed7953dd52b39218de07091f9a6a6eb7e90d47067773258d6dc6b5f790df5380",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/src/runtime.ts",
+          "source_sha256": "f3660d9cbf5fd9d5f422e99ffcd462a95b68453af9bb39ee6eb60e3e38d71821",
+          "public_sha256": "f3660d9cbf5fd9d5f422e99ffcd462a95b68453af9bb39ee6eb60e3e38d71821",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/backup-capture.test.ts",
+          "source_sha256": "aa5b573ea6f318698eb2ca06080c96b42f6e6a5060271c219079db47e722d63a",
+          "public_sha256": "aa5b573ea6f318698eb2ca06080c96b42f6e6a5060271c219079db47e722d63a",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/backup-cli.test.ts",
+          "source_sha256": "9dda85b6441787870572a900c2064b5ae85928a6ddb702aa6d387b894c9a0c89",
+          "public_sha256": "9dda85b6441787870572a900c2064b5ae85928a6ddb702aa6d387b894c9a0c89",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/backup-crash.test.ts",
+          "source_sha256": "b1641b2cf704c5fb6bf18f9942ad2f55c89e36247bbe5fcbb8fb0da14a761c15",
+          "public_sha256": "b1641b2cf704c5fb6bf18f9942ad2f55c89e36247bbe5fcbb8fb0da14a761c15",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/backup-files.test.ts",
+          "source_sha256": "d441f415b81a8e3c39efeaa3af576bcc60e614deed7a728bbec582f92ffcefbf",
+          "public_sha256": "d441f415b81a8e3c39efeaa3af576bcc60e614deed7a728bbec582f92ffcefbf",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/backup-format.test.ts",
+          "source_sha256": "25e3ec417f78768acf178b72a6ec6524c4b108de00914b69babbb379f3e7a6b0",
+          "public_sha256": "25e3ec417f78768acf178b72a6ec6524c4b108de00914b69babbb379f3e7a6b0",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/backup-journal.test.ts",
+          "source_sha256": "c780b43b738796db6a656b214d212bf9b91beb0043c6cae4439244b693cd0c0f",
+          "public_sha256": "c780b43b738796db6a656b214d212bf9b91beb0043c6cae4439244b693cd0c0f",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/backup-native.test.ts",
+          "source_sha256": "88c753a85d5fc67d996e635118863a8cbf08dd9cb21574e88196eb0ed4b6661f",
+          "public_sha256": "88c753a85d5fc67d996e635118863a8cbf08dd9cb21574e88196eb0ed4b6661f",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/backup-notification.test.ts",
+          "source_sha256": "275363e76b1cf87ee19a31a5c30247ddf3d4029024468efebd273338d0a5fd80",
+          "public_sha256": "275363e76b1cf87ee19a31a5c30247ddf3d4029024468efebd273338d0a5fd80",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/backup-receipt.test.ts",
+          "source_sha256": "eb7512c1951af378c470793fb2c847c0c517be279f7d164737aee415f07a41d5",
+          "public_sha256": "eb7512c1951af378c470793fb2c847c0c517be279f7d164737aee415f07a41d5",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/backup-unknown.test.ts",
+          "source_sha256": "db247473e5cec2f43f0aaabc25f3eadea77f7748d82871301570321fa2b085fb",
+          "public_sha256": "db247473e5cec2f43f0aaabc25f3eadea77f7748d82871301570321fa2b085fb",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/backup-validate.test.ts",
+          "source_sha256": "37eccceb1fdb0fc46afd7236b748bb1c9ff0d617fb2e1840c4937e02206d767a",
+          "public_sha256": "37eccceb1fdb0fc46afd7236b748bb1c9ff0d617fb2e1840c4937e02206d767a",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/cli.test.ts",
+          "source_sha256": "5efd05053878afd5ebc19a2fdb7da954d9180017da3ab93551d35980ce53f813",
+          "public_sha256": "5efd05053878afd5ebc19a2fdb7da954d9180017da3ab93551d35980ce53f813",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/crash.test.ts",
+          "source_sha256": "f7c56f5bda2c66de3770dda2d4c250f76e9acc604260868c687e2dc1f9229c7b",
+          "public_sha256": "f7c56f5bda2c66de3770dda2d4c250f76e9acc604260868c687e2dc1f9229c7b",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/deploy.test.ts",
+          "source_sha256": "cc031213f78068c61541b6d5599b63bad2b62bb739063969228e50de24f35f7f",
+          "public_sha256": "d8f462bbc9e360abcc305afc3bef366b6e0cc7bc4de2d1859839d63a79774b15",
+          "change": "generic public unit filename assertions"
+        },
+        {
+          "path": "pi-host/test/device-auth.test.ts",
+          "source_sha256": "646e3948a6c16f3fd16e893665e9ee0d299f5bfb788115422b7425a58663ed1e",
+          "public_sha256": "646e3948a6c16f3fd16e893665e9ee0d299f5bfb788115422b7425a58663ed1e",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/emulator-fixture.test.ts",
+          "source_sha256": "8d8a6d693ce95c56ad1bbb1efa1445b7d401f78d316a6111017a3ebdf0d732b2",
+          "public_sha256": "8d8a6d693ce95c56ad1bbb1efa1445b7d401f78d316a6111017a3ebdf0d732b2",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/emulator-fixture.ts",
+          "source_sha256": "28a01baffe1b2f3723b6b27b5025e799c24e5c5b121c0b682a0ea37182a59de0",
+          "public_sha256": "28a01baffe1b2f3723b6b27b5025e799c24e5c5b121c0b682a0ea37182a59de0",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/fixtures/backup-io-crash.ts",
+          "source_sha256": "13585e91b4f7bfb777885a7e49413fbd35fdc0555b8cc813933e4308ee730e2b",
+          "public_sha256": "13585e91b4f7bfb777885a7e49413fbd35fdc0555b8cc813933e4308ee730e2b",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/fixtures/child.ts",
+          "source_sha256": "097343608296c1bcbcb8add298a64d6841c71a38926a84d5e185ced52e2b4d02",
+          "public_sha256": "097343608296c1bcbcb8add298a64d6841c71a38926a84d5e185ced52e2b4d02",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/fixtures/restore-completion-window.ts",
+          "source_sha256": "a3fbc66a67bb679286c17c4f842105e577d78946843ccb2c486db6424534238d",
+          "public_sha256": "a3fbc66a67bb679286c17c4f842105e577d78946843ccb2c486db6424534238d",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/fixtures/restore-io-crash.ts",
+          "source_sha256": "7fa7f838b52a808f49598c8e3d56b5a0a0f5fdb16885cfa23b5bc411b25e453f",
+          "public_sha256": "7fa7f838b52a808f49598c8e3d56b5a0a0f5fdb16885cfa23b5bc411b25e453f",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/fixtures/restore-native-before-public.ts",
+          "source_sha256": "4aa8cdf0c8c63b7edd2723b279c872757cd72d8c1108aed49acf16987672747d",
+          "public_sha256": "4aa8cdf0c8c63b7edd2723b279c872757cd72d8c1108aed49acf16987672747d",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/fixtures/source-paused-http-intent.ts",
+          "source_sha256": "7971cbeb29d942094c72c3bd2b1aa5daf446ac34b71743fce3edc974af4e1332",
+          "public_sha256": "7971cbeb29d942094c72c3bd2b1aa5daf446ac34b71743fce3edc974af4e1332",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/fixtures/source-paused-model.ts",
+          "source_sha256": "0807d6d5fc2100a93183131e14d422ff07d0815b210fe93fdbb1488183b812b2",
+          "public_sha256": "0807d6d5fc2100a93183131e14d422ff07d0815b210fe93fdbb1488183b812b2",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/fsync.test.ts",
+          "source_sha256": "1721052633a29807c61b95722c3031d2e720683e457fa3c3a8b443115558879d",
+          "public_sha256": "1721052633a29807c61b95722c3031d2e720683e457fa3c3a8b443115558879d",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/helpers.ts",
+          "source_sha256": "973082b571dcc48be87f5d8333fe830f362b3e12523f47dde1a716313a625cc0",
+          "public_sha256": "973082b571dcc48be87f5d8333fe830f362b3e12523f47dde1a716313a625cc0",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/identity-budget.test.ts",
+          "source_sha256": "d140367d3c75d8017fce03214200b2875be844e9950429d727f8a3e4b62f4913",
+          "public_sha256": "d140367d3c75d8017fce03214200b2875be844e9950429d727f8a3e4b62f4913",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/native.test.ts",
+          "source_sha256": "bf07daa93ce413c48b11427b64888abe84bdc47be9c31f970486246556130a85",
+          "public_sha256": "bf07daa93ce413c48b11427b64888abe84bdc47be9c31f970486246556130a85",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/ntfy.test.ts",
+          "source_sha256": "3278f4af7ad63dc3b7a472215d8e2c3360074fa722c64115e6d1025e352f51c8",
+          "public_sha256": "3278f4af7ad63dc3b7a472215d8e2c3360074fa722c64115e6d1025e352f51c8",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/profile-emulator-fixture.ts",
+          "source_sha256": "1dbc45e1f8841c9581919b7e9ba99e4b4bba789abe27c1f30bb7cc5927a67321",
+          "public_sha256": "1dbc45e1f8841c9581919b7e9ba99e4b4bba789abe27c1f30bb7cc5927a67321",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/real-ntfy.ts",
+          "source_sha256": "e5bd5d337481c19eafe52ca60f0cf744893645a278afd1807271d25cbf358189",
+          "public_sha256": "e5bd5d337481c19eafe52ca60f0cf744893645a278afd1807271d25cbf358189",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/recovery-admission.test.ts",
+          "source_sha256": "5fa4f6178c9ad4134cc07138755e6177d20eabda0429530709edfebb0f9e5bda",
+          "public_sha256": "5fa4f6178c9ad4134cc07138755e6177d20eabda0429530709edfebb0f9e5bda",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/responses.test.ts",
+          "source_sha256": "f6ce36b6ee8fa5254d2fefdafceb0ee929cb6137bf66f9607197e5ea850d30bc",
+          "public_sha256": "f6ce36b6ee8fa5254d2fefdafceb0ee929cb6137bf66f9607197e5ea850d30bc",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/restore-cli.test.ts",
+          "source_sha256": "af9ba644f469e0a41757554abeeaa6cad9d6aef82eb0ab1ba7658f1b36929163",
+          "public_sha256": "af9ba644f469e0a41757554abeeaa6cad9d6aef82eb0ab1ba7658f1b36929163",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/restore-completion.test.ts",
+          "source_sha256": "d793b1921f83d7c17a7d805521c00d2df60c09833d62d5424693d2eec9d5973b",
+          "public_sha256": "d793b1921f83d7c17a7d805521c00d2df60c09833d62d5424693d2eec9d5973b",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/restore-crash.test.ts",
+          "source_sha256": "9ea2c0af0720b66945f777efbe733d3cabfc1c8ebbb1a7de6eed4fe8cc7067a6",
+          "public_sha256": "9ea2c0af0720b66945f777efbe733d3cabfc1c8ebbb1a7de6eed4fe8cc7067a6",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/restore-files.test.ts",
+          "source_sha256": "fa6e0e4dc31338662daad4c7cb49159b0c153c2e4a8f51e3000fd1e997089622",
+          "public_sha256": "fa6e0e4dc31338662daad4c7cb49159b0c153c2e4a8f51e3000fd1e997089622",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/restore-parent.test.ts",
+          "source_sha256": "94c73d213a22830e5f02104072f8b23e45c0c992fc6c191ece3970800e1fb311",
+          "public_sha256": "94c73d213a22830e5f02104072f8b23e45c0c992fc6c191ece3970800e1fb311",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/restore-scope.test.ts",
+          "source_sha256": "56a7b0e34e8c9fe97116b29d13b00c3180c10f7876a0384cbfe09007aab75f2f",
+          "public_sha256": "56a7b0e34e8c9fe97116b29d13b00c3180c10f7876a0384cbfe09007aab75f2f",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/restore-stale-facts.test.ts",
+          "source_sha256": "50fd1b363bfe06fde62e9ad6784a73506b92e30b0d4fa2d94012bfb5c1db2add",
+          "public_sha256": "50fd1b363bfe06fde62e9ad6784a73506b92e30b0d4fa2d94012bfb5c1db2add",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/runtime.test.ts",
+          "source_sha256": "a94969cd4eed288bd6130be3479076804389762488ad19412f6383f2fe5d003f",
+          "public_sha256": "a94969cd4eed288bd6130be3479076804389762488ad19412f6383f2fe5d003f",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/source-paused.test.ts",
+          "source_sha256": "910fc515fffe1df4af172281fed340e7e086ebfc5c3d808fcb0564c2f372a5b4",
+          "public_sha256": "910fc515fffe1df4af172281fed340e7e086ebfc5c3d808fcb0564c2f372a5b4",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/test/wire.test.ts",
+          "source_sha256": "2f9bb0c18b6bc537113147cc8218ba70b0c46f3757245d2cfd85b1e7f7beff07",
+          "public_sha256": "2f9bb0c18b6bc537113147cc8218ba70b0c46f3757245d2cfd85b1e7f7beff07",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/tsconfig.build.json",
+          "source_sha256": "061376bba0c66809d9f8f9368c494c70a9af7a00478b289af4b7b05906fb502d",
+          "public_sha256": "061376bba0c66809d9f8f9368c494c70a9af7a00478b289af4b7b05906fb502d",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/tsconfig.json",
+          "source_sha256": "6a27bcad26af6c40e7125bf4d50738db6fc6acf23bba84a1eb0bc4dc6529f010",
+          "public_sha256": "6a27bcad26af6c40e7125bf4d50738db6fc6acf23bba84a1eb0bc4dc6529f010",
+          "change": "byte-identical"
+        },
+        {
+          "path": "pi-host/deploy/render-units.mjs",
+          "source_sha256": "9bc3b9db016bccb5b08c460b94a9972c4a8b9aa1d0e76f7258269710942e5ec7",
+          "public_sha256": "befa11a9e34144ef522f00913ec48b57690484338d546d0dac628d901c69efcc",
+          "change": "generic public unit filenames; no deployment configuration"
+        }
+      ],
+      "additional_explicit_file": "deploy/render-units.mjs from the same frozen T013 baseline; separately authorized as the synthetic deployment test dependency"
     }
   ]
 }

@@ -23,6 +23,7 @@
 **/node_modules/
 **/dist/
 **/.gradle/
+**/.gradle-*/
 **/.kotlin/
 **/build/
 *.apk

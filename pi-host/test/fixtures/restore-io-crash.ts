@@ -1,0 +1,20 @@
+import fs from'node:fs';
+import{basename,dirname}from'node:path';
+import{syncBuiltinESMExports}from'node:module';
+const fault=process.env.RESTORE_FAULT!;const ledger=process.env.RESTORE_LEDGER!;const authority=process.env.RESTORE_AUTHORITY;const intent=process.env.RESTORE_INTENT!;const native=process.env.RESTORE_NATIVE!;
+let fired=false;const stop=(name:string,signal:NodeJS.Signals='SIGKILL')=>{if(fired)return;fired=true;write(1,`fault:${name}\n`);process.kill(process.pid,signal);};
+const link=fs.linkSync;fs.linkSync=(source,destination)=>{link(source,destination);const target=String(destination);
+  if(fault==='pending-linked'&&target===ledger+'.restore-pending')stop(fault);
+  if(fault==='ledger-linked'&&target===ledger)stop(fault);
+  if(fault==='authority-pending-linked'&&target===authority+'.restore-pending')stop(fault);
+  if(fault==='authority-linked'&&target===authority)stop(fault);
+  if(fault==='native-linked'&&target===native)stop(fault);
+  if(fault==='completion-linked'&&target===intent+'/COMPLETE.json')stop(fault);
+  if(fault==='signal-before-stdout'&&target===intent+'/COMPLETE.json')stop(fault,'SIGTERM');
+};
+const write=fs.writeSync;fs.writeSync=((fd:number,bytes:Buffer,offset:number,length:number,position:number|null)=>{
+  if(fault==='native-prepared-partial'&&fs.readlinkSync(`/proc/self/fd/${fd}`).startsWith(dirname(native)+'/.notifier-restore-')&&fs.readlinkSync(`/proc/self/fd/${fd}`).endsWith('-native.prepared')){const count=write(fd,bytes,offset,Math.min(length,7),position);stop(fault);return count;}return write(fd,bytes,offset,length,position);
+})as typeof fs.writeSync;
+const open=fs.openSync;fs.openSync=((path:fs.PathLike,flags:fs.OpenMode,mode?:fs.Mode)=>{const fd=open(path,flags,mode);if(fault==='native-created-unproven'&&typeof path==='string'&&dirname(path)===dirname(native)&&basename(path).startsWith('.notifier-restore-')&&basename(path).endsWith('-native.prepared'))stop(fault);return fd;})as typeof fs.openSync;
+const sync=fs.fsyncSync;fs.fsyncSync=fd=>{sync(fd);if(fault==='intent-file-synced'&&fs.readlinkSync(`/proc/self/fd/${fd}`)===intent+'/INTENT.json')stop(fault);};
+syncBuiltinESMExports();await import('../../dist/main.js');
