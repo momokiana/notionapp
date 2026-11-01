@@ -97,6 +97,18 @@ class DeviceClientTest {
         val f = fixture(); f.disk.failAt = 3; fails { f.client.pair(pkg(f)) }; val p = f.disk.load().auth_intent!!; assertEquals(f.old, f.disk.load().connection); assertTrue(p.uncertain)
         f.disk.failAt = -1; f.client.reconcile(); assertEquals(p.proposed_token, f.disk.load().connection!!.token); assertEquals(1, f.backend.calls.count { it.method == "POST" })
     }
+    @Test fun verifiedRotationPairingAndSelfRevocationPreserveLocalWorkspaceWithoutRebinding() {
+        val f = fixture(); val book = ResponseDrafts(f.disk, f.ledger)
+        val draft = book.create(event(), event().interaction!!.actions[0], "", ConnectionSnapshot(f.old.namespace))
+        book.template(null, "Quick", "Local only", ConnectionSnapshot(f.old.namespace))
+        val templates = f.disk.load().templates
+        f.client.rotate(); assertEquals(listOf(draft), f.disk.load().drafts); assertEquals(f.old.namespace, f.disk.load().connection!!.namespace)
+        f.client.revoke(); assertEquals(listOf(draft), f.disk.load().drafts); assertEquals(templates, f.disk.load().templates)
+        f.ledger.disconnect(); assertEquals(listOf(draft), f.disk.load().drafts); assertEquals(templates, f.disk.load().templates)
+        val g = fixture(); val otherBook = ResponseDrafts(g.disk, g.ledger)
+        val oldDraft = otherBook.create(event(), event().interaction!!.actions[0], "", ConnectionSnapshot(g.old.namespace))
+        g.client.pair(pkg(g)); assertNotEquals(oldDraft.namespace, g.disk.load().connection!!.namespace); assertEquals(listOf(oldDraft), g.disk.load().drafts)
+    }
     @Test fun rotationWithOriginalUnknownPreservesEveryPendingByteNamespaceAndDoesNotRecoverIt() {
         val f = fixture(); val pending = unknown(f); val originalPosts = f.backend.calls.count { it.path.endsWith("/responses") }
         f.client.rotate(); val state = f.disk.load(); assertEquals(pending, state.pending); assertEquals(f.old.namespace, state.connection!!.namespace); assertNotEquals(f.old.token, state.connection.token); assertEquals(2L, state.device!!.credential_version)

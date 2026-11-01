@@ -24,6 +24,11 @@ class StateEvidence : Instrumentation() {
                 state.device?.let { put("device", wire.encodeToJsonElement(ManagedDevice.serializer(), it)) }
                 state.pending?.let { p -> put("pending", buildJsonObject { put("id", p.id); put("namespace", p.namespace); put("path", p.path); put("body_hash", credentialDigest(p.body)); put("uncertain", p.uncertain); put("response", p.response); put("record_hash", credentialDigest(wire.encodeToString(Pending.serializer(), p))) }) }
                 state.auth_intent?.let { p -> put("auth_intent", buildJsonObject { put("kind", p.kind); put("id", p.id); put("root_hash", credentialDigest(p.root)); put("body_hash", credentialDigest(p.body)); put("uncertain", p.uncertain); p.proposed_token?.let { put("proposal_hash", credentialDigest(it)) }; p.target_device?.let { put("target", it) } }) }
+                put("drafts", buildJsonArray { state.drafts.forEach { d -> add(buildJsonObject {
+                    put("id", d.id); put("namespace", d.namespace); put("event_id", d.event_id); put("event_version", d.event_version); put("interaction_version", d.interaction_version)
+                    put("text_hash", credentialDigest(d.text)); put("record_hash", credentialDigest(wire.encodeToString(ResponseDraft.serializer(), d)))
+                }) } })
+                put("templates", buildJsonArray { state.templates.forEach { t -> add(buildJsonObject { put("id", t.id); put("record_hash", credentialDigest(wire.encodeToString(ReplyTemplate.serializer(), t))) }) } })
                 put("files", buildJsonObject {
                     listOf("connection.enc", "inbox.enc", "push.enc", "notification-preferences.enc").forEach { name ->
                         val file = File(context.noBackupFilesDir, name)

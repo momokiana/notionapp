@@ -87,8 +87,8 @@ class HttpTransport : Transport {
         } finally { c.disconnect() }
     }
 }
-@Serializable data class Pending(val namespace: String, val id: String, val path: String, val body: String, val response: Boolean, val uncertain: Boolean = false)
-@Serializable data class LocalState(val connection: Connection? = null, val pending: Pending? = null, val device: ManagedDevice? = null, val auth_intent: AuthIntent? = null)
+@Serializable data class Pending(val namespace: String, val id: String, val path: String, val body: String, val response: Boolean, val uncertain: Boolean = false, val draft: ResponseDraft? = null)
+@Serializable data class LocalState(val connection: Connection? = null, val pending: Pending? = null, val device: ManagedDevice? = null, val auth_intent: AuthIntent? = null, val drafts: List<ResponseDraft> = emptyList(), val templates: List<ReplyTemplate> = emptyList())
 interface StateStore { fun load(): LocalState; fun save(state: LocalState) }
 
 /** A single durable write slot. Persist before sending, including the uncertainty marker. */
@@ -104,7 +104,7 @@ class Ledger(private val storage: StateStore, private val transport: Transport) 
     fun disconnect(expected: ConnectionSnapshot = ConnectionSnapshot(storage.load().connection?.namespace)) = synchronized(ConnectionGate.monitor) {
         checkConnectionSnapshot(state(), expected)
         check(state().pending == null && state().auth_intent == null) { "有未知提交或身份操作，不能删除原连接" }
-        storage.save(LocalState())
+        storage.save(state().copy(connection = null, device = null))
     }
     private fun writable() { val state = state(); check(state.auth_intent == null && state.device?.revoked != true) { "请先对账原身份操作；已撤销的连接不能提交新写入" } }
     private fun connection() = state().connection ?: error("请先设置连接")
@@ -115,6 +115,19 @@ class Ledger(private val storage: StateStore, private val transport: Transport) 
     fun read(event: Event, expected: ConnectionSnapshot = ConnectionSnapshot(storage.load().connection?.namespace)): Unit = synchronized(ConnectionGate.monitor) { checkConnectionSnapshot(state(), expected); writable(); transport.call(connection(), "PUT", "/v1/events/${safe(event.id)}/read-state", "{\"event_version\":${event.event_version}}"); Unit }
     fun respond(event: Event, action: Action, text: String, expected: ConnectionSnapshot = ConnectionSnapshot(storage.load().connection?.namespace)) = synchronized(ConnectionGate.monitor) {
         checkConnectionSnapshot(state(), expected); writable()
+        begin(responsePending(event, action, text))
+    }
+    fun submitDraft(confirmation: DraftConfirmation, expected: ConnectionSnapshot, stillConfirmed: () -> Boolean = { true }) = synchronized(ConnectionGate.monitor) {
+        val old = state(); checkConnectionSnapshot(old, expected); writable(); originalDraft(old, confirmation.draft)
+        check(old.pending == null) { "请先对账未决提交" }
+        val latest = event(confirmation.draft.event_id)
+        checkConnectionSnapshot(state(), expected); originalDraft(state(), confirmation.draft)
+        draftTarget(confirmation.draft, latest)
+        check(latest == confirmation.current) { "在线事件已变化，未提交；请重新联网核对并确认" }
+        check(stillConfirmed()) { "确认已因离页或切到后台失效，草稿保留；请重新核对" }
+        begin(responsePending(latest, confirmation.draft.action, confirmation.draft.text, confirmation.draft))
+    }
+    private fun responsePending(event: Event, action: Action, text: String, draft: ResponseDraft? = null): Pending {
         check(event.can_respond) { "当前卡片不能回应，请刷新" }
         require(text.codePointCount(0, text.length) <= 4000 && (action.type != "text" || text.isNotBlank())) { "文字不能为空，且不能超过 4000 字符" }
         val interaction = event.interaction ?: error("无交互")
@@ -124,7 +137,7 @@ class Ledger(private val storage: StateStore, private val transport: Transport) 
             put("response_id", id); put("event_version", event.event_version); put("interaction_id", interaction.id)
             put("interaction_version", interaction.version); put("action_id", action.id); put("text", text)
         }.toString()
-        begin(Pending(connection().namespace, id, "/v1/events/${safe(event.id)}/responses", body, true))
+        return Pending(connection().namespace, id, "/v1/events/${safe(event.id)}/responses", body, true, draft = draft)
     }
     fun decide(event: Event, disposition: String, expected: ConnectionSnapshot = ConnectionSnapshot(storage.load().connection?.namespace)) = synchronized(ConnectionGate.monitor) {
         checkConnectionSnapshot(state(), expected); writable()
@@ -134,11 +147,20 @@ class Ledger(private val storage: StateStore, private val transport: Transport) 
         begin(Pending(connection().namespace, id, "/v1/events/${safe(event.id)}/disposition", body, false))
     }
     private fun begin(p: Pending) {
-        check(state().pending == null) { "请先对账未决提交" }
-        storage.save(state().copy(pending = p))
+        val old = state()
+        check(old.pending == null) { "请先对账未决提交" }
+        p.draft?.let { originalDraft(old, it) }
+        val next = old.copy(pending = p, drafts = old.drafts.filterNot { it.id == p.draft?.id })
+        checkedLocalBytes(next)
+        // Removal and original write intent are ONE AtomicFile commit, before any POST.
+        storage.save(next)
         send(p, first = true)
     }
-    private fun resolved() { storage.save(state().copy(pending = null)) }
+    private fun resolved(restoreDraft: Boolean = false) {
+        val old = state(); val draft = old.pending?.draft.takeIf { restoreDraft }
+        val next = old.copy(pending = null, drafts = if (draft == null) old.drafts else old.drafts + draft)
+        checkedLocalBytes(next); storage.save(next)
+    }
     private fun send(p: Pending, first: Boolean) {
         check(p.namespace == connection().namespace)
         // If killed after this durable write, a later refusal cannot erase the unknown operation.
@@ -148,7 +170,7 @@ class Ledger(private val storage: StateStore, private val transport: Transport) 
             check(receipt[if (p.response) "response_id" else "event_id"]?.jsonPrimitive?.content == if (p.response) p.id else p.path.split('/')[3]) { "回执关联不匹配，保留未知提交" }
             resolved()
         } catch (e: ApiFailure) {
-            if (first && !p.uncertain && e.status in listOf(409, 410, 422) && e.code in setOf("EVENT_VERSION_CONFLICT", "INTERACTION_VERSION_CONFLICT", "ACTION_ALREADY_RESERVED", "SOURCE_READ_ONLY", "EVENT_CLOSED", "ACTION_EXPIRED", "INVALID_INPUT")) resolved()
+            if (first && !p.uncertain && e.status in listOf(409, 410, 422) && e.code in setOf("EVENT_VERSION_CONFLICT", "INTERACTION_VERSION_CONFLICT", "ACTION_ALREADY_RESERVED", "SOURCE_READ_ONLY", "EVENT_CLOSED", "ACTION_EXPIRED", "INVALID_INPUT")) resolved(restoreDraft = true)
             throw e
         }
     }

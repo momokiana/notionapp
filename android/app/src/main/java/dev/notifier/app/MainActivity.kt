@@ -51,6 +51,14 @@ class MainActivity : ComponentActivity() {
 class ClientModel(app: Application) : AndroidViewModel(app) {
     private val localState = PrivateState(app)
     private val ledger = Ledger(localState, HttpTransport())
+    private val draftBook = ResponseDrafts(localState, ledger)
+    private val reviewGate = DraftReviewGate()
+    var drafts by mutableStateOf<List<ResponseDraft>>(emptyList()); private set
+    var isolatedDrafts by mutableStateOf<List<ResponseDraft>>(emptyList()); private set
+    var templates by mutableStateOf<List<ReplyTemplate>>(emptyList()); private set
+    var workspaceBytes by mutableStateOf(0); private set
+    var draftReview by mutableStateOf<DraftConfirmation?>(null); private set
+    fun cancelDraftReview() { reviewGate.invalidate(); draftReview = null }
     private val devices = DeviceClient(localState, HttpTransport(), BuildConfig.DEBUG)
     private val runtimeClient = SourceRuntimeClient(localState, HttpTransport())
     private val inbox = OfflineInbox(ledger, PrivateInbox(app))
@@ -88,7 +96,7 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
     } }
     fun foreground(active: Boolean) {
         foreground = active
-        if (active) autoRefresh() else { refreshRequested = false; currentFresh = false }
+        if (active) autoRefresh() else { refreshRequested = false; currentFresh = false; cancelDraftReview() }
     }
     fun autoRefresh() {
         if (!foreground || !ready || connection == null) return
@@ -97,6 +105,7 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
     }
     private fun work(action: suspend () -> Unit) {
         if (busy) return
+        cancelDraftReview()
         busy = true; error = null; message = null
         viewModelScope.launch {
             try { action() }
@@ -118,6 +127,11 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
         work { action(expected) }
     }
     private fun applyLocal(state: LocalState) {
+        if (connection?.namespace != state.connection?.namespace || state.auth_intent != null || state.pending != null || state.device?.revoked == true || draftReview?.draft?.let { it !in state.drafts } == true) cancelDraftReview()
+        drafts = state.drafts.filter { it.namespace == state.connection?.namespace }
+        isolatedDrafts = state.drafts.filter { it.namespace != state.connection?.namespace }
+        templates = state.templates
+        workspaceBytes = wire.encodeToString(LocalState.serializer(), state).toByteArray(Charsets.UTF_8).size + 28
         if (connection?.namespace != state.connection?.namespace) {
             deviceEntries = emptyList(); deviceListObserved = null; events = emptyList(); current = null; history = emptyList(); receipt = null; lastSync = null; currentFresh = false; sourceRuntimeRead = null
         }
@@ -214,7 +228,29 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
         // A new notification may refer to an event not yet in the cached list.
         detailInside(id)
     }
-    fun back() { if (!busy) { current = null; history = emptyList(); receipt = null; currentFresh = false; sourceRuntimeRead = null } }
+    fun back() { val reviewing = draftReview != null; cancelDraftReview(); if (!busy && !reviewing) { current = null; history = emptyList(); receipt = null; currentFresh = false; sourceRuntimeRead = null } }
+    fun saveDraft(event: Event, action: Action, text: String, saved: () -> Unit = {}) = boundWork { expected ->
+        withContext(Dispatchers.IO) { draftBook.create(event, action, text, expected) }; saved(); message = "草稿仅保存于本机，尚未提交；联网后请核对并确认。"
+    }
+    fun editDraft(draft: ResponseDraft, text: String) = boundWork { expected -> withContext(Dispatchers.IO) { draftBook.edit(draft, text, expected) }; message = "原草稿文字已保存，未改绑问题或发送。" }
+    fun deleteDraft(draft: ResponseDraft) = boundWork { expected -> withContext(Dispatchers.IO) { draftBook.delete(draft, expected) }; message = "已删除这份未发送草稿，不影响已提交或未知请求。" }
+    fun deleteIsolatedDrafts(original: List<ResponseDraft>) = boundWork { expected -> withContext(Dispatchers.IO) { draftBook.deleteIsolated(expected, original) }; message = "已删除确认的隔离草稿，未删除原未决请求。" }
+    fun saveTemplate(previous: ReplyTemplate?, title: String, text: String) = boundWork { expected -> withContext(Dispatchers.IO) { draftBook.template(previous, title, text, expected) }; message = "快捷回复已保存于本机，不会自动发送。" }
+    fun deleteTemplate(previous: ReplyTemplate) = boundWork { expected -> withContext(Dispatchers.IO) { draftBook.deleteTemplate(previous, expected) } }
+    fun prepareDraft(draft: ResponseDraft) = boundWork { expected ->
+        val ticket = reviewGate.ticket()
+        val confirmation = withContext(Dispatchers.IO) { draftBook.prepare(draft, expected) }
+        if (foreground && reviewGate.accepts(ticket)) draftReview = confirmation
+    }
+    fun submitDraft() {
+        val confirmation = draftReview ?: return
+        boundWork { expected ->
+            val ticket = reviewGate.ticket()
+            withContext(Dispatchers.IO) { ledger.submitDraft(confirmation, expected) { reviewGate.accepts(ticket) } }
+            current?.let { detailInside(it.id) }
+            message = "回应已保存；草稿已移出，来源交付仍须另核回执。"
+        }
+    }
     fun reloadDetail() = current?.let { open(it.id) }
     fun moreHistory() = current?.let { e -> work { withContext(Dispatchers.IO) { inbox.moreHistory(e.id) }; showCache() } }
     private fun requireFresh() { check(currentFresh) { "缓存只供阅读，请先在线刷新详情再操作" } }
@@ -237,11 +273,11 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
         }
     }
     var settings by remember { mutableStateOf(false) }
-    BackHandler(enabled = m.current != null) { m.back() }
+    BackHandler(enabled = m.current != null || m.draftReview != null) { m.back() }
     Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().widthIn(max = 840.dp).padding(horizontal = 20.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(if (settings) "连接设置" else if (m.current != null) "事件详情" else "收件箱", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(vertical = 20.dp))
-            TextButton(onClick = { settings = !settings }, enabled = !m.busy) { Text(if (settings) "收件箱" else "设置") }
+            Text(if (m.draftReview != null) "确认待提交回应" else if (settings) "连接与自定义" else if (m.current != null) "事件详情" else "收件箱", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(vertical = 20.dp))
+            TextButton(onClick = { m.cancelDraftReview(); settings = !settings }, enabled = !m.busy) { Text(if (settings) "收件箱" else "设置") }
         }
         if (m.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
         m.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp)) }
@@ -252,8 +288,9 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
         }
         if (!m.ready) { Text("安全存储尚未就绪，不能提交新操作"); return@Column }
         if (m.authOperation != null && !settings) TextButton(onClick = { settings = true }, enabled = !m.busy) { Text("对账原身份操作") }
-        if (settings || m.connection == null) Settings(m)
-        else m.current?.let { Detail(m, it) } ?: Inbox(m)
+        m.draftReview?.let { DraftConfirmationScreen(m, it) }
+            ?: if (settings || m.connection == null) Settings(m)
+            else m.current?.let { Detail(m, it) } ?: Inbox(m)
     }
 }
 @Composable private fun Settings(m: ClientModel) {
@@ -262,6 +299,8 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
     var token by remember { mutableStateOf("") }
     var advanced by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth().verticalScrollCompat(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        WorkspaceSettings(m)
+        HorizontalDivider()
         DeviceSettings(m)
         HorizontalDivider()
         TextButton(onClick = { advanced = !advanced }, enabled = !m.busy) { Text(if (advanced) "收起高级手工连接" else "高级：手工地址与 token") }
@@ -289,6 +328,11 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         item {
     Button(onClick = { m.refresh() }, enabled = !m.busy) { Text("刷新收件箱") }
+    if (m.drafts.isNotEmpty()) {
+        Text("本机待提交草稿 ${m.drafts.size} 份，尚未发送", style = MaterialTheme.typography.titleSmall)
+        m.drafts.forEach { DraftRow(m, it) }
+        HorizontalDivider()
+    }
     Text(if (m.cacheUnavailable) "本机离线缓存不可用，原文件保留；这不表示服务端没有事件。" else m.lastSync?.let { "本机缓存 · 最后完整扫描 $it\n非实时状态；刷新会从头检查所有已创建事件。" } ?: "尚未完成同步。联网刷新后可离线阅读。", style = MaterialTheme.typography.labelSmall)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilterChip(unread, { unread = !unread }, label = { Text("未读") })
@@ -316,7 +360,6 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
     }
 }
 @Composable private fun Detail(m: ClientModel, e: Event) {
-    var text by remember(e.id, e.interaction_version) { mutableStateOf("") }
     var confirm by remember(e.id, e.event_version) { mutableStateOf<String?>(null) }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Row { TextButton(onClick = { m.back() }, enabled = !m.busy) { Text("返回收件箱") }; TextButton(onClick = { m.reloadDetail() }, enabled = !m.busy) { Text("刷新详情") } } }
@@ -336,12 +379,8 @@ class ClientModel(app: Application) : AndroidViewModel(app) {
             OutlinedButton(onClick = { m.markRead() }, enabled = m.currentFresh && !m.busy && m.canWrite && e.read_state.unread) { Text(if (e.read_state.unread) "标记所见版本已读" else "所见版本已读") }
         }
         item {
-            Text("回应当前问题", style = MaterialTheme.typography.titleMedium)
-            if (!e.can_respond) Text("当前不可回应：可能已回应、过期、事项关闭或来源不允许回复。刷新详情获取最新状态。")
-            e.interaction?.actions?.forEach { a ->
-                if (a.type == "text") OutlinedTextField(text, { value -> if (value.codePointCount(0, value.length) <= 4000) text = value }, label = { Text(a.label) }, enabled = m.currentFresh && e.can_respond && !m.pending && !m.busy && m.canWrite, modifier = Modifier.fillMaxWidth())
-                Button(onClick = { m.respond(a, if (a.type == "text") text else "") }, enabled = m.currentFresh && e.can_respond && !m.pending && !m.busy && m.canWrite && (a.type != "text" || text.isNotBlank())) { Text(if (a.type == "text") "提交${a.label}" else a.label) }
-            }
+            ResponseComposer(m, e)
+            m.drafts.filter { it.event_id == e.id }.forEach { DraftRow(m, it) }
         }
         item {
             Text("事项决定", style = MaterialTheme.typography.titleMedium)

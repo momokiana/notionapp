@@ -6,10 +6,8 @@ import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import java.io.File
 import java.security.KeyStore
-import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
 
 class PrivateState(context: Context) : StateStore {
     companion object { private val lock = Any() }
@@ -34,18 +32,10 @@ class PrivateState(context: Context) : StateStore {
             }
             output.toByteArray()
         }
-        check(bytes.size in 29..131072) { "本机状态损坏，停止新提交" }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(0, 12)))
-        val plain = cipher.doFinal(bytes.copyOfRange(12, bytes.size)).toString(Charsets.UTF_8)
-        try { wire.decodeFromString<LocalState>(plain) }
-        catch (_: Exception) { throw IllegalStateException("本机安全状态结构不可读，原文件保留，不能自动重置") }
+        LocalStateCipher.decrypt(bytes, key())
     }
     override fun save(state: LocalState) = synchronized(lock) {
-        val plain = wire.encodeToString(LocalState.serializer(), state).toByteArray(Charsets.UTF_8)
-        check(plain.size <= 131044) { "本机原子状态达到容量上限，原状态保留" }
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key()) }
-        val encrypted = cipher.iv + cipher.doFinal(plain)
+        val encrypted = LocalStateCipher.encrypt(state, key())
         val output = file.startWrite()
         try { output.write(encrypted); file.finishWrite(output) }
         catch (e: Exception) { file.failWrite(output); throw e }
