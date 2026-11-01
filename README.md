@@ -1,5 +1,7 @@
 # notionapp（开发中）
 
+> 当前为 `wip/connectors-candidate-b`：新增[连接器B限定FINAL PASS源码](docs/releases/connectors-candidate-b.md)，F1–F3只在B关闭，A仍BLOCK。**联合稳定发布仍待source-binding后端自身最终结论与串行集成，未合入main。** N1：连接器22.13/22.23只与独立后端22.23.2验证；不能在22.13运行当前backend/native或同进程集成runner，原因未定。
+
 面向个人自托管的轻量通知与交互 App：程序或 AI 助理发出事件，手机展示卡片，用户通过按钮或文字回应，来源的后续进展回到同一事件。
 
 `notionapp` 是仓库名，产品名尚未确定；本项目与 Notion 没有集成或隶属关系。
@@ -8,7 +10,7 @@
 
 - 安卓首发：Kotlin / Jetpack Compose；事件服务：Fastify / TypeScript / SQLite。
 - 可选独立 Pi SDK 宿主；可选自托管 ntfy / UnifiedPush 通知，不默认连接 AI、推送服务器或现有工作会话。
-- 安卓已增量公开 [android-001 本机草稿与快捷回复](docs/releases/android-001.md)；其余仍为既有开发基线，不是正式发行、生产可用声明或完整产品验收。不含 android-002、T014 受控启用或尚待最终结论的新后端绑定接口；连接器 A 仅在独立 WIP 分支保留并标为 FINAL BLOCK，不在 main。
+- 安卓已增量公开 [android-001 本机草稿与快捷回复](docs/releases/android-001.md)；其余仍为既有开发基线，不是正式发行、生产可用声明或完整产品验收。不含 android-002、T014 受控启用或尚待最终结论的新后端绑定接口；连接器 A 在其独立分支继续保留 FINAL BLOCK；本分支另含B，但不把其限定PASS当后端或联合稳定通过。
 - 本仓库不包含私人部署、账号、人格、原始聊天、设备/原生会话标识、运行数据库或原始验收证据。
 
 已读 ≠ 平台接受 ≠ 设备收到 ≠ 系统请求提醒 ≠ 来源收件 ≠ 已执行 ≠ 完成或独立验收。

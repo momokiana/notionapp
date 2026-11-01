@@ -1,5 +1,7 @@
 # 公开状态与验证范围
 
+> 本分支增量：[连接器B](releases/connectors-candidate-b.md)21项源文件已按精确白名单独立公开，同人限定FINAL PASS/F1–F3只属于B，A仍BLOCK。source-binding后端自身FINAL与联合稳定合并尚未完成，未合入main；N1运行限制必须保留。具体源/公开哈希和分层验证单列，不覆盖首轮或android-001清单。
+
 本仓库为单独的公开开发镜像；未在原开发根初始化 Git，未修改或删除原资料。首次说明提交 `5a9f034`，安卓基线导入 `c9f1fc2`，Server/Pi源码导入 `eb476ea`；完整上传历史见 Git log。这里不宣称正式发行、生产可用或完整产品通过。
 
 ## android-001 增量
@@ -13,7 +15,7 @@
 | Android | 作者独立冻结的59项android-001 | 含草稿/快捷回复、合成测试/工具与原依赖锁/第三方声明；同人限定FINAL PASS按交接范围记录，README公开改写；不含android-002 |
 | Server | 实际作者从T013历史候选冻结的64文件 | 源码、合成测试、npm锁及TypeScript配置；不含T014 |
 | Pi宿主 | 同一来源65文件，另明确加入1个通用renderer | 源码/测试/锁/配置；无T014受控启用；无实际部署配置 |
-| 本地连接器 | 未合入main | A原代码仅保留于[独立WIP分支](https://github.com/momokiana/notionapp/tree/wip/connectors-candidate-a)，已FINAL BLOCK/F1–F3；不采用B结果或待审新后端作为本次稳定增量 |
+| 本地连接器（本分支B） | 21项精确B源码，未合入main | B限定FINAL PASS，F1–F3在B关闭；后端自身FINAL与联合稳定发布另行等待，保留N1；[A分支](https://github.com/momokiana/notionapp/tree/wip/connectors-candidate-a)仍FINAL BLOCK |
 
 首轮183项导入白名单、原始和公开字节哈希见 [历史导出清单](releases/initial-export.json)，绑定首轮上传而非变更后的当前Android；本轮Android当前59项及6新增/6修改见 [增量清单](releases/android-001.json)。Android来源清单SHA256为 `b02c8fd3505eaae16fd74f6e322bdd111d0d3937b4c147ecc249d0a7da7c76eb`；Server/Pi的129项来源清单为 `0a8c2ff81c91d59f603549346a24c4726f5268962fd85e2dca751cea33de7135`。新写的公开说明不在导入文件计数内。
 
@@ -42,7 +44,7 @@
 | --- | --- | --- |
 | 公开Server/Pi宿主：Node **22.23.2**，Linux/WSL隔离环境 | 发布者实际执行的Server148项、Pi161通过＋4可选skip，以及后续Android真实socket夹具均在此运行时 | 仅这些公开字节与本机环境，不表示所有Node22小版本/Node24或其他平台均通过 |
 | 当前安装的后端native二进制：官方Node **22.13.0** | 开发/独审同步：better-sqlite3 13.0.3连单独open亦SIGSEGV；**原因未定，不支持该后端或同进程integration-runner的22.13组合** | 不是发布者本轮重现，也不能扩展为所有平台/所有重新构建的二进制必然失败 |
-| 连接器客户端22.13.0/22.23.2 → **独立后端22.23.2** | 连接器B交接报告该分进程HTTP组合已验证；客户端使用内置node:sqlite | 不是backend在22.13的证据，更不能替代source-binding后端自身FINAL；B与后端尚未作为联合稳定代码合入main |
+| 连接器客户端22.13.0/22.23.2 → **独立后端22.23.2** | 连接器B交接报告该分进程HTTP组合已验证；客户端使用内置node:sqlite | 不是backend在22.13的证据，更不能替代source-binding后端自身FINAL；本分支仅公开B，后端与B尚未作为联合稳定代码合入main |
 
 包内engines范围是原始声明，不是上述实际支持矩阵。当前仅推荐已验证的后端22.23.2复现环境；其他后端运行时未取得本公开矩阵的通过结论。已观察本机driver的binding.gyp设置 `NAPI_VERSION=10`，但这仅为构建配置事实，**不是SIGSEGV根因证明或所有平台结论**。此次只更正文档，不运行已知崩溃组合、不修改package/lock、安装的native依赖或构建参数，不为“兼容”漂移候选。
 

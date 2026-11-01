@@ -1,0 +1,214 @@
+{
+  "format": 1,
+  "component": "connectors",
+  "candidate": "B",
+  "branch": "wip/connectors-candidate-b",
+  "base_main_commit": "92c57e36af92b6c4fe166b63027fbc43b04cc5de",
+  "source_manifest_sha256": "47d7997378e9415bd3814afcafe571405c68857c6204a51e240173c835b9746f",
+  "source_file_count": 21,
+  "reviewed_candidate_manifest_sha256_reported": "31ddea1bfee9c75914b3dd06fe3ca67b7e208b4ee4f98a21b337b91cef28acaa",
+  "publication_status": "B connector source only, limited FINAL PASS as received; joint stable merge pending separate backend FINAL; not merged into main",
+  "review": {
+    "connector": "Same independent reviewer limited FINAL PASS; F1/F2/F3 closed on exact B per final handoff, not a publisher product-review verdict",
+    "candidate_A": "Still FINAL BLOCK; branch/history/code retained, no verdict inherited from B",
+    "reported_per_runtime": [
+      "34/34 connector tests on 22.13.0 and 22.23.2",
+      "5/5 original reviewer probes on each runtime",
+      "6/6 additional reviewer boundaries on each runtime",
+      "5/5 separate-process actual HTTP probes per connector runtime with backend22.23.2"
+    ]
+  },
+  "backend_dependency": {
+    "protocol": 1,
+    "tested_source_manifest_sha256_reported": "b43957d21874d5b716923ec3570d03c12f7422ff7957bd0066175cd318b3a186",
+    "backend_own_final": "PENDING, explicitly confirmed by backend owner; only PLAN currently received",
+    "joint_merge": "Blocked on exact stable narrow backend allowlist/closure and backend own FINAL acceptance; no backend/T014 source imported",
+    "author_integration_reported": "3/3 plus 2/2 chain/downgrade, not backend FINAL approval"
+  },
+  "runtime_restriction_N1": {
+    "reported_tested_combination": "connector22.13.0/22.23.2 -> separate backend22.23.2",
+    "backend22.13": "Installed better-sqlite3 13.0.3 native SIGSEGV even standalone open; root cause unresolved, not supported for this backend or its in-process integration runner",
+    "provenance": "Development/review handoff; publisher did not retrigger crash. Do not generalize to all platforms/rebuilt binaries or infer root cause from NAPI_VERSION=10",
+    "dependency_or_lock_changes": false
+  },
+  "publisher_validation": {
+    "allowlist_hash_and_source_delta_verified": true,
+    "credential_identity_runtime_material_scan": "No high-risk matches found; synthetic placeholders retained, not a complete product audit",
+    "node22.23.2": {
+      "syntax_and_tests": {
+        "pass": 34,
+        "fail": 0,
+        "skip": 0
+      },
+      "published_legacy_backend_fail_closed": {
+        "pass": 1,
+        "fail": 0,
+        "skip": 0
+      }
+    },
+    "node22.13.0": {
+      "syntax_and_connector_only_tests": { "pass": 34, "fail": 0, "skip": 0 },
+      "tool_version_and_supplied_sha256_checked": true,
+      "backend_native_loaded": false,
+      "integration_runner_run": false
+    },
+    "new_binding_normal_integration": "NOT RUN by publisher; current branch public T013 backend lacks binding contract",
+    "reviewer_probes": "Not independently rerun by publisher",
+    "scope": "Fresh private POSIX scratch and controlled loopback; no active-source/real-Uniflo/device/production operations"
+  },
+  "delta_vs_A_source": {
+    "added": [
+      "connectors/test/regressions.test.mjs"
+    ],
+    "changed": [
+      "connectors/README.md",
+      "connectors/src/cli.mjs",
+      "connectors/src/spool.mjs",
+      "connectors/src/transport.mjs",
+      "connectors/src/validation.mjs"
+    ],
+    "deleted": []
+  },
+  "excluded": [
+    "backend source-binding/T014 sources",
+    "raw evidence/private runtime/configuration/credentials/sessions/endpoints",
+    "dependencies/build outputs/third-party binaries"
+  ],
+  "not_verified": [
+    "real Uniflo daemon/harness matrix",
+    "Windows ACL",
+    "physical filesystem failure/power loss",
+    "Android/physical device/production",
+    "complete A15/A16/A29",
+    "remote native execution",
+    "automatic old-spool restore/credential rotation migration"
+  ],
+  "files": [
+    {
+      "path": "connectors/.gitignore",
+      "source_sha256": "5d568d0b250eddee4441d65ebc8dbb96f2f2e7125b752fbdc4f984b3d07e0704",
+      "public_sha256": "5d568d0b250eddee4441d65ebc8dbb96f2f2e7125b752fbdc4f984b3d07e0704",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/README.md",
+      "source_sha256": "7002aee5a27ad1cae837ca32f53ab5adabecf26ca47bc2f5d588300896331274",
+      "public_sha256": "01a1154edb79429897da6f9a4681467be8de73612c8890aa63bb300d3562b1a1",
+      "change": "limited-review/joint-release and N1 documentation adaptation"
+    },
+    {
+      "path": "connectors/examples/config.example.json",
+      "source_sha256": "56aa45606a69c79baaaf5ac6cc29e856aa7f9acea8a093630308cd1b2563d0f1",
+      "public_sha256": "56aa45606a69c79baaaf5ac6cc29e856aa7f9acea8a093630308cd1b2563d0f1",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/examples/create.json",
+      "source_sha256": "f8d303b2b059da240ad3758cba0a8630c8b4513682f75cccbaf97dd609f663ee",
+      "public_sha256": "f8d303b2b059da240ad3758cba0a8630c8b4513682f75cccbaf97dd609f663ee",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/examples/update.json",
+      "source_sha256": "8d20ce6059440c7a662130fd8229d5347d8dfd659b9a5b090eba49461476f27d",
+      "public_sha256": "8d20ce6059440c7a662130fd8229d5347d8dfd659b9a5b090eba49461476f27d",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/package-lock.json",
+      "source_sha256": "7e78eb725796eb8506be07b1d4cf3db0245b6606f4bbb6d210b90e1fefde880d",
+      "public_sha256": "7e78eb725796eb8506be07b1d4cf3db0245b6606f4bbb6d210b90e1fefde880d",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/package.json",
+      "source_sha256": "4b58e3437eb588554d68a61aa424ef97dedb81d76df9932e899aae971e2b4860",
+      "public_sha256": "4b58e3437eb588554d68a61aa424ef97dedb81d76df9932e899aae971e2b4860",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/src/cli.mjs",
+      "source_sha256": "52659d5550f082d13830136fb78ccbb02be43f2f11ff0218f3a7eb4a8d9b8d71",
+      "public_sha256": "52659d5550f082d13830136fb78ccbb02be43f2f11ff0218f3a7eb4a8d9b8d71",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/src/spool.mjs",
+      "source_sha256": "36b9f10bc246b6edcf3fb300d5cf3a46f9147292f9958611df37aa32b23d166f",
+      "public_sha256": "36b9f10bc246b6edcf3fb300d5cf3a46f9147292f9958611df37aa32b23d166f",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/src/transport.mjs",
+      "source_sha256": "5d67712706259d936e958fa37b011659be09990b4ce699e2bcbf77251e5708a0",
+      "public_sha256": "5d67712706259d936e958fa37b011659be09990b4ce699e2bcbf77251e5708a0",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/src/uniflo.mjs",
+      "source_sha256": "7dce03571d4cb01b9e9d4983dd8fd31c754c85a36e11e71f1b9b163f630b95b3",
+      "public_sha256": "7dce03571d4cb01b9e9d4983dd8fd31c754c85a36e11e71f1b9b163f630b95b3",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/src/validation.mjs",
+      "source_sha256": "b5695352c98a5605964d6bca1a9fc01d399fc52e12fe4679da6a19cfd43c538d",
+      "public_sha256": "b5695352c98a5605964d6bca1a9fc01d399fc52e12fe4679da6a19cfd43c538d",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/crash-child.mjs",
+      "source_sha256": "6cc8d74d39d9eb6d73b4c83bbf8f3ce0a6b77f8bb6ba083207fdb5a36111aed3",
+      "public_sha256": "6cc8d74d39d9eb6d73b4c83bbf8f3ce0a6b77f8bb6ba083207fdb5a36111aed3",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/helpers.mjs",
+      "source_sha256": "12fd16ddadc8bc35600a1b612469a802b2764ccb483a01447fa6fee44578d70a",
+      "public_sha256": "12fd16ddadc8bc35600a1b612469a802b2764ccb483a01447fa6fee44578d70a",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/integration-runner.mjs",
+      "source_sha256": "7d5f0085e19acab0b08400aa00ca0bf389046da7064eb66c0f028f4230908a9c",
+      "public_sha256": "7d5f0085e19acab0b08400aa00ca0bf389046da7064eb66c0f028f4230908a9c",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/integration.mjs",
+      "source_sha256": "b9c880b4a59265d3e3417eeec9599dea6ad481cb4d06a6fb872f94f77c7c600a",
+      "public_sha256": "b9c880b4a59265d3e3417eeec9599dea6ad481cb4d06a6fb872f94f77c7c600a",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/process.test.mjs",
+      "source_sha256": "39336435438dd530ca58bdd3382c52319290a2222b8c4987b08a0416628e9a59",
+      "public_sha256": "39336435438dd530ca58bdd3382c52319290a2222b8c4987b08a0416628e9a59",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/regressions.test.mjs",
+      "source_sha256": "4bd8122cde7db19432ff49df6cb725e8b4644f1b558129cdfbbcdbd51d016f53",
+      "public_sha256": "4bd8122cde7db19432ff49df6cb725e8b4644f1b558129cdfbbcdbd51d016f53",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/spool.test.mjs",
+      "source_sha256": "9fe83b625e03cd9e222d2ecf2a6491736411d3fbf76747941f1c9d50ab04f965",
+      "public_sha256": "9fe83b625e03cd9e222d2ecf2a6491736411d3fbf76747941f1c9d50ab04f965",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/transport.test.mjs",
+      "source_sha256": "270b49f97eac7aae1abfe261632f14c2759ec0de59c43c153e42a8aa1af5588c",
+      "public_sha256": "270b49f97eac7aae1abfe261632f14c2759ec0de59c43c153e42a8aa1af5588c",
+      "change": "byte-identical"
+    },
+    {
+      "path": "connectors/test/uniflo.test.mjs",
+      "source_sha256": "40254454bd32c009b906546d81e95f59899171731a6cd2cd5edf5a35625acce2",
+      "public_sha256": "40254454bd32c009b906546d81e95f59899171731a6cd2cd5edf5a35625acce2",
+      "change": "byte-identical"
+    }
+  ]
+}
