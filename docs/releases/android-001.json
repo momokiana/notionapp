@@ -27,6 +27,7 @@
   },
   "review": {
     "status": "Limited FINAL PASS by same independent reviewer, accepted by author, as reported in the public-export handoff; not a new publisher product review",
+    "scope_exclusion": "Does NOT validate cross-owner A-to-B-to-A cache concurrency isolation. Historical 111 tests/AVD and draft/template scope must not be generalized to the legacy cache GET pattern.",
     "task_sha256": "942a1cb8336dc9baf8ced5397876a8e319968d461c4813e3ecbf2cc07cbb7a53",
     "review_sha256": "80874f7f61504d732d41af2eb22374675c721e2a8489663abec0260cee4ed598",
     "reviewer_validation_reported": {
@@ -64,6 +65,15 @@
       "avd_or_physical_device_operations": false
     }
   },
+  "known_limitations": [
+    {
+      "id": "ANDROID_CACHE_OWNER_ABA",
+      "affected": "Public android-001 and earlier cache GETs fetch current credentials per page and check namespace only at the end; ending in namespace A does not prove all intermediate reads used owner A credentials",
+      "provenance": "Development/review handoff correction; no new publisher reproduction or product test execution in this documentation-only change",
+      "claim_limit": "Do not claim cross-owner A-to-B-to-A cache isolation verified by android-001 limited PASS, historical 111 tests or AVD results; old source is not fixed by this notice",
+      "successor": "android-002 old pre-review BLOCK/F1 remains historical; handoff reports original counterexample closed only on the repaired new source's six GETs by the same reviewer, with overall FINAL still pending; no 002 code/evidence imported or verdict migrated"
+    }
+  ],
   "excluded": [
     "android-002",
     "connectors",
@@ -77,9 +87,9 @@
     {
       "path": "android/README.md",
       "source_sha256": "314a01b4896b6591b68a92e73bfd34cd037367fe963bd4b3a306e5d43ae07dd0",
-      "public_sha256": "3a98431e7ddfc2fa05587e4ec87964c63cc24feeacda6888b890c7534abac341",
+      "public_sha256": "184b31f61695ba82e9585760a474529a02c4eb0c53757e1073aa3682993bc8f5",
       "source_delta": "modified",
-      "public_adaptation": "public documentation rewrite",
+      "public_adaptation": "public documentation rewrite and known cache owner-ABA concurrency scope warning; no business-source fix",
       "previous_source_sha256": "ca7c539d4103970f192f145598e94f31d01b4310bbca10df7591438fd46aa801",
       "previous_public_sha256": "2903c6070f4f2e99d3f66d39268f148dff2816fb95b2f5a559e7b5c2add43213"
     },
