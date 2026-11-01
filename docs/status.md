@@ -1,6 +1,6 @@
 # 公开状态与验证范围
 
-> 候选分支增量：`wip/connectors-candidate-a` 已加入20项 [连接器候选 A](releases/connectors-candidate-a.md)，仅待审源码公开，未合入main。其FINAL仍待审，新绑定后端正常集成未执行；下面的首轮183项/193文件和验证计数仍绑定原Server/Pi/Android公开基线，不扩展为连接器通过结论。
+> **连接器候选 A：FINAL BLOCK（F1–F3）**。`wip/connectors-candidate-a` 的20项源码保留供追溯，未合入 main，不应使用或部署；缺陷与历史测试限制见 [BLOCK 记录](releases/connectors-candidate-a.md)。新绑定后端正常集成仍未执行，未导入修复候选 B。下面的首轮183项/193文件与测试计数只绑定原Server/Pi/Android基线，不构成连接器通过结论。
 
 本仓库为单独的公开开发镜像；未在原开发根初始化 Git，未修改或删除原资料。首次说明提交 `5a9f034`，安卓基线导入 `c9f1fc2`，Server/Pi源码导入 `eb476ea`；完整上传历史见 Git log。这里不宣称正式发行、生产可用或完整产品通过。
 
@@ -11,7 +11,7 @@
 | Android | 作者独立冻结的53文件既有基线 | 源码、合成测试/工具、依赖锁、Gradle引导、第三方声明；README公开改写；不含android-001草稿/模板 |
 | Server | 实际作者从T013历史候选冻结的64文件 | 源码、合成测试、npm锁及TypeScript配置；不含T014 |
 | Pi宿主 | 同一来源65文件，另明确加入1个通用renderer | 源码/测试/锁/配置；无T014受控启用；无实际部署配置 |
-| 本地连接器（仅本候选分支） | 作者独立冻结候选A，20项 | 发布者复跑30项及旧后端fail-closed 1项；FINAL待审、新后端正常集成未跑；见单独候选说明，不属于首轮183项 |
+| 本地连接器（仅本候选分支） | 作者独立冻结候选A，20项，原代码保留 | **FINAL BLOCK／F1–F3**；历史30项及旧后端fail-closed 1项通过不能覆盖缺陷；新后端正常集成未跑，B未导入；见单独记录，不属于首轮183项 |
 
 准确183项导入白名单、原始和公开字节哈希见 [导出清单](releases/initial-export.json)。Android来源清单SHA256为 `b02c8fd3505eaae16fd74f6e322bdd111d0d3937b4c147ecc249d0a7da7c76eb`；Server/Pi的129项来源清单为 `0a8c2ff81c91d59f603549346a24c4726f5268962fd85e2dca751cea33de7135`。新写的公开说明不在导入文件计数内。
 

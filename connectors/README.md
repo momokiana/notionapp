@@ -1,6 +1,8 @@
-# 本地出站连接器 — 候选 A（待审／待集成）
+# 本地出站连接器 — 候选 A（FINAL BLOCK：F1–F3）
 
-> 仅公开于 `wip/connectors-candidate-a` 候选分支，未合入 `main`。作者报告 PLAN PASS，**FINAL 仍审查中**；新 source-binding 后端正常集成尚未执行。本分支既有 Server 不支持该新协议，连接器将 fail-closed，不能当作可用的完整链路。发布者已独立复跑30项合成/CLI测试和1项旧后端拒绝测试；这不是 FINAL PASS。准确范围与哈希见 [候选发布说明](../docs/releases/connectors-candidate-a.md)。
+> **不得作为通过候选使用、合入 main 或部署。** 实际最终独审已 BLOCK：F1 并发 flush 的迟到 ACK 可使状态回退；F2 最低 Node 22.13 正常 close 漏句柄；F3 fstat 后文件增长可导致无界读取。此前30项测试及旧后端拒绝测试1项通过只是历史结果，不能消除这些缺陷或迁成 FINAL PASS。新 source-binding 后端正常集成仍未执行。分支与 A 原代码保留供追溯，未导入 B 或其验证结论；见 [BLOCK 记录与哈希](../docs/releases/connectors-candidate-a.md)。
+
+下文保留候选 A 的设计与用法供审查追溯，不是已兑现的正确性、安全或运行保证；尤其不能据此认定关闭无句柄泄漏、读取始终有界或并发状态单调。
 
 Node.js 22.13+／POSIX CLI 与库，使用内置 `node:sqlite`（当前 Node 22 会提示 ExperimentalWarning），没有第三方运行依赖。不开放入站端口、不执行 shell、不发现或读取私人会话目录。
 
@@ -76,8 +78,8 @@ lagged、daemon 回退、EOF、元数据缺失／404 后的 event、解析失败
 ## 容量、崩溃与诊断
 
 - 最多 16 个明确 Uniflo 选择、累计 10000 个传输操作（含已确认记录），SQLite page 约 32 MiB，主库／WAL／SHM 各 32 MiB 检查。任一先满即拒绝／背压，不静默删除已承诺原包；未实现自动保留期／压缩／迁移。不是各项上限能同时装满的保证。
-- 正文 65536 字节，响应回执／self 各 4 KiB，snapshot／NDJSON 行各 64 KiB。HTTP 5 秒，单观察流 60 秒后按 gap 重连。没有永远在线／完整历史恢复承诺。
-- 单写者独占 `.lock` 贯穿异步 flush／observe。正常关闭释放；SIGKILL 残留保守拒绝。操作员必须先**正面核实原精确进程已退出且无使用者**，保留原库后仅移走其旧 lock；本程序不根据 PID 重用／不存在或超时自动抢锁。测试只在已观察自有 child SIGKILL 后显式移除夹具锁。
+- 原设计限制为正文 65536 字节，响应回执／self 各 4 KiB，snapshot／NDJSON 行各 64 KiB；已知 F3 使 fstat 后文件增长时的文件读取上界不成立，不能据这些数值宣称始终有界。HTTP 5 秒，单观察流 60 秒后按 gap 重连。没有永远在线／完整历史恢复承诺。
+- 单写者独占 `.lock` 贯穿异步 flush／observe，但已知 F1 不保证并发 flush 状态单调。正常关闭释放是原设计目标，最低 Node 22.13 已发现 F2 句柄泄漏；SIGKILL 残留保守拒绝。操作员必须先**正面核实原精确进程已退出且无使用者**，保留原库后仅移走其旧 lock；本程序不根据 PID 重用／不存在或超时自动抢锁。测试只在已观察自有 child SIGKILL 后显式移除夹具锁。
 - 未知 appID／schema／损坏库、空既有文件、路径替换与权限不符拒绝；不清库、不创建替代身份。配置／目录和同账户管理员是信任边界，不宣称抵御恶意同 UID 修改。
 - 终端只输出聚合状态与固定安全错误，不输出 token、原 URL／请求体或上游异常。队列 blocked 和 unknown 需按原记录对账；没有“重置全部成功”按钮。
 

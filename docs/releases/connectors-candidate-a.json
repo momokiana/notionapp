@@ -6,12 +6,20 @@
   "base_main_commit": "0f9489bb316f921f24ad88c949e56e84aee1358c",
   "source_manifest_sha256": "f9646ff838ff0dda7100131c4b75da58d9a9e6a1f72051e48ca551321c0338fe",
   "source_file_count": 20,
-  "publication_status": "WIP candidate only, not merged into main or a stable release",
+  "publication_status": "FINAL BLOCK (F1-F3); original candidate A retained for traceability, not for use, deployment or merge into main",
+  "initial_candidate_commit": "ccd5eb579478f50636e39f182addfef0e8192254",
   "review": {
-    "plan": "PASS reported by implementation author; not independently re-reviewed by publisher",
-    "final": "PENDING; no FINAL PASS claimed"
+    "plan": "Historical PLAN PASS reported by implementation author; does not supersede FINAL BLOCK",
+    "final": "BLOCK: actual final independent review synchronized by user; publisher did not independently rerun the review probes"
   },
+  "blocking_findings": [
+    { "id": "F1", "summary": "Concurrent database flush late ACK can regress state" },
+    { "id": "F2", "summary": "Normal close leaks a handle on minimum supported Node 22.13" },
+    { "id": "F3", "summary": "File growth after fstat can cause unbounded reads" }
+  ],
+  "successor_candidate": "B is reported under same-reviewer re-review; no replacement allowlist, source, tests or approval imported; no B verdict inherited by A",
   "publisher_validation": {
+    "status": "Historical pre-review results only; do not cover F1-F3 or constitute FINAL PASS; no product tests rerun for this documentation-only correction",
     "install_exit": 0,
     "syntax_check_and_tests": {
       "pass": 30,
@@ -42,8 +50,8 @@
     {
       "path": "connectors/README.md",
       "source_sha256": "34afa8e249a7515b1372b95411a0820a8a2305694add29fb0a0bf5a7891dea4a",
-      "public_sha256": "ac0300c163ad1b5519c10b6c7d0990490574b40ddbb02d5d9d39033a20c924bc",
-      "change": "candidate warning and public documentation links"
+      "public_sha256": "2996a9431e5b9946ac83c1e75a14f2adde957574750499aeab9462909e3d4a72",
+      "change": "candidate and FINAL BLOCK warnings, corrected design limitations and public documentation links; no business source fix"
     },
     {
       "path": "connectors/examples/config.example.json",

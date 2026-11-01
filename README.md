@@ -1,6 +1,6 @@
 # notionapp（开发中）
 
-> 当前为 `wip/connectors-candidate-a`：另含 [待最终审查／待新后端集成的连接器候选 A](docs/releases/connectors-candidate-a.md)。未合入 `main`，不是完整可用链路或稳定发行；`main` 仍保留先前公开基线。
+> **FINAL BLOCK（F1–F3）：本分支的连接器候选 A 已被最终独审阻塞，不应使用或合入 main。** 发现并发 flush 迟到 ACK 状态回退、Node 22.13 正常 close 漏句柄、fstat 后文件增长导致无界读取；见 [BLOCK 记录](docs/releases/connectors-candidate-a.md)。保留 `wip/connectors-candidate-a` 及原代码供追溯；新后端正常集成仍未执行，未导入修复候选 B。
 
 面向个人自托管的轻量通知与交互 App：程序或 AI 助理发出事件，手机展示卡片，用户通过按钮或文字回应，来源的后续进展回到同一事件。
 
@@ -10,7 +10,7 @@
 
 - 安卓首发：Kotlin / Jetpack Compose；事件服务：Fastify / TypeScript / SQLite。
 - 可选独立 Pi SDK 宿主；可选自托管 ntfy / UnifiedPush 通知，不默认连接 AI、推送服务器或现有工作会话。
-- 公开的是既有开发基线，不是正式发行、生产可用声明或完整产品验收；不含后续 T014 受控启用、android-001 草稿/模板；本候选分支新增的连接器单独标为待审、待集成。
+- 公开的是既有开发基线，不是正式发行、生产可用声明或完整产品验收；不含后续 T014 受控启用、android-001 草稿/模板；本候选分支的连接器已标为 FINAL BLOCK、待新后端集成，不是可用交付。
 - 本仓库不包含私人部署、账号、人格、原始聊天、设备/原生会话标识、运行数据库或原始验收证据。
 
 已读 ≠ 平台接受 ≠ 设备收到 ≠ 系统请求提醒 ≠ 来源收件 ≠ 已执行 ≠ 完成或独立验收。
