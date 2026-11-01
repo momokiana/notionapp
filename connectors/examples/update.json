@@ -1,0 +1,11 @@
+{
+  "id": "synthetic_build_update_operation_1",
+  "kind": "update",
+  "event_id": "REPLACE_WITH_ORIGINAL_EVENT_ID",
+  "payload": {
+    "update_id": "synthetic_build_update_1",
+    "expected_event_version": 1,
+    "kind": "progress",
+    "body": "Synthetic build progress; not execution or verification proof."
+  }
+}

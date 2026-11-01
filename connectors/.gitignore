@@ -1,0 +1,7 @@
+data/
+private*.json
+*.sqlite
+*.sqlite-*
+*.lock
+*.log
+node_modules/

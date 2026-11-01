@@ -1,5 +1,7 @@
 # notionapp（开发中）
 
+> 当前为独立分支 `wip/connectors-002`：[connector-002限定FINAL PASS](docs/releases/connectors-002.md)仅覆盖固定官方Uniflo 0.2.6真实daemon＋两种合成布局等声明矩阵，接收器为HTTP夹具、不是backend。**backend自身FINAL仍待准确结论，未合入main，不作联合/生产发布。** A/B历史保留，N1及后端22.13 native崩溃限制不变；无官方binary、CASE或原始证据入库。
+
 面向个人自托管的轻量通知与交互 App：程序或 AI 助理发出事件，手机展示卡片，用户通过按钮或文字回应，来源的后续进展回到同一事件。
 
 `notionapp` 是仓库名，产品名尚未确定；本项目与 Notion 没有集成或隶属关系。
@@ -8,7 +10,7 @@
 
 - 安卓首发：Kotlin / Jetpack Compose；事件服务：Fastify / TypeScript / SQLite。
 - 可选独立 Pi SDK 宿主；可选自托管 ntfy / UnifiedPush 通知，不默认连接 AI、推送服务器或现有工作会话。
-- 安卓已增量公开 [android-002 缓存区间与后继隔离修复](docs/releases/android-002.md)，保留 [001草稿/快捷回复及其历史范围](docs/releases/android-001.md)；不是正式发行、生产可用声明或完整产品验收。不含未就绪的新对话/媒体/复杂卡片、T014或待最终结论的新后端绑定接口；连接器候选仅在独立分支，不在 main。
+- 安卓已增量公开 [android-002 缓存区间与后继隔离修复](docs/releases/android-002.md)，保留 [001草稿/快捷回复及其历史范围](docs/releases/android-001.md)；不是正式发行、生产可用声明或完整产品验收。不含未就绪的新对话/媒体/复杂卡片、T014或待最终结论的新后端绑定接口；连接器在main仍未合入；本独立分支仅增加002限定源码/验证，不替代后端或联合产品结论。
 - 本仓库不包含私人部署、账号、人格、原始聊天、设备/原生会话标识、运行数据库或原始验收证据。
 
 已读 ≠ 平台接受 ≠ 设备收到 ≠ 系统请求提醒 ≠ 来源收件 ≠ 已执行 ≠ 完成或独立验收。
