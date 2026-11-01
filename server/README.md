@@ -4,7 +4,7 @@ Fastify 5 / TypeScript / better-sqlite3；单进程 SQLite 持久账本。公开
 
 ## 本地构建与启动
 
-Node.js 22 LTS、npm 10+：
+当前公开后端只报告 **Node.js 22.23.2、POSIX/Linux（WSL）隔离环境** 的实际验证，npm 10+。`package.json` 的 `engines.node >=22` 是原包声明，不是逐版本支持承诺；不改包/lock来假称补齐矩阵：
 
 ```sh
 cd server
@@ -14,7 +14,7 @@ npm run dev
 # 或 npm run build && npm start
 ```
 
-`check` = 类型检查 + 合成自动化测试 + 编译；首次安装需能编译或获取 better-sqlite3 的本机模块。平台支持与第三方工具链依发行方说明。
+`check` = 类型检查 + 合成自动化测试 + 编译；首次安装需能编译或获取 better-sqlite3 的本机模块。**N1：开发/独审同步，当前安装的 better-sqlite3 13.0.3 native 二进制在官方 Node 22.13.0 下连单独 open 也 SIGSEGV；原因未定，不支持该后端或同进程 integration-runner 的22.13组合。** 这不是发布者新复现或所有平台的结论；连接器用内置 `node:sqlite` 的22.13通过不构成本后端证据。原锁包/依赖不变，完整边界见 [运行验证矩阵](../docs/status.md)。
 
 | 环境变量 | 默认 | 作用 |
 | --- | --- | --- |

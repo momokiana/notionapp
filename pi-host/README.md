@@ -6,7 +6,7 @@
 
 ## 安装与检查
 
-支持 POSIX、Node.js >=22.19 LTS、npm10+；固定 Pi SDK 1.4.0 / session v3。先构建同仓库 server：
+包声明要求POSIX、Node.js >=22.19、npm10+；固定 Pi SDK 1.4.0 / session v3。**公开宿主/后端的实际运行验证仅记录 Node 22.23.2（Linux/WSL隔离环境）**，不把engines下限或连接器22.13的内置SQLite结果当作后端兼容证明。后端已报告的22.13 native崩溃组合不受支持，原因未定；详见 [运行验证矩阵](../docs/status.md)。先构建同仓库 server：
 
 ```sh
 npm --prefix server ci

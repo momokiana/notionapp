@@ -36,6 +36,16 @@
 
 发布自检保留了明确合成的fixture身份、无效示例域名、回环端口及负例路径/假凭据；它们不是私人运行标识。本次不操作ADB/AVD、物理设备、云端工作会话、收费模型、现有推送平台或生产。原始运行/测试日志保留本地，不在公开库原样上传。另已核对Git实际提交中的183项导入blob与公开清单哈希一致、193个提交文件无禁入运行/缓存路径、公开Markdown无失效本地链接；仅说明发布对象完整性，不扩大产品验收。
 
+## Node.js 运行验证矩阵（N1）
+
+| 对象 / 运行时 | 实际观察与范围 | 证据归属 / 不可外推 |
+| --- | --- | --- |
+| 公开Server/Pi宿主：Node **22.23.2**，Linux/WSL隔离环境 | 发布者实际执行的Server148项、Pi161通过＋4可选skip，以及后续Android真实socket夹具均在此运行时 | 仅这些公开字节与本机环境，不表示所有Node22小版本/Node24或其他平台均通过 |
+| 当前安装的后端native二进制：官方Node **22.13.0** | 开发/独审同步：better-sqlite3 13.0.3连单独open亦SIGSEGV；**原因未定，不支持该后端或同进程integration-runner的22.13组合** | 不是发布者本轮重现，也不能扩展为所有平台/所有重新构建的二进制必然失败 |
+| 连接器客户端22.13.0/22.23.2 → **独立后端22.23.2** | 连接器B交接报告该分进程HTTP组合已验证；客户端使用内置node:sqlite | 不是backend在22.13的证据，更不能替代source-binding后端自身FINAL；B与后端尚未作为联合稳定代码合入main |
+
+包内engines范围是原始声明，不是上述实际支持矩阵。当前仅推荐已验证的后端22.23.2复现环境；其他后端运行时未取得本公开矩阵的通过结论。已观察本机driver的binding.gyp设置 `NAPI_VERSION=10`，但这仅为构建配置事实，**不是SIGSEGV根因证明或所有平台结论**。此次只更正文档，不运行已知崩溃组合、不修改package/lock、安装的native依赖或构建参数，不为“兼容”漂移候选。
+
 ## 已知依赖安全项
 
 本次npm安装审计：Server报告0已知漏洞；Pi报告2个中危受影响节点（`minimatch`及依赖它的`@earendil-works/pi-coding-agent`），不是两条独立漏洞。实际公告为 [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)：globparts放大可导致拒绝服务，锁定minimatch 10.2.6落在 `<11.0.1` 范围；npm报告 `fixAvailable:false`。
