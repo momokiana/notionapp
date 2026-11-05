@@ -118,7 +118,8 @@ test('C02-C04 official daemon decodes two synthetic harnesses, live metadata and
     const transcript=await api(`${path}/events?limit=5&max_text=512`);
     assert.equal(transcript.response.status,200);assert.ok(transcript.value.events.some(e=>e.text?.includes(MARKER)));
   }
-  spool=new Spool(c,{init:true}); controller=new AbortController();
+  spool=new Spool(c,{init:true});spool.upgrade();assert.equal(spool.version,2); controller=new AbortController();
+  const createCount=()=>spool.db.prepare("SELECT COUNT(*) AS n FROM (SELECT kind FROM queue UNION ALL SELECT kind FROM archive) WHERE kind='create'").get().n;
   observer=observeOnce(spool,{signal:controller.signal,onObservation:async()=>{
     observationCallbacks++;
     if(observationCallbacks<=2)snapshotWatermarks.push(spool.db.prepare('SELECT MAX(watermark) AS n FROM maps').get().n);
@@ -130,7 +131,7 @@ test('C02-C04 official daemon decodes two synthetic harnesses, live metadata and
       await until(async()=>{try{return(await api('/v1/health')).value.seq>15;}catch{return false;}},'SNAPSHOT_WINDOW_NOT_INDEXED');
     }
   }});observer.catch(()=>{});
-  await connected;assert.equal(remote.size,2);assert.equal(spool.db.prepare("SELECT COUNT(*) AS n FROM queue WHERE kind='create'").get().n,2);
+  await connected;assert.equal(remote.size,2);assert.equal(createCount(),2);
   assert.ok(snapshotWatermarks[1]>snapshotWatermarks[0]);
   appendLive(files);
   await until(()=>[...remote.values()].every(e=>JSON.parse(e.payload.body).state==='idle'&&e.history.some(p=>JSON.parse(p.body).event_kind==='assistant_message'))&&spool.db.prepare('SELECT MAX(watermark) AS n FROM maps').get().n>15,'LIVE_DECODING_NOT_OBSERVED');
@@ -138,13 +139,14 @@ test('C02-C04 official daemon decodes two synthetic harnesses, live metadata and
   assert.ok(rows.some(r=>JSON.parse(JSON.parse(r.payload).body).event_kind==='assistant_message'));
   const oldWatermark=spool.db.prepare('SELECT MAX(watermark) AS n FROM maps').get().n;
   await stopDaemon(daemon,async()=>{controller.abort();await assert.rejects(observer);observer=undefined;});daemon=undefined;
-  assert.equal(spool.status().observation.state,'disconnected');spool.close();spool=undefined;
+  assert.equal(spool.status().observation.state,'disconnected');
+  assert.ok(spool.archive({max_rows:100,include_blocked:false}).moved>=2);spool.close();spool=undefined;
   appendLive(files,'offline');daemon=startDaemon();
   await until(async()=>{try{return(await api('/v1/health')).value.ok===true;}catch{return false;}},'DAEMON_RESTART_NOT_READY');
   const restartedSeq=(await api('/v1/health')).value.seq;assert.ok(restartedSeq<oldWatermark,'actual daemon sequence must roll back');
   connected=streamed();spool=new Spool(c);controller=new AbortController();
   observer=observeOnce(spool,{signal:controller.signal,onObservation:()=>flush(spool)});observer.catch(()=>{});await connected;
-  assert.equal(remote.size,2);assert.equal(spool.db.prepare("SELECT COUNT(*) AS n FROM queue WHERE kind='create'").get().n,2);
+  assert.equal(remote.size,2);assert.equal(createCount(),2);
   assert.ok([...remote.values()].every(e=>JSON.parse(e.payload.body).mode==='snapshot_after_gap'));
   appendLive(files,'second_live');
   await until(()=>spool.db.prepare('SELECT MAX(watermark) AS n FROM maps').get().n>15,'SECOND_LIVE_NOT_OBSERVED');
@@ -156,13 +158,13 @@ test('C02-C04 official daemon decodes two synthetic harnesses, live metadata and
   await until(async()=>{try{return(await api('/v1/health')).value.ok===true;}catch{return false;}},'FAULT_RESTART_NOT_READY');
   connected=streamed();spool=new Spool(c);controller=new AbortController();
   observer=observeOnce(spool,{signal:controller.signal,onObservation:()=>flush(spool)});observer.catch(()=>{});await connected;
-  assert.equal(remote.size,2);assert.equal(spool.db.prepare("SELECT COUNT(*) AS n FROM queue WHERE kind='create'").get().n,2);
+  assert.equal(remote.size,2);assert.equal(createCount(),2);
   const uploaded=JSON.stringify([...remote.values()]);
   for(const forbiddenText of [MARKER,'FIXTURE_PRIVATE_TITLE','FIXTURE_PRIVATE_PATH',...SELECTED.map(s=>s.key),'synthetic_unselected'])assert.equal(uploaded.includes(forbiddenText),false);
   assert.ok([...remote.values()].every(e=>JSON.parse(e.payload.body).history_complete===false));
   assert.ok([...remote.values()].every(e=>e.history.every(p=>!Object.hasOwn(p,'interaction'))));
   assert.ok(requests.every(path=>path==='/v1/health'||path==='/v1/stream.ndjson'||path.startsWith('/v1/sessions/')));
   await stopDaemon(daemon,async()=>{controller.abort();await assert.rejects(observer);observer=undefined;});daemon=undefined;
-  const result={upstream:'Uniflo 0.2.6 official Linux x64 musl',node:process.version,kernel:release(),harnesses:['claude synthetic JSONL','codex synthetic JSONL'],actual_daemon:true,publishing_receiver:'synthetic HTTP protocol fixture, NOT actual backend',selected:2,creates:2,snapshot_window_watermarks:snapshotWatermarks,old_watermark:oldWatermark,restarted_seq:restartedSeq,history_complete:false,private_markers_uploaded:false,source_received:false,stop_mode:'SIGINT then explicit cancellation of our NDJSON stream for graceful drain',fault_mode:'SIGKILL exact owned daemon; observed exit then unprompted stream gap and same-spool restart'};
+  const result={upstream:'Uniflo 0.2.6 official Linux x64 musl',node:process.version,kernel:release(),harnesses:['claude synthetic JSONL','codex synthetic JSONL'],actual_daemon:true,spool_schema:2,saved_transport_archived:true,publishing_receiver:'synthetic HTTP protocol fixture, NOT actual backend',selected:2,creates:2,snapshot_window_watermarks:snapshotWatermarks,old_watermark:oldWatermark,restarted_seq:restartedSeq,history_complete:false,private_markers_uploaded:false,source_received:false,stop_mode:'SIGINT then explicit cancellation of our NDJSON stream for graceful drain',fault_mode:'SIGKILL exact owned daemon; observed exit then unprompted stream gap and same-spool restart'};
   writeFileSync('/work/result.json',JSON.stringify(result,null,2),{mode:0o600});t.diagnostic(JSON.stringify(result));
 });

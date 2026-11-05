@@ -110,7 +110,7 @@ test('read-only diagnostics reject missing/bad scope/unknown schema/permissions/
   chmodSync(f.c.spool,0o644);assert.throws(()=>inspectSpool(f.c),/PRIVATE_FILE_REQUIRED/);chmodSync(f.c.spool,0o600);s.close();
   const link=fixture();symlinkSync(f.c.spool,link.c.spool);assert.throws(()=>inspectSpool(link.c),/PRIVATE_FILE_REQUIRED/);
   const unknown=new sqlite.DatabaseSync(f.c.spool);unknown.exec('CREATE TABLE unexpected(x)');unknown.close();assert.throws(()=>inspectSpool(f.c),/UNKNOWN_SPOOL/);
-  const dangling=fixture();symlinkSync(`${dangling.root}/absent`,`${dangling.c.spool}-wal`);assert.throws(()=>new Spool(dangling.c,{init:true}),/PRIVATE_FILE_REQUIRED/);
+  const dangling=fixture();symlinkSync(`${dangling.root}/absent`,`${dangling.c.spool}-wal`);assert.throws(()=>new Spool(dangling.c,{init:true}),/ORPHAN_SPOOL_FILES/);assert.equal(existsSync(dangling.c.spool),false);
 });
 
 test('oversize stat-only diagnostics never construct/query SQLite and explicitly leave scope/counts unknown', () => {

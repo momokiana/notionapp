@@ -8,6 +8,6 @@
     "test": "node --test --test-concurrency=1 test/*.test.mjs",
     "integration": "node test/integration-runner.mjs",
     "uniflo:real": "node test/real-uniflo-runner.mjs",
-    "check": "node --check src/cli.mjs && node --check src/spool.mjs && node --check src/spool-format.mjs && node --check src/spool-capacity.mjs && node --check src/uniflo.mjs && node --check src/transport.mjs && node --check src/validation.mjs && npm test"
+    "check": "node --check src/cli.mjs && node --check src/spool.mjs && node --check src/spool-format.mjs && node --check src/spool-capacity.mjs && node --check src/spool-storage.mjs && node --check src/spool-maintenance.mjs && node --check src/uniflo.mjs && node --check src/transport.mjs && node --check src/validation.mjs && npm test"
   }
 }

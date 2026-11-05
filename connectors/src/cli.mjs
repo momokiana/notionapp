@@ -7,25 +7,33 @@ import { Spool } from './spool.mjs';
 import { flush } from './transport.mjs';
 import { observeOnce } from './uniflo.mjs';
 import { inspectSpool, errorCode } from './spool-capacity.mjs';
+import { planArchive } from './spool-maintenance.mjs';
+
+function inputJson(path) {
+  const fd=openSync(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+  try {
+    const stat=fstatSync(fd);if(!stat.isFile()||stat.size>MAX_BODY)fail('INPUT_TOO_LARGE');
+    return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(readBounded(fd,MAX_BODY)));
+  }finally{closeSync(fd);}
+}
 
 export async function main(args) {
   const [command, configPath, inputPath, ...extra] = args;
-  if (!['init', 'enqueue', 'flush', 'status', 'run', 'observe'].includes(command) || !configPath || extra.length || (command === 'enqueue' ? !inputPath : inputPath !== undefined)) fail('USAGE');
+  const needsInput=['enqueue','resize','archive-plan','archive'].includes(command);
+  if (!['init','enqueue','flush','status','run','observe','upgrade','resize','archive-plan','archive'].includes(command) || !configPath || extra.length || (needsInput ? !inputPath : inputPath !== undefined)) fail('USAGE');
   const c = config(JSON.parse(readPrivate(configPath)));
   if (command === 'status') return inspectSpool(c); // never acquire/remove the writer lock or acknowledge durability
-  const spool = new Spool(c, { init: command === 'init' });
+  if(command==='archive-plan'){const options=inputJson(inputPath);return inspectSpool(c,(db,c,bound,state)=>planArchive(db,c,bound,options,{ready:state.storage_state==='ready'}));}
+  const spool = new Spool(c, { init: command === 'init', maintenance:command==='upgrade' });
   const control = new AbortController(); const stop = () => control.abort();
   process.once('SIGTERM', stop); process.once('SIGINT', stop);
   try {
     if (command === 'enqueue') {
-      // Explicit data file, not shell/stdin evaluation. O_NONBLOCK avoids FIFO/device hangs.
-      const fd = openSync(inputPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-      try {
-        const s = fstatSync(fd); if (!s.isFile() || s.size > MAX_BODY) fail('INPUT_TOO_LARGE');
-        const b = readBounded(fd, MAX_BODY);
-        return spool.enqueue(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(b)));
-      } finally { closeSync(fd); }
+      return spool.enqueue(inputJson(inputPath)); // data only; never evaluated
     }
+    if(command==='upgrade')return spool.upgrade();
+    if(command==='resize')return spool.resize(inputJson(inputPath));
+    if(command==='archive')return spool.archive(inputJson(inputPath));
     if (command === 'flush') return await flush(spool, { signal: control.signal });
     if (command === 'init') return spool.status();
     if (command === 'observe') {

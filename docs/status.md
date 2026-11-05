@@ -1,6 +1,6 @@
 # 公开状态与验证范围
 
-> 本分支从已公开002增量 [connector-003-B](releases/connectors-003.md)：准确30项，较002为3新增/7变/20原样，lock/transport/validation不变。原临时快照已失效，新持久重建导出严格匹配原31项表/review和30项源哈希；003-A仍BLOCK/F1，B限定PASS不迁签。容量/诊断本地层、固定daemon＋两种合成布局及HTTP夹具不是backend/native receipt或生产，未合入main，N1不变；[source/public哈希](releases/connectors-003.json)单列，旧002清单保留历史。
+> 本分支从已公开003增量 [connector-004-B](releases/connectors-004.md)：准确36项，6新增/9变/21原样，lock/transport/validation/uniflo不变。显式同SQL v2/archive与持久有限扩容；004-A仍BLOCK/F1（缺main孤WAL），B在SQLite打开前保守拒绝，只关闭本B反例。双Node各92＋严格真v2/archive daemon2通过，仍是合成HTTP发布接收器，不代签backend/native receipt/生产，未合main；N1及旧历史不变，[source/public哈希](releases/connectors-004.json)单列。
 
 本仓库为单独的公开开发镜像；未在原开发根初始化 Git，未修改或删除原资料。首次说明提交 `5a9f034`，安卓基线导入 `c9f1fc2`，Server/Pi源码导入 `eb476ea`；完整上传历史见 Git log。这里不宣称正式发行、生产可用或完整产品通过。
 
@@ -19,7 +19,7 @@
 | Android | 作者独立冻结的63项android-002 | 缓存区间/内容清理/后继缓存隔离修复，保留001草稿/快捷回复及原依赖锁/第三方声明；限定FINAL PASS按新交接范围记录；无未就绪新对话/媒体 |
 | Server | 实际作者从T013历史候选冻结的64文件 | 源码、合成测试、npm锁及TypeScript配置；不含T014 |
 | Pi宿主 | 同一来源65文件，另明确加入1个通用renderer | 源码/测试/锁/配置；无T014受控启用；无实际部署配置 |
-| 本地连接器（本分支003-B） | 30项恢复重建后核原字节的source-only，未合main | 8MiB/10000累计操作、SQL只读诊断/背压；003-B限定FINAL PASS、003-A仍BLOCK/F1；严格daemon接收器仍HTTP夹具，backend自身FINAL未知；旧[B](https://github.com/momokiana/notionapp/tree/wip/connectors-candidate-b)/[002](https://github.com/momokiana/notionapp/tree/wip/connectors-002)及N1保留 |
+| 本地连接器（本分支004-B） | 36项持久冻结source-only，未合main | 显式v2/同SQL完整归档/持久有界扩容；pending/unknown不移、archived blocked仍全局FIFO；004-A保留BLOCK/F1、B限定PASS不迁签；[003](https://github.com/momokiana/notionapp/tree/wip/connectors-003)及旧历史/N1不变，backend自身FINAL未知 |
 
 首轮183项导入白名单、原始和公开字节哈希见 [历史导出清单](releases/initial-export.json)，绑定首轮上传而非变更后的当前Android；001的59项/6新增6修改保留于 [001历史清单](releases/android-001.json)；当前002的63项/4新增5修改见 [002新清单](releases/android-002.json)。Android来源清单SHA256为 `b02c8fd3505eaae16fd74f6e322bdd111d0d3937b4c147ecc249d0a7da7c76eb`；Server/Pi的129项来源清单为 `0a8c2ff81c91d59f603549346a24c4726f5268962fd85e2dca751cea33de7135`。新写的公开说明不在导入文件计数内。
 

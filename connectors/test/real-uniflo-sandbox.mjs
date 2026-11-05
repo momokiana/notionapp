@@ -17,7 +17,7 @@ try {
   verifyArtifact(process.env.UNIFLO_BIN);
   copyFileSync(process.env.UNIFLO_BIN, join(stage, 'uniflo')); chmodSync(join(stage, 'uniflo'), 0o500); verifyArtifact(join(stage, 'uniflo'));
   const sourceRoot = fileURLToPath(new URL('../', import.meta.url));
-  const files = ['src/validation.mjs', 'src/spool.mjs', 'src/spool-format.mjs', 'src/spool-capacity.mjs', 'src/transport.mjs', 'src/uniflo.mjs', 'test/real-uniflo-case.mjs', 'test/real-uniflo-fixtures.mjs'];
+  const files = ['src/validation.mjs', 'src/spool.mjs', 'src/spool-format.mjs', 'src/spool-capacity.mjs', 'src/spool-storage.mjs', 'src/spool-maintenance.mjs', 'src/transport.mjs', 'src/uniflo.mjs', 'test/real-uniflo-case.mjs', 'test/real-uniflo-fixtures.mjs'];
   const manifest = [];
   for (const path of files) {
     const input = join(sourceRoot, path), target = join(stage, path), s = lstatSync(input);

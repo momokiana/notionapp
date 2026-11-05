@@ -5,29 +5,39 @@ import { randomUUID } from 'node:crypto';
 import { canonical, hash, fail, operation, privateParent, privateStat, spoolBinding, sourceBinding, MAX_BODY, config } from './validation.mjs';
 
 import { APP, DDL, validateSpool } from './spool-format.mjs';
-import { limits, recordReserve, accounting, quota, projection, fileState, physicalCause, MAX_FILE_BYTES } from './spool-capacity.mjs';
+import { limits, recordReserve, accounting, quota, projection, fileState, physicalCause, MAX_FILE_BYTES, databaseLimits } from './spool-capacity.mjs';
+import { readStorage, verifyStorage, LARGE_FILE_BYTES } from './spool-storage.mjs';
+import * as maintenanceOps from './spool-maintenance.mjs';
 export function syncParent(path) { const fd = openSync(dirname(path), 'r'); try { fsyncSync(fd); } finally { closeSync(fd); } }
 function same(a, b) { return a.dev === b.dev && a.ino === b.ino; }
 
 /** Local bounded transport spool. No user responses, native commands, permissions or event history. */
 export class Spool {
-  constructor(c, { init = false, capacity = 10000, byteBudget = 8 * 1024 * 1024 } = {}) {
+  constructor(c, { init = false, capacity = 10000, byteBudget = 8 * 1024 * 1024, maintenance = false } = {}) {
     c = config(c);
     const freeze = v => { if (v && typeof v === 'object') { Object.values(v).forEach(freeze); Object.freeze(v); } return v; };
-    this.c = freeze(c); this.path = c.spool; this.lock = `${c.spool}.lock`; this.limits = limits(capacity, byteBudget); this.capacity = capacity; this.syncDirectory = syncParent;
+    this.c = freeze(c); this.path = c.spool; this.lock = `${c.spool}.lock`; this.limits = limits(capacity, byteBudget); this.capacity = capacity; this.legacyLimits=this.limits; this.fileLimit=MAX_FILE_BYTES; this.maintenance=maintenance; this.syncDirectory = syncParent;
     privateParent(this.path);
     let lockfd;
     try {
       lockfd = openSync(this.lock, 'wx', 0o600); this.lockStat = fstatSync(lockfd);
       writeSync(lockfd, JSON.stringify({ pid: process.pid, note: 'Verify this exact owner exited before removing a crash lock' })); fsyncSync(lockfd); syncParent(this.lock);
-      if (!existsSync(this.path)) {
+      let main;
+      try { main=lstatSync(this.path); } catch(e) { if(e.code!=='ENOENT')throw e; }
+      if (!main) {
         if (!init) fail('SPOOL_NOT_INITIALIZED');
+        // An absent main file is not an empty namespace: SQLite may reset orphan WAL facts.
+        for(const suffix of ['-wal','-shm','-journal','.storage']){
+          let prior;try{prior=lstatSync(this.path+suffix);}catch(e){if(e.code!=='ENOENT')throw e;}
+          if(prior)fail('ORPHAN_SPOOL_FILES'); // no following links, opening SQLite, or creating a replacement main
+        }
         const fd = openSync(this.path, 'wx', 0o600); try { fsyncSync(fd); } finally { closeSync(fd); } syncParent(this.path);
         this.isNew = true;
-      }
+      } else privateStat(main);
       const initial = fileState(this.path);
-      if (Object.values(initial.sizes).some(n => n > MAX_FILE_BYTES)) fail('SPOOL_FULL');
-      this.fileStat = initial.stats.main;
+      if (Object.values(initial.sizes).some(n => n > LARGE_FILE_BYTES)) fail('SPOOL_FULL');
+      this.fileStat = initial.stats.main; this.storage=readStorage(c,this.fileStat);this.fileLimit=this.storage?LARGE_FILE_BYTES:MAX_FILE_BYTES;
+      if (Object.values(initial.sizes).some(n => n > this.fileLimit)) fail('SPOOL_FULL');
       if (!this.isNew && this.fileStat.size === 0) fail('UNKNOWN_SPOOL');
       // Read-only validation before any WAL pragma or schema mutation of existing files.
       if (!this.isNew) {
@@ -37,7 +47,7 @@ export class Spool {
       this.db = new DatabaseSync(this.path);
       this.db.exec('PRAGMA busy_timeout=1000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA wal_autocheckpoint=64');
       const pageSize = this.db.prepare('PRAGMA page_size').get().page_size;
-      this.db.exec(`PRAGMA max_page_count=${Math.floor(MAX_FILE_BYTES / pageSize)}`);
+      this.db.exec(`PRAGMA max_page_count=${Math.floor(this.fileLimit / pageSize)}`);
       if (this.isNew) {
         this.db.exec('BEGIN IMMEDIATE');
         try {
@@ -48,7 +58,7 @@ export class Spool {
           this.db.exec('COMMIT'); syncParent(this.path);
         } catch (e) { try { this.db.exec('ROLLBACK'); } catch {} throw e; }
       }
-      this.validate(this.db); this.assertFiles();
+      this.validate(this.db); this.refreshStorage(); this.assertFiles();
     } catch (e) {
       this.db?.close();
       if (this.lockStat && existsSync(this.lock) && same(lstatSync(this.lock), this.lockStat)) { unlinkSync(this.lock); syncParent(this.lock); }
@@ -56,8 +66,19 @@ export class Spool {
     } finally { if (lockfd !== undefined) closeSync(lockfd); }
   }
   validate(db) {
-    validateSpool(db, this.c);
-    if (db.prepare('PRAGMA page_count').get().page_count * db.prepare('PRAGMA page_size').get().page_size > MAX_FILE_BYTES) fail('SPOOL_FULL');
+    const version=validateSpool(db,this.c);verifyStorage(version,this.storage,{writing:true,maintenance:this.maintenance});
+    if (db.prepare('PRAGMA page_count').get().page_count * db.prepare('PRAGMA page_size').get().page_size > this.fileLimit) fail('SPOOL_FULL');
+    return version;
+  }
+  refreshStorage() {
+    const files=fileState(this.path);if(!same(files.stats.main,this.fileStat))fail('SPOOL_PATH_CHANGED');
+    this.storage=readStorage(this.c,this.fileStat);this.fileLimit=this.storage?LARGE_FILE_BYTES:MAX_FILE_BYTES;
+    this.version=this.validate(this.db);this.limits=databaseLimits(this.db,this.fileLimit,this.legacyLimits);
+  }
+  currentLimits() { return databaseLimits(this.db,this.fileLimit,this.legacyLimits); }
+  findRow(key,value) {
+    if(!['seq','id'].includes(key))fail('INVALID_INPUT');
+    return this.db.prepare(`SELECT * FROM queue WHERE ${key}=?`).get(value) ?? (this.version===2?this.db.prepare(`SELECT * FROM archive WHERE ${key}=?`).get(value):undefined);
   }
   assertFiles() {
     privateParent(this.path);
@@ -65,16 +86,19 @@ export class Spool {
       if (!existsSync(path)) { if ([this.path, this.lock].includes(path)) fail('SPOOL_PATH_CHANGED'); else continue; }
       const s = lstatSync(path); privateStat(s);
       if ((path === this.path && !same(s, this.fileStat)) || (path === this.lock && !same(s, this.lockStat))) fail('SPOOL_PATH_CHANGED');
-      if (s.size > 32 * 1024 * 1024) fail('SPOOL_FULL');
+      if (s.size > this.fileLimit) fail('SPOOL_FULL');
     }
+    const storage=readStorage(this.c,this.fileStat);
+    if(Boolean(storage)!==Boolean(this.storage)||(storage&&(!same(storage.stat,this.storage.stat)||storage.value.state!==this.storage.value.state)))fail('SPOOL_PATH_CHANGED');
   }
   tx(action) {
     this.assertFiles();
-    if (physicalCause(fileState(this.path))) fail('SPOOL_FULL');
+    verifyStorage(this.version,this.storage,{writing:true,maintenance:this.upgrading===true});
+    if (physicalCause(fileState(this.path),this.fileLimit)) fail('SPOOL_FULL');
     this.db.exec('BEGIN IMMEDIATE');
     let committed = false;
     try {
-      const result = action(); this.db.exec('COMMIT'); committed = true;
+      const result = action(); this.db.exec('COMMIT'); committed = true; this.maintenanceHook?.('transaction_committed');
       this.assertFiles();
       this.syncDirectory(this.path); // covers newly created/recreated WAL directory entry before any ACK
       return result;
@@ -82,11 +106,16 @@ export class Spool {
   }
   insert(op, mapping = null) {
     const fp = hash(canonical(op));
-    const prior = this.db.prepare('SELECT * FROM queue WHERE id=?').get(op.id);
+    const prior = this.findRow('id',op.id);
     if (prior) { if (prior.fingerprint !== fp) fail('IDEMPOTENCY_CONFLICT'); return { state: prior.state, receipt: prior.ack ? JSON.parse(prior.ack) : null }; }
     const used = accounting(this.db, this.c);
-    if (used.operations >= this.limits.operations || used.reserved_bytes + recordReserve(canonical(op.payload), mapping) > this.limits.reserved_bytes) fail('SPOOL_FULL');
-    this.db.prepare('INSERT INTO queue(id,fingerprint,kind,event_id,mapping,payload,state) VALUES (?,?,?,?,?,?,?)').run(op.id, fp, op.kind, op.event_id ?? null, mapping, canonical(op.payload), 'pending');
+    const bound=this.currentLimits();
+    if (used.operations >= bound.operations || used.reserved_bytes + recordReserve(canonical(op.payload), mapping) > bound.reserved_bytes) fail('SPOOL_FULL');
+    if(this.version===2){
+      const high=this.db.prepare('SELECT max((SELECT coalesce(max(seq),0) FROM queue),(SELECT coalesce(max(seq),0) FROM archive)) AS n').get().n;
+      if(!Number.isSafeInteger(high)||high>=Number.MAX_SAFE_INTEGER)fail('SEQUENCE_EXHAUSTED');
+      this.db.prepare('INSERT INTO queue(seq,id,fingerprint,kind,event_id,mapping,payload,state) VALUES (?,?,?,?,?,?,?,?)').run(high+1,op.id,fp,op.kind,op.event_id??null,mapping,canonical(op.payload),'pending');
+    }else this.db.prepare('INSERT INTO queue(id,fingerprint,kind,event_id,mapping,payload,state) VALUES (?,?,?,?,?,?,?)').run(op.id, fp, op.kind, op.event_id ?? null, mapping, canonical(op.payload), 'pending');
     return { state: 'connector_persisted', receipt: null };
   }
   enqueue(input) { const op = JSON.parse(JSON.stringify(operation(input))); return this.tx(() => this.insert(op)); }
@@ -99,7 +128,7 @@ export class Spool {
       this.setObserver({ ...current, state: 'disconnected', reason });
     });
   }
-  capacityStatus() { this.assertFiles(); return quota(this.db, this.c, this.limits); }
+  capacityStatus() { this.assertFiles(); return quota(this.db, this.c, this.currentLimits()); }
   beginObservation() {
     return this.tx(() => {
       if (this.capacityStatus().observation_admission !== 'accepting') fail('SPOOL_FULL');
@@ -136,6 +165,8 @@ export class Spool {
   prepare() {
     return this.tx(() => {
       const row = this.db.prepare("SELECT * FROM queue WHERE state!='saved' ORDER BY seq LIMIT 1").get();
+      const barrier=this.version===2?this.db.prepare("SELECT seq FROM archive WHERE state='blocked' ORDER BY seq LIMIT 1").get():null;
+      if(barrier&&(!row||barrier.seq<row.seq))fail('QUEUE_BLOCKED');
       if (!row) return null; if (row.state === 'blocked') fail('QUEUE_BLOCKED');
       if (row.wire) return row;
       const p = JSON.parse(row.payload); let event = row.event_id;
@@ -152,7 +183,7 @@ export class Spool {
   }
   saved(row, ack) {
     this.tx(() => {
-      const current = this.db.prepare('SELECT * FROM queue WHERE seq=?').get(row.seq);
+      const current = this.findRow('seq',row.seq);
       if (!current || current.wire !== row.wire || current.event_id !== row.event_id || current.mapping !== row.mapping) fail('RECEIPT_ROW_MISMATCH');
       if (current.state === 'saved') {
         if (current.ack !== canonical(ack)) fail('RECEIPT_CONFLICT');
@@ -164,10 +195,22 @@ export class Spool {
       if (row.mapping) this.db.prepare('UPDATE maps SET event_id=?,version=? WHERE key=?').run(ack.event_id, ack.event_version, row.mapping);
     });
   }
-  blocked(row, code) { this.tx(() => this.db.prepare("UPDATE queue SET state='blocked',error=? WHERE seq=?").run(code, row.seq)); }
+  blocked(row,code) {
+    this.tx(()=>{
+      const current=this.findRow('seq',row.seq);
+      if(!current||current.wire!==row.wire||current.event_id!==row.event_id)fail('RECEIPT_ROW_MISMATCH');
+      if(current.state==='blocked'&&current.error===code)return;
+      if(current.state!=='unknown')fail('RECEIPT_ROW_MISMATCH');
+      this.db.prepare("UPDATE queue SET state='blocked',error=? WHERE seq=? AND state='unknown'").run(code,row.seq);
+    });
+  }
+  upgrade() { const prior=this.maintenance;this.maintenance=true;this.upgrading=true;try{return maintenanceOps.upgrade(this);}finally{this.maintenance=prior;this.upgrading=false;} }
+  resize(input) { return maintenanceOps.resize(this,input); }
+  archive(input) { return maintenanceOps.archive(this,input); }
+  archivePlan(input) { return maintenanceOps.planArchive(this.db,this.c,this.currentLimits(),input,{ready:this.storage?.value.state==='ready'}); }
   status() {
     this.assertFiles(); this.syncDirectory(this.path);
-    return projection(this.db, this.c, this.limits);
+    return projection(this.db, this.c, this.currentLimits());
   }
   close() {
     if (!this.closed) { this.db?.close(); this.closed = true; }

@@ -1,8 +1,8 @@
-# 本地出站连接器 — 003-B容量/诊断，限定FINAL PASS
+# 本地出站连接器 — 004-B显式存储维护，限定FINAL PASS
 
-> 独立分支 `wip/connectors-003` 只公开准确003-B的30项源码：同一独审§7限定FINAL PASS，**003-A仍BLOCK/F1，不迁签**。8MiB逻辑保留预算、只读SQL诊断及背压不是GC/迁移或执行授权。旧临时快照已失效，本次使用按原31项清单与review指纹恢复重建、原30项哈希不变的新导出，不冒称旧目录仍在。详见 [来源/公开哈希与分层复验](../docs/releases/connectors-003.md)。**未合入main，backend自身FINAL未知，真实daemon发布接收器仍是HTTP夹具，不是backend/native receipt或生产。**
+> 独立分支 `wip/connectors-004` 仅消费004-B准确36项source-only：同一独审§8限定FINAL PASS，**004-A仍BLOCK/F1；B在main创建/SQLite打开前拒绝孤WAL/SHM/journal/storage组，不倒改历史**。显式原路径v2、同SQL完整归档及持久有界扩容不是恢复/轮换或输入授权。详见 [源/公开哈希与实际矩阵](../docs/releases/connectors-004.md)。**不合main/不作联合或正式Release；backend自身FINAL未知，N1不变，真实daemon接收器仍是合成HTTP夹具。**
 
-POSIX CLI/库，包声明Node>=22.13，实际仅报告22.13.0/22.23.2的限定矩阵；使用内置 `node:sqlite`（Node22提示ExperimentalWarning），没有第三方运行依赖。不开放入站端口、不执行shell、不发现私人会话目录。N1不变：当前backend/in-process runner只按22.23.2验证；现安装better-sqlite3在22.13单独open亦SIGSEGV，原因未定，不可迁用connector绿证。
+包声明Node>=22.13，实测仅22.13.0/22.23.2及本页限定POSIX矩阵；内置 `node:sqlite` 提示ExperimentalWarning，无第三方运行依赖。不开放入站端口、不执行shell、不发现私人会话目录。当前backend/in-process runner只按22.23.2验证；现安装better-sqlite3在官方22.13单独open亦SIGSEGV，原因未定，不迁用客户端绿证。
 
 - 脚本、CI、定时任务：把严格 JSON 数据文件入队，连接器主动向同一个事件服务发布。
 - Uniflo：显式选择会话，只 GET 当前快照与 NDJSON，映射为无交互只读事件与原事件 progress；不上传会话正文、路径、标题、preview、工具参数、reasoning 或原生 ID。
@@ -13,8 +13,8 @@ POSIX CLI/库，包声明Node>=22.13，实际仅报告22.13.0/22.23.2的限定�
 ```sh
 npm --prefix connectors ci
 npm --prefix connectors run check
-# backend/native runner仅由Node22.23.2运行；正常绑定集成仍待backend自身FINAL
-# 本独立分支继承的公开T013后端未包含新source-binding，不称联合通过
+# 后端/native runner仅限已验22.23.2；正常绑定集成仍待backend自身FINAL
+# 本分支继承的T013公开后端未含新绑定，不能当正常联合链路
 npm --prefix connectors run integration
 # 明确验证旧服务端拒绝绑定发布，不把它称正常新协议集成
 node connectors/test/integration-runner.mjs /absolute/public-server-tree --legacy
@@ -96,12 +96,36 @@ runner新建0700合成case，只挂精确公共Node／必要库／固定Uniflo�
 
 ## 容量、崩溃与诊断
 
-- 最多16个明确Uniflo选择、累计10000个操作（含saved/blocked）、**8MiB逻辑保留预算**；SQLite页上限按实际page_size折算32MiB，主库/WAL/SHM/journal各32MiB检查。每行按实际UTF-8 payload、至少payload+256的未来wire、至少1024的ACK、映射及行余量保守收费，另留binding/meta/map余量；不是当前文件大小或能同时装满各上限的保证。WAL/journal距硬边界不足1MiB即保守停止写入，不手动删/截WAL、不猜checkpoint成功；真正存储失败可使已有传输也暂时不能处理。
-- 新准入在IMMEDIATE事务内核准，满时旧同ID同内容仍可按原耐久屏障对账，异内容仍冲突。新逻辑限额不挡已有eligible prepare/原wire重放/准确ACK保存；过新预算的合法v1库保留为retained_over_limit，不清旧事实。容量投影是预测，具体包仍由事务核准；CLI固定产品限额，库的更小测试限额仅当前实例、不持久化成新政策；观察另按每个所选来源16KiB与一个行位保守预留，近满即暂停，不反复开始注定放不下的新轮次。没有GC/delete/VACUUM/自动新库，额度可能一直耗尽；安全迁移/轮换、保留期仍是后继，不可删pending/unknown/旧映射/已用事实来恢复。
+- 未显式升级的v1：最多16个明确Uniflo选择、累计10000个操作（含saved/blocked）、**8MiB逻辑保留预算**；SQLite页上限按实际page_size折算32MiB，主库/WAL/SHM/journal各32MiB检查。每行按实际UTF-8 payload、至少payload+256的未来wire、至少1024的ACK、映射及行余量保守收费，另留binding/meta/map余量；不是当前文件大小或能同时装满各上限的保证。v1的WAL/journal距硬边界不足1MiB即保守停止写入，不手动删/截WAL、不猜checkpoint成功；真正存储失败可使已有传输也暂时不能处理。
+- 新准入在IMMEDIATE事务内核准，满时旧同ID同内容仍可按原耐久屏障对账，异内容仍冲突。新逻辑限额不挡已有eligible prepare/原wire重放/准确ACK保存；过新预算的合法v1库保留为retained_over_limit，不清旧事实。容量投影是预测，具体包仍由事务核准；v1 CLI固定产品限额，库的更小测试限额仅当前实例；v2重开/诊断消费持久存储policy，不能由producer/来源文本修改；观察另按每个所选来源16KiB与一个行位保守预留，近满即暂停，不反复开始注定放不下的新轮次。没有GC/VACUUM/自动新库；v1仍可能一直耗尽，v2可用下述显式维护回收工作额度/有限扩容。跨文件迁移/轮换、保留期仍是后继，不可删pending/unknown/旧映射/已用事实来恢复。
 - 配置／producer 读取本身最多分配并读取限额+1字节，即使 fstat 后文件增长也不全量读入。正文 65536 字节，响应回执／self 各 4 KiB，snapshot／NDJSON 行各 64 KiB。HTTP 5 秒，单观察流 60 秒后按 gap 重连。没有永远在线／完整历史恢复承诺。
 - 单写者独占 `.lock` 贯穿异步 flush／observe；同一库实例的并发flush或observe明确拒绝，旧轮次错误收尾不覆盖新代次，迟到／重复旧ACK也不覆盖较新映射。实际 SQLite 关闭成功才释放 lock（重复 close 幂等，不依赖新版本 isOpen getter）。正常关闭释放；SIGKILL 残留保守拒绝。操作员必须先**正面核实原精确进程已退出且无使用者**，保留原库后仅移走其旧 lock；本程序不根据 PID 重用／不存在或超时自动抢锁。测试只在已观察自有 child SIGKILL 后显式移除夹具锁。
 - 未知 appID／schema／损坏库、空既有文件、路径替换与权限不符拒绝；不清库、不创建替代身份。配置／目录和同账户管理员是信任边界，不宣称抵御恶意同 UID 修改。
-- `status`用独立SQL只读连接，不取/移除写者lock、不建缺库、不联网，在同一read snapshot先验格式/binding再输出≤8KiB聚合（计数、保留/实际payload-wire-ACK字节、限额、首未结项、观察与文件stat）。文件stat是附近时点，不与SQL提交全局原子；lock只报present/absent、不证明存活。超32MiB文件仅stat，scope_validation:not_checked、业务计数null、不打开SQLite。错误身份/格式/路径/权限非零拒绝。SQL只读可能使用/新建私有SHM，不是物理零写取证工具。
+- `status`用独立SQL只读连接，不取/移除写者lock、不建缺库、不联网，在同一read snapshot先验格式/binding再输出≤8KiB聚合（计数、保留/实际payload-wire-ACK字节、限额、首未结项、观察与文件stat）。文件stat是附近时点，不与SQL提交全局原子；lock只报present/absent、不证明存活。无合法当前存储标记时超32MiB仅stat；合法当前v2标记仅允许256MiB以内有限打开，仍须SQL核格式/完整binding/policy，超绝对界仍仅stat、scope_validation:not_checked/业务null/0 SQLite打开。错误身份/格式/路径/权限非零拒绝。SQL只读可能使用/新建私有SHM，不是物理零写取证工具。
 - 诊断标diagnostic_only:true/persistence_ack:false：可读saved行不证明本次目录fsync或来源在线，不补发持久ACK，不授当前发送/回应/执行权。原保存/重复回执仍走写者耐久屏障。终端仅固定原因，不输出token/摘要、原URL/key/正文/路径或上游/SQL异常；run分别按采集/发布/容量阶段及原因抑制重复日志，只由对应阶段实际成功重置；新采集不伪造发布恢复。blocked/unknown须按原ID/原目标对账；没有reset/force/clear按钮。
 
-本次来源重建、30项source/public哈希、003-A旧BLOCK、003-B限定审查与发布者实际53＋严格daemon2矩阵见 [003发布说明](../docs/releases/connectors-003.md)。不复制TASK/原review/raw evidence/CASE/spool/工具；002及更早历史保留，未覆盖项不因本轮绿证自动通过。
+## 长期使用：显式本地存储维护
+
+v1普通运行/init**不自动迁移**。显式init只有整组确无旧材料才可新建：main缺失但WAL/SHM/rollback-journal/storage任一残留（包括坏类型或悬空链接）即在创建main/打开SQLite前以ORPHAN_SPOOL_FILES拒绝，原组保持；已有lock仍拒绝，不删除/自动重接孤组，不用init当恢复工具。维护只针对config中的同一私有原文件、原binding与writer lock，0HTTP/模型/原生输入；先正常停止你自己准确的连接器，不是Uniflo/真实harness/生产服务。已有run持锁时维护拒绝，不抢锁、不杀进程。备份的当前性不是本工具能证明的，不把旧备份当当前库接续，也不要用换路径/新ID/移除标记假恢复。
+
+```sh
+# 显式升级当前原文件；不改原queue/maps/observer和原ID/wire/ACK
+node connectors/src/cli.mjs upgrade /private/app-connector/config.json
+# 严格JSON选项示例：max_rows 1..100, include_blocked false（默认仅归档saved）
+node connectors/src/cli.mjs archive-plan /private/app-connector/config.json connectors/examples/archive-options.json
+node connectors/src/cli.mjs archive /private/app-connector/config.json connectors/examples/archive-options.json
+# 可选：四项逐项只增/相等，实际持久policy见status；示例不是无限扩容
+node connectors/src/cli.mjs resize /private/app-connector/config.json connectors/examples/storage-limits.json
+node connectors/src/cli.mjs status /private/app-connector/config.json
+```
+
+v2还是一个私有SQLite传输命名空间，新增archive表：**全部十一原字段完整保留**，同事务复制/核对/移出工作queue，不遗忘ID/指纹/原包/receipt。pending/unknown绝不归档。相同ID/内容在两表返回原状态，异内容冲突；序号取两表全局max+1；旧ACK不倒退map。`include_blocked:true`可回收其工作额度，但blocked仍在全局FIFO阻断后面发布，**不代表已保存/可以跳过/可以改目标重试**。没有解除阻塞/清事实按钮。
+
+- 初始工作额度10000行/8MiB保留费，archive独立100000行/64MiB完整事实费；resize硬顶分别100000/32MiB、1000000/128MiB，字段必须正安全整数且只增。Archive费用含实际UTF-8全部字段及固定索引余量，不再给终态虚留未来wire/ACK；counts是两表全历史，capacity.usage.operations是工作行位，archive单列，不把搬走当没发生。
+- v2页/各文件硬界256MiB，普通写者保守16MiB WAL/journal余量。维护每次先用SQLite自己的TRUNCATE checkpoint并核0/0/0；读者阻塞就报告MAINTENANCE_BUSY，不驱逐读者/不手删WAL。归档再按实际批次、页尺寸/编码的保守写放大估计限制批量，可能少于max_rows；preview给所选费用/释放工作费/事务物理余量，apply重算，不接受preview当预留票据。归档释放的是**工作额度和可重用页**，不保证文件变小，不做VACUUM/压缩。各预算先到者停止，不能保证同时填满/永远有磁盘空间。
+- `.storage`是≤4KiB的私有格式意图，绑定当前原db dev/inode/原binding摘要：先持久upgrading才提高页界/提交v2，SQL和目录耐久后才ready。它不是来源授权/业务账本；标记正确仍要核SQL。过渡只可诊断/明确upgrade恢复，不能普通发布；坏/缺/错scope/inode/矛盾状态拒绝，不自动覆盖。旧003遇真正v2拒绝，不要以旧程序/删除标记接续。普通新命令也不提供导入、还原、轮换或替代路径。
+- 维护COMMIT后本机屏障失败可能已有事实，返回无成功并保留；新执行须按当前两表/标记实核。维护不增加request_id账本，重跑archive可能选下一批，也可能moved=0，不是第一次不可变ACK。不得为恢复外观反向回滚已提交事实。
+
+总archive/物理界耗尽仍须保留事实、明确背压；有限工具不是无限运行/旧快照恢复保证。跨文件冷存储、备份当前性/恢复、轮换和保留期另有后继，不据此授Native输入、后台执行或生产操作权。
+
+本轮交接指纹、004-A原BLOCK/F1、004-B限定结论与发布者双Node各92＋严格v2/archive daemon2矩阵见 [004发布说明](../docs/releases/connectors-004.md)；逐项source/public SHA256单列，不改原源表。TASK/review/raw CASE/spool/storage标记/工具/凭据均不上传；旧003及更早历史保留，当前成功不补签其他层级或暂停工作。
