@@ -1,0 +1,407 @@
+{
+  "format": 1,
+  "component": "connectors",
+  "increment": "connector-003",
+  "candidate": "003-B",
+  "branch": "wip/connectors-003",
+  "parent_publication_commit": "067021094ae65511a8335a77b47794358beebabf",
+  "parent_publication_branch": "wip/connectors-002",
+  "unchanged_main_commit": "0a745c88fbba495f145263e5384af24215c394b2",
+  "source_manifest_sha256": "8ce77962b0424acd961316551956dc77728338ceab4495aeb2cddc04e21619d0",
+  "public_source_table_sha256": "79583997ddadc2d41dca928de8b8984c3b0ff8c3b1c575efa69ab825ea4a13ca",
+  "table_hash_recipe": "UTF-8 lines in files array order: selected source_sha256 or public_sha256, two ASCII spaces, path, LF. Public table covers imported30 including adapted README, not newly written release/root docs; original source table is never modified.",
+  "source_files": 30,
+  "previous_002_source_manifest_sha256": "88036d5b72e17728247cfd2d625bc919d6fb2f17c957d467e356c7ccf8dfba05",
+  "delta_vs_002": {
+    "added": [
+      "connectors/src/spool-capacity.mjs",
+      "connectors/src/spool-format.mjs",
+      "connectors/test/capacity.test.mjs"
+    ],
+    "modified": [
+      "connectors/README.md",
+      "connectors/package.json",
+      "connectors/src/cli.mjs",
+      "connectors/src/spool.mjs",
+      "connectors/src/uniflo.mjs",
+      "connectors/test/real-uniflo-sandbox.mjs",
+      "connectors/test/spool.test.mjs"
+    ],
+    "deleted": []
+  },
+  "unchanged_from_002": 20,
+  "lock_transport_validation_unchanged": true,
+  "reconstruction": {
+    "new_reconstructed_export": true,
+    "old_tmp_author_reviewer_and_public_export_survived": false,
+    "original_persistent_31_table_sha256": "287e20c51fa4866fc1475a75d188997e5823ed20a04d265b4b3cc68caa2ac40b",
+    "original_review_sha256_verified": "77df68b1f41869d6200f407aa1fbed4d0cfc6599dd5dd7d6a3d585cdf6c31b56",
+    "publisher_verified_reconstructed_31_matches_original_table": true,
+    "derived_30_matches_original_source_table": true,
+    "TASK_copied_to_test_or_public_tree": false,
+    "unverified_live_tree_bytes_accepted": false,
+    "note": "Author explicitly reconstructed all original31 matching bytes against persistent original table/review before and after copying; publisher independently hashes only the reconstructed31/derived30, not active product source. This is not a claim old frozen dirs survived."
+  },
+  "review": {
+    "status": "Original same independent reviewer section7 limited FINAL PASS for exact003-B; received/confirmed, no new product review or re-dispatch by publisher",
+    "task_sha256": "99691e3e5eea0371a410f0fbddfdc256608b2b9c24f5d5e339bb2ec6fb11ecf2",
+    "review_sha256": "77df68b1f41869d6200f407aa1fbed4d0cfc6599dd5dd7d6a3d585cdf6c31b56",
+    "candidate_31_table_sha256": "287e20c51fa4866fc1475a75d188997e5823ed20a04d265b4b3cc68caa2ac40b",
+    "author_reviewer_matrix_reported": "Each Node22.13.0/22.23.2 ordinary53/53 and strict official daemon2/2; reviewer extra6 groups old-db/UTF8/stat-only and original F1 three modes",
+    "publisher_private_review_extra_probes_rerun": false
+  },
+  "failure_history": {
+    "connector003_A": "Remains BLOCK/F1 despite historical50/2 green, separate from older001-A F1-F3. Do not migrate B verdict. No003-A source uploaded.",
+    "connector003_B_fix_reported": "A-to-B ordinary fix only CLI/capacity test/README; continuous identity503 and post503 each one publish warning, real publishing recovery then new failure two warnings; original wire/unknown/pending retained",
+    "old_001_B_and_002": "Original commits, source hashes and bounded verdicts unchanged"
+  },
+  "features": {
+    "retained_operation_limit": 10000,
+    "reserved_logical_bytes": 8388608,
+    "physical_file_bound_each": 33554432,
+    "accounting": "Actual UTF8 and conservative future wire/ACK/maps/meta/row reservation at IMMEDIATE admission, prediction is not current file size or physical capacity promise",
+    "drain": "Logical full does not itself discard eligible old prepare/fixed-wire/ACK path; physical FULL/EIO/headroom may still block; saved/blocked retained, flush does not free quota",
+    "diagnostics": "Independent SQL-read-only aggregate snapshot, bounded8192 bytes; nearby file stats not globally atomic, SHM may be created; diagnostic_only true/persistence_ack false, no current authorization or native/source receipt",
+    "oversize": "stat-only, no SQL constructor, scope not_checked and business counts null",
+    "observation": "No pre-clearing old watermark; near-full skips fresh poll/generation; only first successful current-generation snapshot rebases, stream rollback/stale cleanup rejected",
+    "non_goals": [
+      "GC/delete/VACUUM",
+      "automatic new spool/restore",
+      "migration/rotation",
+      "native input or execution permissions"
+    ]
+  },
+  "publisher_validation": {
+    "source_30_and_original_31_hashes_checked": true,
+    "private_identity_secret_license_scan": "No high-risk findings; only explicitly synthetic UUID and markers retained; not a new product audit or absolute guarantee",
+    "workspace": "Fresh persistent private POSIX verification copy, empty HOME/new TMPDIR, no active-source reads",
+    "node22.13.0": {
+      "ordinary": {
+        "pass": 53,
+        "fail": 0,
+        "skip": 0,
+        "exit": 0
+      },
+      "strict_real_daemon": {
+        "pass": 2,
+        "fail": 0,
+        "skip": 0,
+        "exit": 0
+      }
+    },
+    "node22.23.2": {
+      "ordinary": {
+        "pass": 53,
+        "fail": 0,
+        "skip": 0,
+        "exit": 0
+      },
+      "strict_real_daemon": {
+        "pass": 2,
+        "fail": 0,
+        "skip": 0,
+        "exit": 0
+      }
+    },
+    "host": "WSL2 Linux6.6.87.2-microsoft-standard-WSL2 x86_64",
+    "bubblewrap": "0.11.1",
+    "official_node22.13_binary_sha256_checked": "af8d5d1e234beb26b3095e6bebf80edc781f79c9435553a383037eccec2716f8",
+    "official_uniflo": {
+      "version": "0.2.6 Linux x86_64 musl",
+      "bytes": 18720856,
+      "binary_sha256_checked": "e5d8c89633bac3f08d7f3a2ef8dec702579aceaf63878b79bc254c4894e7c996"
+    },
+    "real_scope": "Official daemon reading two synthetic Claude/Codex JSONL layouts, isolated new Bubblewrap CASE; publishing receiver synthetic HTTP, NOT backend/native receipt",
+    "host_fallback": false,
+    "backend_native_loaded": false,
+    "original_case_or_binary_published": false,
+    "install": "npm ci --ignore-scripts success, no runtime dependencies, audit0 known vulnerabilities"
+  },
+  "backend_gate": {
+    "own_FINAL": "Unknown/original provider refusal unchanged; no retry/channel/provider change or replacement sign-off",
+    "joint_main_merge": false,
+    "backend_or_T014_source_imported": false,
+    "N1": "Existing backend/in-process native runner only22.23.2 verified; installed better-sqlite3 standalone open SIGSEGV on22.13 cause unknown, no client-to-backend verdict migration"
+  },
+  "not_covered": [
+    "actual host ENOSPC/power loss",
+    "private harness/model/live PID",
+    "all OS/FS/33 harness matrices",
+    "phone/push/production",
+    "complete A25/A26/A29",
+    "automatic archive/migration/rotation/old-snapshot restoration"
+  ],
+  "exclusions": [
+    "TASK/review/raw evidence",
+    "CASE/spool/runtime data",
+    "tools/binaries/installer/dependencies",
+    "private configuration/authorization/credentials/deployment/sessions",
+    "paused core/backend/source-binding/T014 source"
+  ],
+  "files": [
+    {
+      "path": "connectors/.gitignore",
+      "source_sha256": "5d568d0b250eddee4441d65ebc8dbb96f2f2e7125b752fbdc4f984b3d07e0704",
+      "public_sha256": "5d568d0b250eddee4441d65ebc8dbb96f2f2e7125b752fbdc4f984b3d07e0704",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "5d568d0b250eddee4441d65ebc8dbb96f2f2e7125b752fbdc4f984b3d07e0704",
+      "previous_002_public_sha256": "5d568d0b250eddee4441d65ebc8dbb96f2f2e7125b752fbdc4f984b3d07e0704"
+    },
+    {
+      "path": "connectors/README.md",
+      "source_sha256": "5f755257ed209e288d0d3da30d13289f5500df5a4753db3bc072da7bf7521afe",
+      "public_sha256": "40de6cd40de8d60eedd920ef9075592aa094db3d93e30b5f6abe7e54032f61f1",
+      "source_delta_vs_002": "modified",
+      "public_adaptation": "publication/reconstruction/limited review/backend N1 banner and safe documentation links",
+      "previous_002_source_sha256": "7fa865f5b691528d35770466e26e37ec6bfdd8fbbb2875d51d3e6d9a97112a7f",
+      "previous_002_public_sha256": "9a8fb8b1f2f4452daf7c5435d84283ff67594bde235a5eb1cab63cc96617a459"
+    },
+    {
+      "path": "connectors/examples/config.example.json",
+      "source_sha256": "56aa45606a69c79baaaf5ac6cc29e856aa7f9acea8a093630308cd1b2563d0f1",
+      "public_sha256": "56aa45606a69c79baaaf5ac6cc29e856aa7f9acea8a093630308cd1b2563d0f1",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "56aa45606a69c79baaaf5ac6cc29e856aa7f9acea8a093630308cd1b2563d0f1",
+      "previous_002_public_sha256": "56aa45606a69c79baaaf5ac6cc29e856aa7f9acea8a093630308cd1b2563d0f1"
+    },
+    {
+      "path": "connectors/examples/create.json",
+      "source_sha256": "f8d303b2b059da240ad3758cba0a8630c8b4513682f75cccbaf97dd609f663ee",
+      "public_sha256": "f8d303b2b059da240ad3758cba0a8630c8b4513682f75cccbaf97dd609f663ee",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "f8d303b2b059da240ad3758cba0a8630c8b4513682f75cccbaf97dd609f663ee",
+      "previous_002_public_sha256": "f8d303b2b059da240ad3758cba0a8630c8b4513682f75cccbaf97dd609f663ee"
+    },
+    {
+      "path": "connectors/examples/update.json",
+      "source_sha256": "8d20ce6059440c7a662130fd8229d5347d8dfd659b9a5b090eba49461476f27d",
+      "public_sha256": "8d20ce6059440c7a662130fd8229d5347d8dfd659b9a5b090eba49461476f27d",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "8d20ce6059440c7a662130fd8229d5347d8dfd659b9a5b090eba49461476f27d",
+      "previous_002_public_sha256": "8d20ce6059440c7a662130fd8229d5347d8dfd659b9a5b090eba49461476f27d"
+    },
+    {
+      "path": "connectors/package-lock.json",
+      "source_sha256": "7e78eb725796eb8506be07b1d4cf3db0245b6606f4bbb6d210b90e1fefde880d",
+      "public_sha256": "7e78eb725796eb8506be07b1d4cf3db0245b6606f4bbb6d210b90e1fefde880d",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "7e78eb725796eb8506be07b1d4cf3db0245b6606f4bbb6d210b90e1fefde880d",
+      "previous_002_public_sha256": "7e78eb725796eb8506be07b1d4cf3db0245b6606f4bbb6d210b90e1fefde880d"
+    },
+    {
+      "path": "connectors/package.json",
+      "source_sha256": "496c338a7f19c3837d21a19b116818b577e6e8e5147a323611e41047552e9ce5",
+      "public_sha256": "496c338a7f19c3837d21a19b116818b577e6e8e5147a323611e41047552e9ce5",
+      "source_delta_vs_002": "modified",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "b9c6d55a1d839bf03f62146b09197d031e34ec67d1679c9c85d8ab0dc23fca1e",
+      "previous_002_public_sha256": "b9c6d55a1d839bf03f62146b09197d031e34ec67d1679c9c85d8ab0dc23fca1e"
+    },
+    {
+      "path": "connectors/src/cli.mjs",
+      "source_sha256": "104c56bff0afefe01cedcca8ff0a005cb2613d1d644221306da8357b83ae1e08",
+      "public_sha256": "104c56bff0afefe01cedcca8ff0a005cb2613d1d644221306da8357b83ae1e08",
+      "source_delta_vs_002": "modified",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "52659d5550f082d13830136fb78ccbb02be43f2f11ff0218f3a7eb4a8d9b8d71",
+      "previous_002_public_sha256": "52659d5550f082d13830136fb78ccbb02be43f2f11ff0218f3a7eb4a8d9b8d71"
+    },
+    {
+      "path": "connectors/src/spool-capacity.mjs",
+      "source_sha256": "4a595d2683d3919528e7e70e0c92b1990f83df535a30a55f073eafb2494e18a3",
+      "public_sha256": "4a595d2683d3919528e7e70e0c92b1990f83df535a30a55f073eafb2494e18a3",
+      "source_delta_vs_002": "added",
+      "public_adaptation": "byte-identical"
+    },
+    {
+      "path": "connectors/src/spool-format.mjs",
+      "source_sha256": "6d038d12480678748cdd9b734c384c6faa225a57ef5e47d8ff979425e7aa542d",
+      "public_sha256": "6d038d12480678748cdd9b734c384c6faa225a57ef5e47d8ff979425e7aa542d",
+      "source_delta_vs_002": "added",
+      "public_adaptation": "byte-identical"
+    },
+    {
+      "path": "connectors/src/spool.mjs",
+      "source_sha256": "1f6b4c01d5717d28ce108df8af77d9adaf034b6a8000a40a1986b441a0f09988",
+      "public_sha256": "1f6b4c01d5717d28ce108df8af77d9adaf034b6a8000a40a1986b441a0f09988",
+      "source_delta_vs_002": "modified",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "36b9f10bc246b6edcf3fb300d5cf3a46f9147292f9958611df37aa32b23d166f",
+      "previous_002_public_sha256": "36b9f10bc246b6edcf3fb300d5cf3a46f9147292f9958611df37aa32b23d166f"
+    },
+    {
+      "path": "connectors/src/transport.mjs",
+      "source_sha256": "5d67712706259d936e958fa37b011659be09990b4ce699e2bcbf77251e5708a0",
+      "public_sha256": "5d67712706259d936e958fa37b011659be09990b4ce699e2bcbf77251e5708a0",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "5d67712706259d936e958fa37b011659be09990b4ce699e2bcbf77251e5708a0",
+      "previous_002_public_sha256": "5d67712706259d936e958fa37b011659be09990b4ce699e2bcbf77251e5708a0"
+    },
+    {
+      "path": "connectors/src/uniflo.mjs",
+      "source_sha256": "129ccb146896b26c8f23b5c9b7f1e173a78a39482fde1c7f5c2ccd366732584c",
+      "public_sha256": "129ccb146896b26c8f23b5c9b7f1e173a78a39482fde1c7f5c2ccd366732584c",
+      "source_delta_vs_002": "modified",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "7dce03571d4cb01b9e9d4983dd8fd31c754c85a36e11e71f1b9b163f630b95b3",
+      "previous_002_public_sha256": "7dce03571d4cb01b9e9d4983dd8fd31c754c85a36e11e71f1b9b163f630b95b3"
+    },
+    {
+      "path": "connectors/src/validation.mjs",
+      "source_sha256": "b5695352c98a5605964d6bca1a9fc01d399fc52e12fe4679da6a19cfd43c538d",
+      "public_sha256": "b5695352c98a5605964d6bca1a9fc01d399fc52e12fe4679da6a19cfd43c538d",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "b5695352c98a5605964d6bca1a9fc01d399fc52e12fe4679da6a19cfd43c538d",
+      "previous_002_public_sha256": "b5695352c98a5605964d6bca1a9fc01d399fc52e12fe4679da6a19cfd43c538d"
+    },
+    {
+      "path": "connectors/test/capacity.test.mjs",
+      "source_sha256": "e4e01542b8fee7b59644fea91b9acb74956afe6a87e2f9f9f7c21283a0941629",
+      "public_sha256": "e4e01542b8fee7b59644fea91b9acb74956afe6a87e2f9f9f7c21283a0941629",
+      "source_delta_vs_002": "added",
+      "public_adaptation": "byte-identical"
+    },
+    {
+      "path": "connectors/test/crash-child.mjs",
+      "source_sha256": "6cc8d74d39d9eb6d73b4c83bbf8f3ce0a6b77f8bb6ba083207fdb5a36111aed3",
+      "public_sha256": "6cc8d74d39d9eb6d73b4c83bbf8f3ce0a6b77f8bb6ba083207fdb5a36111aed3",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "6cc8d74d39d9eb6d73b4c83bbf8f3ce0a6b77f8bb6ba083207fdb5a36111aed3",
+      "previous_002_public_sha256": "6cc8d74d39d9eb6d73b4c83bbf8f3ce0a6b77f8bb6ba083207fdb5a36111aed3"
+    },
+    {
+      "path": "connectors/test/helpers.mjs",
+      "source_sha256": "12fd16ddadc8bc35600a1b612469a802b2764ccb483a01447fa6fee44578d70a",
+      "public_sha256": "12fd16ddadc8bc35600a1b612469a802b2764ccb483a01447fa6fee44578d70a",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "12fd16ddadc8bc35600a1b612469a802b2764ccb483a01447fa6fee44578d70a",
+      "previous_002_public_sha256": "12fd16ddadc8bc35600a1b612469a802b2764ccb483a01447fa6fee44578d70a"
+    },
+    {
+      "path": "connectors/test/integration-runner.mjs",
+      "source_sha256": "7d5f0085e19acab0b08400aa00ca0bf389046da7064eb66c0f028f4230908a9c",
+      "public_sha256": "7d5f0085e19acab0b08400aa00ca0bf389046da7064eb66c0f028f4230908a9c",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "7d5f0085e19acab0b08400aa00ca0bf389046da7064eb66c0f028f4230908a9c",
+      "previous_002_public_sha256": "7d5f0085e19acab0b08400aa00ca0bf389046da7064eb66c0f028f4230908a9c"
+    },
+    {
+      "path": "connectors/test/integration.mjs",
+      "source_sha256": "b9c880b4a59265d3e3417eeec9599dea6ad481cb4d06a6fb872f94f77c7c600a",
+      "public_sha256": "b9c880b4a59265d3e3417eeec9599dea6ad481cb4d06a6fb872f94f77c7c600a",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "b9c880b4a59265d3e3417eeec9599dea6ad481cb4d06a6fb872f94f77c7c600a",
+      "previous_002_public_sha256": "b9c880b4a59265d3e3417eeec9599dea6ad481cb4d06a6fb872f94f77c7c600a"
+    },
+    {
+      "path": "connectors/test/process.test.mjs",
+      "source_sha256": "39336435438dd530ca58bdd3382c52319290a2222b8c4987b08a0416628e9a59",
+      "public_sha256": "39336435438dd530ca58bdd3382c52319290a2222b8c4987b08a0416628e9a59",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "39336435438dd530ca58bdd3382c52319290a2222b8c4987b08a0416628e9a59",
+      "previous_002_public_sha256": "39336435438dd530ca58bdd3382c52319290a2222b8c4987b08a0416628e9a59"
+    },
+    {
+      "path": "connectors/test/real-uniflo-artifact.mjs",
+      "source_sha256": "f5fb8cc67b92ef6abd49f6d1894aa2a2d3be096b737bbf18d3f25484421030c6",
+      "public_sha256": "f5fb8cc67b92ef6abd49f6d1894aa2a2d3be096b737bbf18d3f25484421030c6",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "f5fb8cc67b92ef6abd49f6d1894aa2a2d3be096b737bbf18d3f25484421030c6",
+      "previous_002_public_sha256": "f5fb8cc67b92ef6abd49f6d1894aa2a2d3be096b737bbf18d3f25484421030c6"
+    },
+    {
+      "path": "connectors/test/real-uniflo-case.mjs",
+      "source_sha256": "4b8b2ea947f95503fb7f0085cf0040dc05b2663b00e1f76a119040fea24c75b0",
+      "public_sha256": "4b8b2ea947f95503fb7f0085cf0040dc05b2663b00e1f76a119040fea24c75b0",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "4b8b2ea947f95503fb7f0085cf0040dc05b2663b00e1f76a119040fea24c75b0",
+      "previous_002_public_sha256": "4b8b2ea947f95503fb7f0085cf0040dc05b2663b00e1f76a119040fea24c75b0"
+    },
+    {
+      "path": "connectors/test/real-uniflo-fixtures.mjs",
+      "source_sha256": "ac15e15a7a35d06d2c76fca57db5877eb2ff70488bb1fcaf518f22f9e4f34530",
+      "public_sha256": "ac15e15a7a35d06d2c76fca57db5877eb2ff70488bb1fcaf518f22f9e4f34530",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "ac15e15a7a35d06d2c76fca57db5877eb2ff70488bb1fcaf518f22f9e4f34530",
+      "previous_002_public_sha256": "ac15e15a7a35d06d2c76fca57db5877eb2ff70488bb1fcaf518f22f9e4f34530"
+    },
+    {
+      "path": "connectors/test/real-uniflo-runner.mjs",
+      "source_sha256": "08ebd0190bfaf6e9af746e90e9c235814b884b38e73503d7a897022da09320bb",
+      "public_sha256": "08ebd0190bfaf6e9af746e90e9c235814b884b38e73503d7a897022da09320bb",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "08ebd0190bfaf6e9af746e90e9c235814b884b38e73503d7a897022da09320bb",
+      "previous_002_public_sha256": "08ebd0190bfaf6e9af746e90e9c235814b884b38e73503d7a897022da09320bb"
+    },
+    {
+      "path": "connectors/test/real-uniflo-sandbox.mjs",
+      "source_sha256": "731bfe06b4d4f0a58e2d560ce823cd75bd3866aabda17f56eac31604238e7311",
+      "public_sha256": "731bfe06b4d4f0a58e2d560ce823cd75bd3866aabda17f56eac31604238e7311",
+      "source_delta_vs_002": "modified",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "b39ec36f8887a44eaafc8f2b3873ec6ee90b22957a55091aac8d3eefca83da54",
+      "previous_002_public_sha256": "b39ec36f8887a44eaafc8f2b3873ec6ee90b22957a55091aac8d3eefca83da54"
+    },
+    {
+      "path": "connectors/test/real-uniflo.test.mjs",
+      "source_sha256": "1901f5fa1fda5d9b8c67daed8c3c219dff083100b2d925080a3e4bd7b2fd0bf4",
+      "public_sha256": "1901f5fa1fda5d9b8c67daed8c3c219dff083100b2d925080a3e4bd7b2fd0bf4",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "1901f5fa1fda5d9b8c67daed8c3c219dff083100b2d925080a3e4bd7b2fd0bf4",
+      "previous_002_public_sha256": "1901f5fa1fda5d9b8c67daed8c3c219dff083100b2d925080a3e4bd7b2fd0bf4"
+    },
+    {
+      "path": "connectors/test/regressions.test.mjs",
+      "source_sha256": "4bd8122cde7db19432ff49df6cb725e8b4644f1b558129cdfbbcdbd51d016f53",
+      "public_sha256": "4bd8122cde7db19432ff49df6cb725e8b4644f1b558129cdfbbcdbd51d016f53",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "4bd8122cde7db19432ff49df6cb725e8b4644f1b558129cdfbbcdbd51d016f53",
+      "previous_002_public_sha256": "4bd8122cde7db19432ff49df6cb725e8b4644f1b558129cdfbbcdbd51d016f53"
+    },
+    {
+      "path": "connectors/test/spool.test.mjs",
+      "source_sha256": "ef9dc92194fcad3a69380ba739d11f8fabcaa1ac900ad554f66bec1939660374",
+      "public_sha256": "ef9dc92194fcad3a69380ba739d11f8fabcaa1ac900ad554f66bec1939660374",
+      "source_delta_vs_002": "modified",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "9fe83b625e03cd9e222d2ecf2a6491736411d3fbf76747941f1c9d50ab04f965",
+      "previous_002_public_sha256": "9fe83b625e03cd9e222d2ecf2a6491736411d3fbf76747941f1c9d50ab04f965"
+    },
+    {
+      "path": "connectors/test/transport.test.mjs",
+      "source_sha256": "270b49f97eac7aae1abfe261632f14c2759ec0de59c43c153e42a8aa1af5588c",
+      "public_sha256": "270b49f97eac7aae1abfe261632f14c2759ec0de59c43c153e42a8aa1af5588c",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "270b49f97eac7aae1abfe261632f14c2759ec0de59c43c153e42a8aa1af5588c",
+      "previous_002_public_sha256": "270b49f97eac7aae1abfe261632f14c2759ec0de59c43c153e42a8aa1af5588c"
+    },
+    {
+      "path": "connectors/test/uniflo.test.mjs",
+      "source_sha256": "40254454bd32c009b906546d81e95f59899171731a6cd2cd5edf5a35625acce2",
+      "public_sha256": "40254454bd32c009b906546d81e95f59899171731a6cd2cd5edf5a35625acce2",
+      "source_delta_vs_002": "unchanged",
+      "public_adaptation": "byte-identical",
+      "previous_002_source_sha256": "40254454bd32c009b906546d81e95f59899171731a6cd2cd5edf5a35625acce2",
+      "previous_002_public_sha256": "40254454bd32c009b906546d81e95f59899171731a6cd2cd5edf5a35625acce2"
+    }
+  ]
+}

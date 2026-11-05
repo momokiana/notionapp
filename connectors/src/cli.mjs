@@ -6,11 +6,13 @@ import { config, readPrivate, readBounded, fail, MAX_BODY } from './validation.m
 import { Spool } from './spool.mjs';
 import { flush } from './transport.mjs';
 import { observeOnce } from './uniflo.mjs';
+import { inspectSpool, errorCode } from './spool-capacity.mjs';
 
 export async function main(args) {
   const [command, configPath, inputPath, ...extra] = args;
   if (!['init', 'enqueue', 'flush', 'status', 'run', 'observe'].includes(command) || !configPath || extra.length || (command === 'enqueue' ? !inputPath : inputPath !== undefined)) fail('USAGE');
   const c = config(JSON.parse(readPrivate(configPath)));
+  if (command === 'status') return inspectSpool(c); // never acquire/remove the writer lock or acknowledge durability
   const spool = new Spool(c, { init: command === 'init' });
   const control = new AbortController(); const stop = () => control.abort();
   process.once('SIGTERM', stop); process.once('SIGINT', stop);
@@ -25,18 +27,33 @@ export async function main(args) {
       } finally { closeSync(fd); }
     }
     if (command === 'flush') return await flush(spool, { signal: control.signal });
-    if (command === 'init' || command === 'status') return spool.status();
+    if (command === 'init') return spool.status();
     if (command === 'observe') {
       await observeOnce(spool, { signal: control.signal }); return spool.status();
     }
+    // Independent observations, publishing and capacity do not prove each other's recovery.
+    const lastReasons = new Map();
+    const waiting = (stage, reason) => {
+      if (!control.signal.aborted && reason !== lastReasons.get(stage)) process.stderr.write(`CONNECTOR_WAITING ${reason}: ${stage}; original facts retained; inspect status\n`);
+      lastReasons.set(stage, reason);
+    };
+    const publish = async () => {
+      try { const result = await flush(spool, { signal: control.signal }); lastReasons.delete('publish'); return result; }
+      catch (e) { waiting('publish', errorCode(e)); }
+    };
     while (!control.signal.aborted) {
       try {
         if (c.uniflo) {
           // Drain old transport before collecting again; an offline server must not disable local observation.
-          await flush(spool, { signal: control.signal }).catch(() => {});
-          await observeOnce(spool, { signal: control.signal, onObservation: () => flush(spool, { signal: control.signal }).catch(() => {}) });
-        } else await flush(spool, { signal: control.signal });
-      } catch { if (!control.signal.aborted) process.stderr.write('CONNECTOR_WAITING: retained original spool; inspect status\n'); }
+          if (spool.status().first_unsettled) await publish();
+          const capacity = spool.capacityStatus();
+          if (capacity.observation_admission !== 'accepting') waiting('capacity', capacity.observation_reason);
+          else {
+            lastReasons.delete('capacity');
+            await observeOnce(spool, { signal: control.signal, onObservation: () => { lastReasons.delete('observation'); return publish(); } });
+          }
+        } else await publish();
+      } catch (e) { waiting(c.uniflo ? 'observation' : 'publish', errorCode(e)); }
       if (!control.signal.aborted) await sleep(2000, undefined, { signal: control.signal }).catch(() => {});
     }
     return { state: 'stopped', effects: 'original_pending_and_unknown_retained' };
@@ -46,5 +63,5 @@ export async function main(args) {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try { process.stdout.write(`${JSON.stringify(await main(process.argv.slice(2)))}\n`); }
-  catch { process.stderr.write('CONNECTOR_REJECTED: no success acknowledgement; retain original input/spool\n'); process.exitCode = 1; }
+  catch (e) { process.stderr.write(`CONNECTOR_REJECTED ${errorCode(e)}: no success acknowledgement; retain original input/spool\n`); process.exitCode = 1; }
 }

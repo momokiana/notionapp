@@ -50,10 +50,12 @@ test('recognized application marker alone cannot authorize unknown schema', () =
 test('queue capacity is explicit, duplicates still reconcile at full; observation watermark rolls back with outbox', () => {
   const f = fixture(); f.c.uniflo = { origin: 'http://127.0.0.1:7311', sessions: [{ key: 'demo:one', alias: 'Demo' }] };
   const s = new Spool(f.c, { init: true, capacity: 1 }); s.enqueue(createInput());
-  assert.equal(s.enqueue(createInput()).state, 'pending'); const generation = s.beginObservation();
+  assert.equal(s.enqueue(createInput()).state, 'pending');
+  assert.throws(() => s.beginObservation(), /SPOOL_FULL/); // earlier gate, no fake cycle
+  const generation = s.observer().generation;
   assert.throws(() => s.observe('demo:one', { state: 'work' }, 20, generation), /SPOOL_FULL/);
   assert.equal(s.db.prepare('SELECT COUNT(*) AS n FROM maps').get().n, 0);
-  assert.equal(s.observer().state, 'snapshot'); s.close();
+  assert.equal(s.observer().state, 'disconnected'); assert.equal(generation, 0); s.close();
 });
 
 test('binding is frozen for the complete async lifetime, not a caller-mutable config reference', () => {

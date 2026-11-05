@@ -3,6 +3,7 @@ import { fail, seq, string } from './validation.mjs';
 
 export const UNIFLO_COMMIT = '4dbda948068e2f8ce288dc2c2e56777ca88274e0';
 const MAX_LINE = 65536;
+const observing = new WeakSet();
 /** Fatal UTF-8 decoding, bounded lines across chunks; never persist raw upstream text. */
 export async function* ndjson(body) {
   if (!body) fail('INVALID_STREAM');
@@ -35,9 +36,12 @@ function summary(selection, state, n, mode, eventKind) {
 /** One snapshot + stream connection. Caller reconnects after an explicit gap, never claims full catch-up. */
 export async function observeOnce(spool, { signal, onObservation } = {}) {
   const c = spool.c; if (!c.uniflo) fail('UNIFLO_NOT_CONFIGURED');
-  const u = c.uniflo, generation = spool.beginObservation();
-  const watermarks = new Map(), known = new Map(); let stream;
+  if (observing.has(spool)) fail('OBSERVER_BUSY');
+  observing.add(spool);
+  const u = c.uniflo;
+  const watermarks = new Map(), known = new Map(); let stream, generation;
   try {
+    generation = spool.beginObservation();
     const health = await request(`${u.origin}/v1/health`, { token: u.token, signal });
     if (health.status !== 200) { await health.body?.cancel(); fail('UNIFLO_UNAVAILABLE'); }
     const h = JSON.parse(await boundedBody(health, 4096));
@@ -53,7 +57,7 @@ export async function observeOnce(spool, { signal, onObservation } = {}) {
       // A daemon restart during this snapshot set is not a consistent baseline.
       if (n < h.seq) fail('SEQUENCE_ROLLBACK');
       watermarks.set(s.key, n);
-      spool.observe(s.key, summary(s, state, n, generation === 1 ? 'baseline' : 'snapshot_after_gap'), n, generation);
+      spool.observe(s.key, summary(s, state, n, generation === 1 ? 'baseline' : 'snapshot_after_gap'), n, generation, { snapshot: true });
       await onObservation?.();
     }
     const since = Math.min(...watermarks.values());
@@ -90,7 +94,12 @@ export async function observeOnce(spool, { signal, onObservation } = {}) {
   } catch (e) {
     // Static reason vocabulary; raw upstream errors can contain paths, text or credentials.
     const reasons = ['STREAM_LAGGED', 'SEQUENCE_ROLLBACK', 'METADATA_REQUIRED', 'STREAM_ENDED', 'SPOOL_FULL', 'UNIFLO_SCHEMA_UNSUPPORTED'];
-    spool.disconnected(reasons.includes(e.message) ? e.message : signal?.aborted ? 'STOPPED' : 'OBSERVATION_GAP');
+    if (generation !== undefined) {
+      try { spool.disconnected(reasons.includes(e.message) ? e.message : signal?.aborted ? 'STOPPED' : 'OBSERVATION_GAP', generation); } catch {} // retain the primary failure and never overwrite a newer generation
+    }
     throw e;
-  } finally { if (stream?.body && !stream.body.locked) await stream.body.cancel().catch(() => {}); }
+  } finally {
+    if (stream?.body && !stream.body.locked) await stream.body.cancel().catch(() => {});
+    observing.delete(spool);
+  }
 }

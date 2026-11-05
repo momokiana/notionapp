@@ -1,10 +1,8 @@
-# 本地出站连接器 — connector-002限定FINAL PASS，非联合发布
+# 本地出站连接器 — 003-B容量/诊断，限定FINAL PASS
 
-> 当前为独立分支 `wip/connectors-002` 的准确27项源码，同人限定FINAL PASS仅覆盖固定官方Uniflo 0.2.6真实daemon与两份自写合成文件布局等声明矩阵。**不是实际Claude/Codex进程、私人会话或生产；发布接收器是合成HTTP协议夹具，不是backend或原生收件。** backend自身FINAL尚未取得，未合入main；A仍BLOCK、B原历史不迁签。源/公开哈希、8项delta与亲测/交接范围见 [002发布说明](../docs/releases/connectors-002.md)。
+> 独立分支 `wip/connectors-003` 只公开准确003-B的30项源码：同一独审§7限定FINAL PASS，**003-A仍BLOCK/F1，不迁签**。8MiB逻辑保留预算、只读SQL诊断及背压不是GC/迁移或执行授权。旧临时快照已失效，本次使用按原31项清单与review指纹恢复重建、原30项哈希不变的新导出，不冒称旧目录仍在。详见 [来源/公开哈希与分层复验](../docs/releases/connectors-003.md)。**未合入main，backend自身FINAL未知，真实daemon发布接收器仍是HTTP夹具，不是backend/native receipt或生产。**
 
-POSIX CLI 与库，包声明Node.js >=22.13，实际仅记录22.13.0/22.23.2的限定验证，不外推所有版本。使用内置 `node:sqlite`（Node22提示ExperimentalWarning），无第三方运行依赖。不开放入站端口、不执行shell、不发现或读取私人会话目录。
-
-**N1不变：当前已验backend为独立Node22.23.2；其现安装better-sqlite3在22.13连单独open亦SIGSEGV，原因未定，不支持该backend/in-process integration-runner组合。** 此处真实daemon测试不加载backend/native addon，不能迁成backend22.13通过或代签source-binding独审。锁包/产品src未改。
+POSIX CLI/库，包声明Node>=22.13，实际仅报告22.13.0/22.23.2的限定矩阵；使用内置 `node:sqlite`（Node22提示ExperimentalWarning），没有第三方运行依赖。不开放入站端口、不执行shell、不发现私人会话目录。N1不变：当前backend/in-process runner只按22.23.2验证；现安装better-sqlite3在22.13单独open亦SIGSEGV，原因未定，不可迁用connector绿证。
 
 - 脚本、CI、定时任务：把严格 JSON 数据文件入队，连接器主动向同一个事件服务发布。
 - Uniflo：显式选择会话，只 GET 当前快照与 NDJSON，映射为无交互只读事件与原事件 progress；不上传会话正文、路径、标题、preview、工具参数、reasoning 或原生 ID。
@@ -15,8 +13,8 @@ POSIX CLI 与库，包声明Node.js >=22.13，实际仅记录22.13.0/22.23.2的�
 ```sh
 npm --prefix connectors ci
 npm --prefix connectors run check
-# 以下backend runner仅由Node22.23.2运行；正常绑定集成仍待后端自身FINAL
-# 本分支未导入source-binding，当前公开T013服务不具新合同
+# backend/native runner仅由Node22.23.2运行；正常绑定集成仍待backend自身FINAL
+# 本独立分支继承的公开T013后端未包含新source-binding，不称联合通过
 npm --prefix connectors run integration
 # 明确验证旧服务端拒绝绑定发布，不把它称正常新协议集成
 node connectors/test/integration-runner.mjs /absolute/public-server-tree --legacy
@@ -41,7 +39,7 @@ node connectors/src/cli.mjs flush /private/app-connector/config.json
 node connectors/src/cli.mjs run /private/app-connector/config.json
 ```
 
-`enqueue` 不联网，成功后才表示本地持久；输入文件只读，不执行其内容。`flush` 每次至多 100 包，常驻每轮继续。`observe` 单独做一轮快照／流采集，不发事件服务 POST；流断开以失败退出且持久 disconnected，供隔离诊断。`run` 会持续重连；事件服务不可达不阻止本地观察，已保存传输仍保留。
+`enqueue` 不联网，成功后才表示本地持久；输入文件只读，不执行其内容。`flush` 每次至多 100 包，常驻每轮继续。`observe` 单独做一轮快照／流采集，不发事件服务 POST；流断开以失败退出且持久 disconnected，供隔离诊断。`run` 会持续重连；事件服务不可达时只要仍有本地容量，就可继续观察；已知背压则先处理旧传输并暂停新采集，不轮询来源、不递增观察代次。已保存传输仍保留，flush成功不承诺腾出新准入额度。
 
 配置固定服务根、owner、actor、source、epoch、installation 及 token 摘要；Uniflo origin／选择／token 摘要也固定。更换这些字段不能接管旧 spool。不得为了绕过阻塞换 ID、身份、新 spool 或服务根转投原未决内容。轮换与旧 spool 备份恢复尚无自动接续工具；先停发送并按原 ID／服务权威事实对账，不删除旧库。旧快照不能证明现在没发布过。
 
@@ -71,7 +69,7 @@ HTTP 只显式允许公网 HTTPS 根；开发 HTTP 需 `allow_loopback_http:true
 
 每次启动／重连先 GET health/schema=1，再 GET 各**显式 key**快照；不扫描 sessions/discovery 或历史消息。首连为每个明确选择建一张只读基线卡，后续同事件追加。session_ref 为安装绑定派生不透明引用，不是写回定位证据。
 
-按每个快照 `x-uniflo-seq` 水位，以最小水位订阅；hello 是当前 head，不可据它跳过其后的 replay。按各来源水位去重；过滤导致全局跳号不是必然丢包。水位／metadata／outbox 同事务；满队列不越过未保存观察。未知 v1 类型忽略，UTF-8 分块有界解码，超长／非法／不完整行断流。
+按每个快照 `x-uniflo-seq` 水位，以最小水位订阅；hello 是当前 head，不可据它跳过其后的 replay。按各来源水位去重；过滤导致全局跳号不是必然丢包。水位／metadata／outbox 同事务；新轮次不预清原maps水位，已知近满先背压；低seq重基线只在当前代次的首次成功snapshot事务接受，同代live仍不回退。满队列不越过未保存观察。未知 v1 类型忽略，UTF-8 分块有界解码，超长／非法／不完整行断流。
 
 lagged、daemon 回退、EOF、元数据缺失／404 后的 event、解析失败都持久记录 gap/disconnected，下次重新快照；新快照只能补当前状态，**不证明丢失期间每条历史已恢复**。idle／turn_end 不是停工或完成，removed 只追加观察，不删服务事件，不重开用户完成／停止跟踪。上游 snapshot/seq 原子性和 replay 完整性仍依赖固定上游合同；真实公开daemon的有限复现矩阵见下文，不扩展为私人会话或所有harness支持。
 
@@ -98,10 +96,12 @@ runner新建0700合成case，只挂精确公共Node／必要库／固定Uniflo�
 
 ## 容量、崩溃与诊断
 
-- 最多 16 个明确 Uniflo 选择、累计 10000 个传输操作（含已确认记录），SQLite page 约 32 MiB，主库／WAL／SHM 各 32 MiB 检查。任一先满即拒绝／背压，不静默删除已承诺原包；未实现自动保留期／压缩／迁移。不是各项上限能同时装满的保证。
+- 最多16个明确Uniflo选择、累计10000个操作（含saved/blocked）、**8MiB逻辑保留预算**；SQLite页上限按实际page_size折算32MiB，主库/WAL/SHM/journal各32MiB检查。每行按实际UTF-8 payload、至少payload+256的未来wire、至少1024的ACK、映射及行余量保守收费，另留binding/meta/map余量；不是当前文件大小或能同时装满各上限的保证。WAL/journal距硬边界不足1MiB即保守停止写入，不手动删/截WAL、不猜checkpoint成功；真正存储失败可使已有传输也暂时不能处理。
+- 新准入在IMMEDIATE事务内核准，满时旧同ID同内容仍可按原耐久屏障对账，异内容仍冲突。新逻辑限额不挡已有eligible prepare/原wire重放/准确ACK保存；过新预算的合法v1库保留为retained_over_limit，不清旧事实。容量投影是预测，具体包仍由事务核准；CLI固定产品限额，库的更小测试限额仅当前实例、不持久化成新政策；观察另按每个所选来源16KiB与一个行位保守预留，近满即暂停，不反复开始注定放不下的新轮次。没有GC/delete/VACUUM/自动新库，额度可能一直耗尽；安全迁移/轮换、保留期仍是后继，不可删pending/unknown/旧映射/已用事实来恢复。
 - 配置／producer 读取本身最多分配并读取限额+1字节，即使 fstat 后文件增长也不全量读入。正文 65536 字节，响应回执／self 各 4 KiB，snapshot／NDJSON 行各 64 KiB。HTTP 5 秒，单观察流 60 秒后按 gap 重连。没有永远在线／完整历史恢复承诺。
-- 单写者独占 `.lock` 贯穿异步 flush／observe；同一库实例的并发 flush 明确拒绝，迟到／重复旧 ACK 也不覆盖较新映射。实际 SQLite 关闭成功才释放 lock（重复 close 幂等，不依赖新版本 isOpen getter）。正常关闭释放；SIGKILL 残留保守拒绝。操作员必须先**正面核实原精确进程已退出且无使用者**，保留原库后仅移走其旧 lock；本程序不根据 PID 重用／不存在或超时自动抢锁。测试只在已观察自有 child SIGKILL 后显式移除夹具锁。
+- 单写者独占 `.lock` 贯穿异步 flush／observe；同一库实例的并发flush或observe明确拒绝，旧轮次错误收尾不覆盖新代次，迟到／重复旧ACK也不覆盖较新映射。实际 SQLite 关闭成功才释放 lock（重复 close 幂等，不依赖新版本 isOpen getter）。正常关闭释放；SIGKILL 残留保守拒绝。操作员必须先**正面核实原精确进程已退出且无使用者**，保留原库后仅移走其旧 lock；本程序不根据 PID 重用／不存在或超时自动抢锁。测试只在已观察自有 child SIGKILL 后显式移除夹具锁。
 - 未知 appID／schema／损坏库、空既有文件、路径替换与权限不符拒绝；不清库、不创建替代身份。配置／目录和同账户管理员是信任边界，不宣称抵御恶意同 UID 修改。
-- 终端只输出聚合状态与固定安全错误，不输出 token、原 URL／请求体或上游异常。队列 blocked 和 unknown 需按原记录对账；没有“重置全部成功”按钮。
+- `status`用独立SQL只读连接，不取/移除写者lock、不建缺库、不联网，在同一read snapshot先验格式/binding再输出≤8KiB聚合（计数、保留/实际payload-wire-ACK字节、限额、首未结项、观察与文件stat）。文件stat是附近时点，不与SQL提交全局原子；lock只报present/absent、不证明存活。超32MiB文件仅stat，scope_validation:not_checked、业务计数null、不打开SQLite。错误身份/格式/路径/权限非零拒绝。SQL只读可能使用/新建私有SHM，不是物理零写取证工具。
+- 诊断标diagnostic_only:true/persistence_ack:false：可读saved行不证明本次目录fsync或来源在线，不补发持久ACK，不授当前发送/回应/执行权。原保存/重复回执仍走写者耐久屏障。终端仅固定原因，不输出token/摘要、原URL/key/正文/路径或上游/SQL异常；run分别按采集/发布/容量阶段及原因抑制重复日志，只由对应阶段实际成功重置；新采集不伪造发布恢复。blocked/unknown须按原ID/原目标对账；没有reset/force/clear按钮。
 
-本次公开白名单/哈希、作者及同人限定独审报告、发布者自跑结果与未覆盖层级分别见 [002发布说明](../docs/releases/connectors-002.md)。原始CASE/evidence及官方binary均不上传；源码中的拒绝/超时边界不等于所有边界都已动态复演，尤其日志洪泛与完整上限超时未被本轮动态验证。
+本次来源重建、30项source/public哈希、003-A旧BLOCK、003-B限定审查与发布者实际53＋严格daemon2矩阵见 [003发布说明](../docs/releases/connectors-003.md)。不复制TASK/原review/raw evidence/CASE/spool/工具；002及更早历史保留，未覆盖项不因本轮绿证自动通过。
