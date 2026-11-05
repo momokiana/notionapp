@@ -36,7 +36,7 @@ cd android
 
 ## 文档
 
-- [工程地图](docs/engineering-map.md) | 系统→功能块、依赖图、代码/接口与需求/任务入口 | 全产品能力索引；执行状态仍只见实施路线
+- [工程地图（HTML主入口）](docs/engineering-map.html) | 可平移缩放的系统/功能/合同图，查找缺口、关键路径和接口上下游 | 单HTML离线工具；[文字资料索引](docs/engineering-map.md)，执行状态仍只见实施路线
 - [需求与边界](docs/requirements.md)
 - [架构与安全语义](docs/architecture.md)
 - [公开状态、验证与排除项](docs/status.md)
