@@ -6,9 +6,10 @@
 
 ## 范围与现状
 
-- 安卓首发：Kotlin / Jetpack Compose；事件服务：Fastify / TypeScript / SQLite。
+- 用户已确认 **H5先行，通用安卓采用H5＋原生壳**，复用界面/业务；后端Node.js / Fastify / TypeScript / SQLite保持，不重做事件/回应账本。原Compose工程保留、暂停扩展，历史结论不迁签Web或新壳。
+- 通知、后台/锁屏、系统权限、Keystore及生命周期仍需原生接入；H5不自动修复缓存/序列化/渲染或WebView性能。方向见[决定摘录](docs/decisions.md)，执行、审查与暂停只见[实施路线公开摘录](docs/roadmap.md)。本次只同步文档，不发布Web源码；工程地图HTML不是产品H5 UI。
 - 可选独立 Pi SDK 宿主；可选自托管 ntfy / UnifiedPush 通知，不默认连接 AI、推送服务器或现有工作会话。
-- 安卓已增量公开 [android-002 缓存区间与后继隔离修复](docs/releases/android-002.md)，保留 [001草稿/快捷回复及其历史范围](docs/releases/android-001.md)；不是正式发行、生产可用声明或完整产品验收。不含未就绪的新对话/媒体/复杂卡片、T014或待最终结论的新后端绑定接口；连接器候选仅在独立分支，不在 main。
+- 历史Compose安卓已增量公开 [android-002 缓存区间与后继隔离修复](docs/releases/android-002.md)，保留 [001草稿/快捷回复及其历史范围](docs/releases/android-001.md)；不是正式发行、生产可用声明或完整产品验收。不含未就绪的新对话/媒体/复杂卡片、T014或待最终结论的新后端绑定接口；连接器候选仅在独立分支，不在 main。
 - 本仓库不包含私人部署、账号、人格、原始聊天、设备/原生会话标识、运行数据库或原始验收证据。
 
 已读 ≠ 平台接受 ≠ 设备收到 ≠ 系统请求提醒 ≠ 来源收件 ≠ 已执行 ≠ 完成或独立验收。
@@ -25,6 +26,7 @@ npm --prefix server run check
 npm --prefix pi-host ci --ignore-scripts
 npm --prefix pi-host run check
 
+# 以下为保留的历史Compose工程入口，不验证新H5/壳，也不恢复扩展
 # JDK 17、Android SDK 35 / build-tools 35.0.0
 cd android
 ./gradlew app:testDebugUnitTest app:assembleDebug app:lintDebug
@@ -38,6 +40,8 @@ cd android
 
 - [工程地图（HTML主入口）](docs/engineering-map.html) | 可平移缩放的系统/功能/合同图，查找缺口、关键路径和接口上下游 | 单HTML离线工具；[文字资料索引](docs/engineering-map.md)，执行状态仍只见实施路线
 - [需求与边界](docs/requirements.md)
+- [D01/D02/D13客户端决定摘录](docs/decisions.md)
+- [唯一实施路线的本次公开摘录](docs/roadmap.md)
 - [架构与安全语义](docs/architecture.md)
 - [公开状态、验证与排除项](docs/status.md)
 

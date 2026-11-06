@@ -63,11 +63,11 @@ for edge in data['edges']:
 for path in data['paths']:
     assert all(n in nodes and a in data['apis'] for n, a in path['steps'])
 data['public_context'] = {
-    'source_manifest_sha256': '10bea251aa4225ee60281b61a955a8611d465cefc24d94d06a4a2ca2484b58e4',
-    'source_html_sha256': 'e3ebc4486b40dff8007d366a155fa72a934a6005ec3e8aa80903666544700675',
+    'source_manifest_sha256': '0e704ec708fa08e7f8691087c9598207306f7f806dc042e0d91d8fae51b5e9ea',
+    'source_html_sha256': '1cb3e1ad9a6d2e86147fa370a221b74d709fe2d15b5e8c27bccd4d788ad93487',
     'available_refs': sorted(ref for ref in refs if published_ref(ref)),
     'local_contract_refs': sorted(ref for ref in refs if not published_ref(ref)),
-    'scope': 'Static capability/local-contract index only; file presence does not prove public implementation or verification. Missing contracts are not imported. Execution status remains local roadmap.'
+    'scope': 'Static capability/local-contract index only; file presence does not prove public implementation or verification. No Web source or FINAL imported. Execution status only canonical roadmap excerpt; unavailable files/fragments remain local-contract indexes.'
 }
 text = json.dumps(data, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
 template = (HERE / 'template.html').read_text()

@@ -1,6 +1,6 @@
 """Public, static engineering inventory. No runtime discovery or product API calls."""
 SYSTEMS = [
- ('A','安卓体验','理解事项、明确回应，离线与未知时不误操作。',['R03','R04','R05','R06','R07','R09','R14'],'首轮 / 日常','../android/README.md',['A03','A06','A07','A09','A28','A30']),
+ ('A','H5与安卓原生壳','H5先行复用现有API；安卓壳接原生能力，旧Compose仅作历史参照。',['R03','R04','R05','R06','R07','R09','R14'],'H5先行 / 安卓平台目标','decisions.md',['A03','A06','A07','A09','A28','A30']),
  ('B','事件与回应账本','保存原事件、版本、回应、用户决定和不可混淆的事实。',['R02','R03','R04','R06','R07','R09'],'首轮','../server/README.md',['A01','A02','A08','A09','A17','A18']),
  ('C','身份设备与权限','区分用户、来源、设备和授权；实际写门核当前资格。',['R05','R07','R09','R13'],'首轮 / 日常','../server/README.md',['A13','A14','A20','A21','A29','A30']),
  ('D','通知与同步','持久提醒、最少披露和分层回执，不把推送当已读。',['R06','R07','R14','R15'],'首轮 / 日常','../android/README.md',['A04','A05','A07','A24','A25','A30']),
@@ -26,13 +26,18 @@ def api(id,method,path,title,inputs,outputs,boundary,code,receiver,callers,proto
 def proposal(id,title,contract,to,callers,docs):
  APIS[id]=dict(id=id,method=None,path=None,title=title,inputs=contract,outputs='具体wire字段、方法和回执格式未由本图制定。',boundary='提案，不是可调用接口；不能用现有回应API替代。',code=docs,to=to,from_=callers,protocol='所需能力语义',kind='proposal',receipt='需在实际合同中定义原请求事实查询与相应层级回执。')
 
-# A: Android client
+# A: H5 target, Android native boundary, and explicitly retained Compose references.
+node('A.web','A','H5界面与API消费','先交可运行客户端，不重做Fastify/TypeScript/SQLite账本。',code=['../web/package.json'],docs=['tasks/web-001-event-client.md','requirements.md'],scope='H5首个有界切片')
+node('A.web.client','A.web','现有API事件闭环','连接/身份、收件箱、详情/历史、回应及原ID未知恢复。',code=['../web/src/main.tsx','../web/src/client.ts','../web/src/api.ts','../web/src/ledger.ts'],apis=['events.list','events.get','events.history','response.post','response.get','read.put','disposition.post'],existing='Web合同入口是web-001，代码归属web/；下列源码仅作定位，不从框架/文件存在推出功能通过。库和壳细节由实际TASK落实，地图HTML不是产品UI；实现、自测与独审状态只见路线。',docs=['tasks/web-001-event-client.md'],gaps=[gap('evidence','Web按自身TASK、浏览器/真实API和准确候选分别核验；原Compose或本地图工具检查不迁签为Web通过。','decisions.md')],scope='H5首个有界切片')
+node('A.native','A','安卓原生壳','复用H5界面/业务，通知/后台/锁屏/Keystore/生命周期仍需原生。',docs=['decisions.md','requirements.md'],scope='安卓平台目标 / 原生验证')
+node('A.native.bridge','A.native','桥接与平台事实','最小能力、权限、安全存储和生命周期的真实原生接入。',apis=['shell.proposal'],existing='原Compose通知/安全存储可作历史合同参照，不代表新壳桥接实现。具体壳、依赖和协议由相应TASK落实，本图不冻结。',docs=['decisions.md'],gaps=[gap('contract','H5与原生通知/生命周期/Keystore之间的能力、权限、持久化与回执边界须在壳TASK定义；本图不编桥接方法或HTTP路径。','decisions.md'),gap('evidence','网页前台/浏览器存储不替代Android后台/锁屏、安全存储或WebView性能证据；H5不自动解决缓存性能。','requirements.md#8-非功能约束与待量化项')],scope='安卓平台目标 / 原生验证')
+proposal('shell.proposal','H5 ↔ 安卓原生能力桥接','复用界面/业务；原生通知、后台/锁屏、系统权限、Keystore与生命周期另落实最小能力/回执边界','A.native.bridge',['A.web.client'],'decisions.md')
 node('A.inbox','A','收件箱与详情','当前内容、历史、阅读与用户决定分开呈现。',['../android/app/src/main/java/dev/notifier/app/MainActivity.kt'])
 node('A.inbox.read','A.inbox','当前内容与回执','离线内容标观察时间；旧回执不提升当前版本。',['../android/app/src/main/java/dev/notifier/app/Ledger.kt'],['events.list','events.get','events.history','response.get','read.put','disposition.post'])
 node('A.respond','A','回应与未知对账','先持久原ID/正文，再提交；丢ACK查原回应。',['../android/app/src/main/java/dev/notifier/app/Ledger.kt'])
 node('A.respond.contract','A.respond','稳定回应意图','离线草稿不是服务端保存，恢复网络不自动POST。',['../android/app/src/main/java/dev/notifier/app/ResponseDrafts.kt'],['response.post','response.get'])
 node('A.cache','A','离线窗口与体验','加密缓存、完整页预算、导航和忙态反馈。',['../android/app/src/main/java/dev/notifier/app/OfflineInbox.kt'])
-node('A.cache.local','A.cache','缓存与草稿边界','保留原未知/workspace，六处缓存GET不拆身份门。',['../android/app/src/main/java/dev/notifier/app/PrivateInbox.kt','../android/app/src/main/java/dev/notifier/app/ReadOnlyAutoSync.kt'],['cache.protocol'],[gap('evidence','大缓存体验、取消/重开与物理设备适用范围须按相应任务和路线证据核对；本图不把调查或工具存在当修复完成。','tasks/android-004-cache-read-experience.md')])
+node('A.cache.local','A.cache','缓存与草稿边界','保留原未知/workspace，六处缓存GET不拆身份门。',['../android/app/src/main/java/dev/notifier/app/PrivateInbox.kt','../android/app/src/main/java/dev/notifier/app/ReadOnlyAutoSync.kt'],['cache.protocol'],[gap('evidence','原Compose大缓存/取消/重开证据须按原任务核对，不迁签H5或WebView。新端缓存、序列化/渲染与平台性能仍需实际测量，不能把更换H5当自动修复。','requirements.md#8-非功能约束与待量化项'),gap('implementation','此处Android加密缓存/草稿代码是历史参照；H5持久离线能力需自己的实现落点，不能从原Kotlin文件存在推出。','decisions.md')])
 node('A.future','A','新对话与丰富交互','主动创建、媒体、复杂卡片需要真实合同，不摆假按钮。',gaps=[gap('contract','客户端须先取得权威来源/epoch/创建能力，以及媒体和版本化动作合同。现有事件回应不能代替。','requirements.md#61-后续客户端能力的服务端合同前提')],scope='扩展')
 node('A.future.entry','A.future','客户端所需新能力','新建专用会话、附件/图片/语音和复杂表单按能力开放。',apis=['new.conversation','media.contract','card.contract'],docs=['requirements.md#61-后续客户端能力的服务端合同前提'])
 
@@ -180,6 +185,8 @@ proposal('card.contract','版本化复杂卡片提交','schema版本、动作实
 
 # Cross-system contracts, not network topology or progress.
 def edge(id,src,dst,title,apis,boundary): EDGES.append(dict(id=id,source=src,target=dst,title=title,apis=apis,boundary=boundary,kind='dependency'))
+edge('web-ledger','A.web.client','B.events.contract','H5复用既有API',['events.list','events.get','events.history','response.post','response.get'],'消费目标，不重做后端；既有接口存在不证明Web已实现或已通过。')
+edge('shell-notice','A.native.bridge','D.deliver.contract','壳接原生通知',['shell.proposal','push.protocol'],'桥接为待落实语义；原Compose/浏览器前台不代新壳后台、锁屏和安全存储证据。')
 edge('a-b','A.inbox.read','B.events.contract','读取当前事件',['events.list','events.get','events.history'],'推送/缓存不是权威，分页不是变更同步。')
 edge('reply','A.respond.contract','B.responses.contract','保存原回应',['response.post','response.get'],'返回保存事实，不返回执行成功。')
 edge('device','A.device.client','C.pair.contract','当前设备身份',['pair.claim','device.self'],'身份未知不换包/换token绕过原请求。')
@@ -200,8 +207,8 @@ edge('recover','J.recover.protocol','E.receipts.contract','未知与回执对账
 edge('capacity','J.run.protocol','G.storage.protocol','有界存储诊断',['spool.status'],'诊断不是新的耐久ACK或来源在线。')
 
 PATHS=[
- dict(id='roundtrip',title='云端事件 → 手机回应 → 原来源',summary='首轮往返的功能链，不从节点齐全推出端到端已验。',steps=[['F.host.protocol','events.create'],['B.events.contract','events.get'],['D.deliver.contract','push.protocol'],['A.respond.contract','response.post'],['E.claim.contract','command.claim'],['E.native.gate','native.gate'],['E.receipts.contract','command.receipt']],note='完整证据按A03/A04/A05/A07/A13/A14及路线逐版本、设备和真实来源核对。'),
- dict(id='offline',title='离线 / 丢ACK → 原ID恢复',summary='不以401/404、重启或缺回执推断未执行。',steps=[['A.cache.local','cache.protocol'],['A.respond.contract','response.get'],['B.responses.contract','response.post'],['E.claim.contract','command.get'],['E.receipts.contract','command.receipt']],note='A09/A10/A11/A28要求故障窗口和原事实；路径中的读取不是重新执行许可。'),
+ dict(id='roundtrip',title='云端事件 → 手机回应 → 原来源',summary='首轮业务目标：H5现有API流程与安卓平台通知/真实来源分层，不从节点齐全推出已验。',steps=[['F.host.protocol','events.create'],['B.events.contract','events.get'],['D.deliver.contract','push.protocol'],['A.respond.contract','response.post'],['E.claim.contract','command.claim'],['E.native.gate','native.gate'],['E.receipts.contract','command.receipt']],note='完整证据按A03/A04/A05/A07/A13/A14及路线逐版本、设备和真实来源核对。'),
+ dict(id='offline',title='离线 / 丢ACK → 原ID恢复',summary='不以401/404、重启或缺回执推断未执行。',steps=[['A.cache.local','cache.protocol'],['A.respond.contract','response.get'],['B.responses.contract','response.post'],['E.claim.contract','command.get'],['E.receipts.contract','command.receipt']],note='缓存步骤是原Compose历史参照，不表示H5已具备加密缓存；新端另证A09/A10/A11/A28的原ID持久化和未知恢复，读取不授重新执行。'),
  dict(id='local',title='本地观察 → 稳定原包 → 事件',summary='这是publish-only观察路径，不暗示本地AI写回。',steps=[['G.observe.protocol','uniflo.snapshot'],['G.observe.protocol','uniflo.stream'],['G.publish.protocol','spool.protocol'],['C.scope.binding','binding.protocol'],['B.events.contract','events.create']],note='实际agent/用户会话和各OS证据范围见路线；观察成功不接通原生执行。'),
  dict(id='new',title='主动新对话：查合同断点',summary='需求要求的源目录/创建能力和持久分配，不是旧回应API。',steps=[['A.future.entry','new.conversation'],['F.new.contract','new.conversation'],['B.events.contract','events.create'],['E.native.gate','native.gate']],note='提案步骤是合同接缝，需落实创建事实查询、来源能力和先分配后执行，当前不命名新路由。'),
  dict(id='media',title='媒体 / 复杂卡片：跨端边界',summary='对象归属、保留与版本门缺一不可。',steps=[['A.future.entry','media.contract'],['I.media.proposal','media.contract'],['I.media.proposal','card.contract'],['B.responses.contract','response.post']],note='旧text回应不承载附件或复杂提交；最后一个已有入口不能被当作新合同实现。'),
@@ -229,8 +236,19 @@ next(n for n in NODES if n['id']=='E.receipts.contract')['gaps'].append(gap('con
 next(n for n in NODES if n['id']=='A.inbox.read')['gaps'].append(gap('contract','页面需求建议项目/来源等过滤；当前客户端过滤仅当前缓存区间，固定事件schema没有项目分组合同。项目/关联事项的具体结构与全库查询需后续明确，不在图中编item或搜索API。','requirements.md#6-页面内容要求信息架构建议'))
 node('J.candidates','J','后续平台与托管候选','另一手机平台、桌面端、官方托管及多用户组织不作为首轮前置。',scope='后续候选 / 待决定')
 node('J.candidates.scope','J.candidates','产品边界尚待选择','保留方向，不从地图节点存在推出承诺或新增必需服务。',docs=['requirements.md#7-第一轮范围与后续候选'],gaps=[gap('decision','上述平台/托管/多用户以及可视化编排/插件市场的优先级未定；正式范围需产品决定，不继承个人部署的授权/隔离假设。','requirements.md#7-第一轮范围与后续候选')])
+# Route adjustment adds document targets only; no product code or bridge wire API.
+PATHS.append(dict(id='h5',title='H5现有API → 安卓原生壳边界',summary='先运行事件/回应客户端，再接原生平台；后端与业务合同保持。',steps=[['A.web.client','events.list'],['B.events.contract','events.get'],['A.web.client','response.post'],['B.responses.contract','response.get'],['A.native.bridge','shell.proposal'],['D.deliver.contract','push.protocol']],note='壳桥接为语义提案，不冻结库/容器/方法。Compose工程和旧结论保留但不迁签，H5/原生/性能按各自证据验证；本地图不是产品H5 UI。'))
+for aid in next(n for n in NODES if n['id']=='A.web.client')['apis']:
+ if 'A.web.client' not in APIS[aid]['from_']: APIS[aid]['from_'].append('A.web.client')
+for n in NODES:
+ if any(p.startswith('../android/') for p in n['code']):
+  n['existing']='下列Android/Kotlin入口是原Compose历史参照，不迁签Web或新壳；其他后端落点不因此改变。'+n['existing']
+for aid in ['cache.protocol','draft.protocol','notice.protocol']:
+ APIS[aid]['title']='原Compose：'+APIS[aid]['title']
+ APIS[aid]['boundary']='此为原Compose本机合同，不是Web API或新壳实现。'+APIS[aid]['boundary']
+next(n for n in NODES if n['id']=='A')['existing']='客户端按D01/D02/D13改为H5先行、安卓H5＋原生壳。原Compose源码与准确结论保留，不迁签；库/壳细节见实际TASK，执行状态只见路线。'
 TASKS_BY_SYSTEM={
- 'A':['T002-android-client.md','T008-offline-inbox.md','android-001-drafts-templates.md','android-002-cache-windows.md','android-003-cache-latency-investigation.md','android-004-cache-read-experience.md'],
+ 'A':['web-001-event-client.md','T002-android-client.md','T008-offline-inbox.md','android-001-drafts-templates.md','android-002-cache-windows.md','android-003-cache-latency-investigation.md','android-004-cache-read-experience.md'],
  'B':['T001-event-response-store.md','T003-source-delivery.md'],
  'C':['T010-device-pairing-credentials.md','backend-next-source-binding.md'],
  'D':['T004-notifications.md','T009-notification-preferences.md','T006-android-emulator-integration.md'],
@@ -240,7 +258,7 @@ TASKS_BY_SYSTEM={
  'H':['android-001-drafts-templates.md','T009-notification-preferences.md'],
  'I':[],
  'J':['T011-source-paused-service.md','T012-encrypted-backup-materials.md','T013-enforced-frozen-restore.md','T014-matching-state-model-disabled-enable.md','backend-next-model-degraded-http.md']}
-SHORT_LABELS={'a-b':'事件/回应','reply':'保存回应','device':'设备身份','notify':'通知意图','push-app':'取当前卡','command':'原命令','native':'原生输入','receipt':'关联回执','publish':'原包发布','binding':'scope约束','runtime':'运行观察','rules':'提醒策略','newdialog':'新对话','media':'媒体/卡片','memory':'摘要范围','replace':'公共配置','recover':'未知对账','capacity':'存储诊断','resources':'资源/执行','ingress':'先保存','persona':'人格/授权'}
+SHORT_LABELS={'a-b':'事件/回应','reply':'保存回应','device':'设备身份','notify':'通知意图','push-app':'取当前卡','command':'原命令','native':'原生输入','receipt':'关联回执','publish':'原包发布','binding':'scope约束','runtime':'运行观察','rules':'提醒策略','newdialog':'新对话','media':'媒体/卡片','memory':'摘要范围','replace':'公共配置','recover':'未知对账','capacity':'存储诊断','resources':'资源/执行','ingress':'先保存','persona':'人格/授权','web-ledger':'现有API','shell-notice':'原生平台'}
 for e in EDGES: e['short']=SHORT_LABELS.get(e['id'],e['title'])
 for n in NODES:
  n['docs']=list(dict.fromkeys([*n['docs'],'engineering-map.md',*('tasks/'+p for p in TASKS_BY_SYSTEM[n['system']])]))

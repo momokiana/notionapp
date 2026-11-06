@@ -1,8 +1,8 @@
 # 工程地图：说明与资料索引
 
-> **公开镜像适配：** HTML是主入口，本页是全产品职责与本地合同索引，不是当前公开源码能力或统一发布声明。可点击路径仅表示本分支已有相应文件/片段，不表示它包含本地同名文件的全部接口；其余标为“本地合同”，不补导入源码、任务或私有材料。执行状态只归本地 `docs/roadmap.md`；公开范围另见[公开状态](status.md)，不代替实施路线。
+> **公开适配：** 此页/HTML只是能力与本地合同索引，不是产品H5 UI或当前公开实现清单。已有文件链接也不证明具备本地同名文件全部能力；缺Web源码/TASK/片段等仅标本地合同，不为补链导入。执行状态只见[唯一路线的本次公开摘录](roadmap.md)，非完整私有路线；历史发布验证另见[公开状态](status.md)，不另设进度表。
 >
-> 本次原11项输入表SHA256：`10bea251aa4225ee60281b61a955a8611d465cefc24d94d06a4a2ca2484b58e4`；原HTML SHA256：`e3ebc4486b40dff8007d366a155fa72a934a6005ec3e8aa80903666544700675`。原MD说明SHA256：`ea4b3326424c29611d36985cd548387ea54de2cbe5c11ae7196cebaba2874a3f`；公开哈希和裁剪适配另列本次提交说明。它替代旧MD-only格式，不抹旧提交或赋予产品发布/恢复权限。
+> 本次输入表SHA256 `0e704ec708fa08e7f8691087c9598207306f7f806dc042e0d91d8fae51b5e9ea`；原HTML SHA256 `1cb3e1ad9a6d2e86147fa370a221b74d709fe2d15b5e8c27bccd4d788ad93487`。D01/D02/D13及方向同步不迁签任何候选；source/export哈希另列本次提交说明，不改原输入表。
 
 **主入口：[交互式工程地图（HTML）](engineering-map.html)。** 下载或直接双击本地HTML即可使用，不需要启动后端、联网CDN或模型。它以三级节点、端口连线和右侧详情对照“应具备能力—现有落点—缺口/待核实项—依据”，支持搜索、缩放、层级/依赖切换、关联聚焦、四类缺口和关键路径检查；本文保留为文字说明与合同索引，不是HTML的替代交付。
 
@@ -10,19 +10,20 @@
 
 这份地图回答：**产品由哪些系统组成、各块负责什么、接口在哪里、完整产品还需要哪些能力合同。** 它不是开发进度表，也不是新增服务的部署方案。
 
-- 产品目标取自[需求基线](requirements.md)，选择取自决策记录（本地合同：`docs/decisions.md`），运行职责取自[系统架构](architecture.md)与插件提案（本地合同：`docs/plugins.md`）。
-- **实施、测试、独审、暂停、阻塞和发布版本只看实施路线（本地合同：`docs/roadmap.md`）。** 下列源码／TASK入口不代表该能力已经交付、可在公开main消费或获得部署授权。
-- 工程仍是 **Kotlin/Compose安卓客户端＋一个Fastify/TypeScript事件服务＋SQLite＋按需薄适配器**。系统是职责边界，不要求拆成十个服务；`pi-host`可与事件服务同进程，本地连接器才需要独立出站运行。
+- 产品目标取自[需求基线](requirements.md)，选择取自[决策记录](decisions.md)，运行职责取自[系统架构](architecture.md)与插件提案（本地合同：`docs/plugins.md`）。
+- **实施、测试、独审、暂停、阻塞和发布版本只看[实施路线](roadmap.md)。** 下列源码／TASK入口不代表该能力已经交付、可在公开main消费或获得部署授权。
+- 最新客户端方向是 **H5先行，安卓H5＋原生壳复用界面/业务**；一个Fastify/TypeScript事件服务＋SQLite＋按需薄适配器保持不变。原Compose源码/合同是历史参照，不迁签Web或新壳。系统是职责边界，不要求拆成十个服务；工程地图HTML是文档工具，不是产品H5 UI。
 - 范围标记：**〔首〕** 已确认的第一轮往返；**〔日〕** 日常可用与可靠性深化；**〔扩〕** 保留的后续能力。标记不是完成度，也不表示安全与持久化可以延后。
 
 ## 1. 一眼看全：系统 → 功能块
 
 ```text
 通知与交互产品（不是围绕某个模型的聊天客户端）
-├─ A 安卓体验与交互
+├─ A H5客户端与安卓原生壳
 │  ├─ 收件箱、当前事件详情、历史、分层回执、明确已读与事项决定〔首〕
 │  ├─ 按钮/文字回应、稳定原请求与未知结果对账〔首〕
-│  ├─ 加密离线缓存、区间/容量、草稿/快捷回复、性能与忙态反馈〔日〕
+│  ├─ 各端离线缓存、区间/容量、草稿/快捷回复、性能与忙态反馈〔日〕
+│  ├─ 安卓通知/后台/锁屏/Keystore/生命周期桥接〔安卓平台目标；分别验证〕
 │  └─ 主动新对话入口、复杂卡片与媒体呈现〔扩；须先有真实合同〕
 ├─ B 事件、回应与事项账本
 │  ├─ 来源事件创建/更新、版本、历史、幂等与事务〔首〕
@@ -74,7 +75,7 @@ flowchart LR
     U["Uniflo 只读观察"] --> G["G 本地出站连接器"]
     G -->|稳定原包发布| B["B 事件 / 回应 / 历史账本"]
     F -->|创建 / 关联更新| B
-    A["A 安卓体验"] <-->|读当前内容 / 保存回应| B
+    A["A H5界面 / 安卓原生壳"] <-->|读当前内容 / 保存回应| B
     B -->|持久通知意图| D["D 通知与提醒"]
     D -->|平台 → distributor → OS| A
     B -->|原回应派生命令| E["E 精确交付与回执"]
@@ -96,13 +97,14 @@ flowchart LR
 
 以下API为本地源码中的定位入口，完整字段以模块README及严格schema为准；不是新接口设计或统一发布清单。任务链接是既有工程合同，不复述其结论。公开镜像可能不含全部任务／在制源码，不能为补齐链接而带入私人材料。
 
-### A. 安卓体验与交互
+### A. H5客户端与安卓原生壳
 
-解决“看懂当前事项、明确回应、离线不丢资料、未知不重复提交”。列表/详情/设置是产品入口，性能、字号/旋转、可访问反馈及真实后台限制都属于体验，而不只是能生成APK。
+解决“看懂当前事项、明确回应、离线不丢资料、未知不重复提交”。按最新决定先以H5接现有API，再在安卓壳复用UI/业务；前端库和壳/桥接实现由实际TASK落实，本地图不冻结。通知/后台/锁屏/Keystore仍需原生接入，H5不自动解决缓存性能。列表/详情/设置是产品入口，工程地图不是该客户端。
 
-- **代码**：[Android说明](../android/README.md)；[MainActivity](../android/app/src/main/java/dev/notifier/app/MainActivity.kt)、[Ledger](../android/app/src/main/java/dev/notifier/app/Ledger.kt)、[OfflineInbox](../android/app/src/main/java/dev/notifier/app/OfflineInbox.kt)、[ResponseDrafts](../android/app/src/main/java/dev/notifier/app/ResponseDrafts.kt)、[ReadOnlyAutoSync](../android/app/src/main/java/dev/notifier/app/ReadOnlyAutoSync.kt)。Keystore/AtomicFile分别保管连接/原意图、内容缓存、通知和偏好。
+- **新路线入口**：web-001事件闭环TASK（本地合同：`docs/tasks/web-001-event-client.md`），代码归属`web/`；H5本地入口（本地合同：`web/src/main.tsx`）与API消费（本地合同：`web/src/api.ts`）只作定位，不以框架/文件存在推出Web已完成或通过。实际实现、自测及独审状态只归路线。
+- **原Compose历史参照**：[Android说明](../android/README.md)；[MainActivity](../android/app/src/main/java/dev/notifier/app/MainActivity.kt)、[Ledger](../android/app/src/main/java/dev/notifier/app/Ledger.kt)、[OfflineInbox](../android/app/src/main/java/dev/notifier/app/OfflineInbox.kt)、[ResponseDrafts](../android/app/src/main/java/dev/notifier/app/ResponseDrafts.kt)、[ReadOnlyAutoSync](../android/app/src/main/java/dev/notifier/app/ReadOnlyAutoSync.kt)。这些原Kotlin入口的Keystore/AtomicFile分别保管连接/原意图、内容缓存、通知和偏好；不代表浏览器或新壳自动拥有同等安全存储、功能/性能或验证覆盖。
 - **衔接**：消费B的事件/回应/历史、C的设备身份、D的推送和E的回执。离线草稿不是已保存回应；恢复网络不自动发送。列表区间不是全库归档，缓存可回应标记不授予写权。
-- **完整能力边界**：主动新对话、媒体与复杂卡片先满足需求§6.1（本地合同：`docs/requirements.md#61-后续客户端能力的服务端合同前提`），不能用原回应API或占位按钮冒充。性能调查工具与产品修复分开。
+- **完整能力边界**：主动新对话、媒体与复杂卡片先满足需求§6.1（本地合同：`docs/requirements.md#61-后续客户端能力的服务端合同前提`），不能用原回应API或占位按钮冒充。原Compose性能调查/修复与新H5/WebView性能分别核验，旧候选结论不迁签。
 - **追溯**：R03–R07/R09/R14；T002（本地合同：`docs/tasks/T002-android-client.md`）、T008（本地合同：`docs/tasks/T008-offline-inbox.md`）、草稿/模板（本地合同：`docs/tasks/android-001-drafts-templates.md`）、缓存窗口（本地合同：`docs/tasks/android-002-cache-windows.md`）、性能调查（本地合同：`docs/tasks/android-003-cache-latency-investigation.md`）、读取体验（本地合同：`docs/tasks/android-004-cache-read-experience.md`）；验收（本地合同：`docs/acceptance.md`） A03/A06–A09/A28/A30。
 
 ### B. 事件、回应与事项账本
@@ -191,7 +193,7 @@ flowchart LR
 
 | 能力组合 | 要解决的用户问题 | 真正依赖／不应误设的前置 |
 | --- | --- | --- |
-| **首轮：云端澪独立App会话 ↔ 安卓** | 文本/按钮/文字回应、准确原会话收件、原事件更新与真实推送 | A–F的必要部分＋J的认证/持久化/独立部署。必须有精确来源与真实渠道合同；不要求先建G、外接记忆、插件市场或可视化编排。 |
+| **首轮业务：H5先行，随后安卓H5＋原生壳** | 先复用现有API实现可运行事件/回应客户端；安卓阶段保留原会话收件、原事件更新和真实推送目标 | A–F的必要部分＋J不因UI变更重做；H5界面流程、原生桥接/后台/锁屏/安全存储及真实来源证据分开。原Compose工程/结论保留，不要求G、记忆或插件市场先行，也不把Web通过当安卓通过。 |
 | **日常可用** | 离线阅读与未知对账、可理解的忙态、设备生命周期、通知偏好、持续运行/诊断、容量及安全恢复 | 在各自原数据/身份/权限上深化A–G/J；本机缓存性能和本地spool容量可独立推进，不把一个来源或服务通道的障碍泛化为所有功能的依赖。 |
 | **完整产品的后续扩展** | 更多来源、主动新对话、可替换助理/共享摘要、工作方式、记忆/工具、媒体和复杂交互 | H/I及A/F对应入口，仍依赖B/C/E/J的权威事实与安全门。先明确真实能力合同，再接客户端；具体发布范围/次序仍归需求、决定与路线。 |
 
@@ -207,7 +209,7 @@ flowchart LR
 
 ## 5. 阅读旧文档与当前代码时的边界
 
-- `architecture.md`保留了起草时“尚未建立安卓客户端/尚未创建会话”等背景；`protocol-draft.md`也有早期T001能力描述。它们负责目标/提案，不能当作当前源码能力上限。地图的工程落点以各模块README及路由/源码为依据，实际候选/结论仍只查路线。
+- 当前客户端选择以[决策D01/D02/D13](decisions.md)为准。原Compose模块README和历史任务不重写成Web证明；`architecture.md`还保留了起草时“尚未建立安卓客户端/尚未创建会话”等背景；`protocol-draft.md`也有早期T001能力描述。它们负责目标/提案，不能当作当前源码能力上限。地图的工程落点以各模块README及路由/源码为依据，实际候选/结论仍只查路线。
 - 草案中的`/v1/items/{id}/dispositions`、`/v1/sync`和来源注册等候选路径不能直接调用；当前事项决定定位是`/v1/events/{id}/disposition`。插件Manifest的`draft-0`不是已冻结线上协议。
 - 连接器的“出站发布/只读观察”与架构中未来的“本地命令通道”不同；SDK专用宿主的原生输入也不等于任意现有AI进程可接管。工具版本一致、健康检查或快照成功不能补这些合同。
-- 模块README的最低版本声明、某个运行组合的验证、公开镜像包含哪些文件是不同信息，不互相外推。地图不重写其源码/范围或为任何候选签结论；实施路线（本地合同：`docs/roadmap.md`）仍是唯一执行状态入口。
+- 模块README的最低版本声明、某个运行组合的验证、公开镜像包含哪些文件是不同信息，不互相外推。地图不重写其源码/范围或为任何候选签结论；[实施路线](roadmap.md)仍是唯一执行状态入口。
