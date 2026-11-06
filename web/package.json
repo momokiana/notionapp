@@ -11,6 +11,8 @@
     "test": "node --import tsx --test test/*.test.ts",
     "test:browser": "node --import tsx --test test/browser.ts",
     "test:production": "node test/production-smoke.mjs",
+    "test:drafts-browser": "node --import tsx --test test/drafts-browser.ts",
+    "test:drafts-production": "WEB_TEST_PRODUCTION=1 node --import tsx --test test/drafts-browser.ts",
     "check": "npm test && npm run build",
     "fixture": "node test/fixture-cli.mjs"
   },

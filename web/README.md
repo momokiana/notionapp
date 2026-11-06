@@ -1,14 +1,10 @@
-# H5 事件客户端 — web-001限定FINAL PASS切片
+# H5 事件客户端
 
-> 独立开发分支 `wip/web-001`，只消费准确23项冻结source-only；同人限定FINAL PASS/F1–F4仅属于新54候选，**原55仍BLOCK，不倒改历史**。来源/逐项source-export哈希与发布者实际复验见 [web-001公开说明](../docs/releases/web-001.md)。不是完整产品稳定版、正式Release或生产部署；不迁签完整T013、T014/source-binding、Android/Native/模型/推送。当前无持久离线重开、草稿/模板，web-002不在本结论内。
+> 独立公开WIP `wip/web-002`，只消费冻结32项源码。已接收同人限定FINAL PASS；发布者独立复验与公开适配的source/export哈希见[002说明](../docs/releases/web-002.md)/[准确清单](../docs/releases/web-002.json)。不合main或未审后端，不是正式发行或生产许可。001历史结论不迁签本版，002的dev防护也不倒签001。
 
 React 19.3.1＋TypeScript 5.9.3＋Vite 8.3.6。已有后端保持 Fastify/TypeScript/SQLite，本客户端不重做账本。产品名称未定，工程地图不是本产品页面。
 
 ## 运行
-
-> **已知dev私有文件暴露风险，001当前未修。** 作者报告自有合成夹具的Vite dev服务可经`/.local/active-fixture.json`读取合成凭据描述；发布者未复现、未读取正文/token。**`.gitignore`只约束Git，不保护HTTP访问。** dev/preview不得用于生产，不要暴露或转发dev端口；不要把`.local`、凭据、数据库或证据视为已被静态服务隔离。隔离回环与旧测试通过都不证明私有文件访问控制已成立。详见[安全补充](../docs/releases/web-001-dev-private-files.md)。002防护仍待独审/准确交接，未合入本分支，不迁签其进展。
-
-原23源表及原source/export清单继续绑定首发提交`b2142ef4549f8c45f39a00cb48fdd1869036eaa0`，不回写旧哈希或历史结论；本次只增加公开文档警示，不表示风险已经修复。
 
 Node **22.23.2**（本次实际验证版本），npm。全部命令在 `web/` 中执行：
 
@@ -51,11 +47,15 @@ npm test
 npm run test:browser
 # 默认本机生产构建＋4318隔离服务的短闭环（确保4318未被其他进程占用）
 npm run test:production
+# 草稿/模板：实际API故障、静态可达重载、IDB迁移/两tab等
+npm run test:drafts-browser
+# 自有随机端口，构建+preview的静态UI草稿链
+npm run test:drafts-production
 ```
 
 `test:browser`需上述独立基线已编译。使用真实Chromium＋实际Fastify socket/磁盘SQLite及故障网关，不用mock页替代API。可指定 `WEB_BASELINE`、`CHROMIUM_EXECUTABLE`、`CHROMIUM_LIBS`（额外动态库目录）、`WEB_EVIDENCE`（输出目录）。默认浏览器路径是本次开发环境缓存；其他机器应使用自己安装的Chromium路径。不会下载安装OS库或读取私人凭据，所有合成测试资料留在 `.local/cases`。测试自动关闭自有浏览器/服务，不清旧工程/数据库。
 
-Vite dev/preview仅供本地开发，不是生产部署。静态 `dist/` 需由自己的 HTTPS origin 提供，并为 `/api/v1/` 配置固定后端反代：去掉 `/api`、禁缓存、禁重定向跟随、不得按请求参数指定上游。其余 `/api` 应拒绝而非SPA回退。保持 `Cache-Control:no-store`、`Referrer-Policy:no-referrer`、CSP（脚本/连接仅self，禁frame/base）和nosniff；不要部署私人 `.local`、源码测试资料或环境文件。本任务没有公网部署。
+Vite dev/preview仅供本地开发，不是生产部署。静态 `dist/` 需由自己的 HTTPS origin 提供，并为 `/api/v1/` 配置固定后端反代：去掉 `/api`、禁缓存、禁重定向跟随、不得按请求参数指定上游。其余 `/api` 应拒绝而非SPA回退。保持 `Cache-Control:no-store`、`Referrer-Policy:no-referrer`、CSP（脚本/连接仅self，禁frame/base）和nosniff；不要部署私人 `.local`、源码测试资料或环境文件。dev已显式用`server.fs.deny`拒绝`.local`（包括`/@fs`入口）及原默认环境/密钥路径，不能只依赖.gitignore来保护开发夹具。preview只提供dist/本次指定构建目录，不提供整个工程。本任务没有公网部署。
 
 ## 已实现合同与限制
 
@@ -68,15 +68,24 @@ Vite dev/preview仅供本地开发，不是生产部署。静态 `dist/` 需由�
 - **已读或事项丢ACK的活性限制**：原后端已读无request_id、事项历史不含request_id；读到相同进度/决定不证明原操作成功。本客户端保原unknown并阻止后续新写，不提供清槽或偷偷POST重放。需后续精确恢复合同才能改善，不能宣称完整恢复已完成。
 - 静态凭据没有user self，只显示手工指纹，不虚构设备actor。可选managed self支持读取身份，但没有配对/轮换/撤销管理UI；self401不会降级为已核身份。完整静态/受管混合部署未验。
 
-目前只有内存只读旧快照，**未实现持久离线重开、草稿/模板**；后继按既有依赖接续。无原生推送、系统通知、后台/锁屏、Keystore或安卓壳。后续安卓采用 Capacitor WebView/实际需要的原生桥接，复用当前UI/业务，不迁写Compose；本任务不先安装空插件平台。
+## 本机草稿与快捷回复
+
+- 已查看的问题可明确保存按钮/文字草稿，最多8份；只有点击保存才持久，未保存编辑离页丢失。原namespace/root/部署instance/凭据指纹、准确owner/source/epoch/session/target/期限/交互/action及完整原文都保留，不能换身份接管。
+- **离线仅指事件API不可达，静态HTML/JS/CSS仍能实际加载。** 重开后输入原凭据即可在本机重建准确namespace并看草稿，不要求API或device self先成功；这不表示已认证。全网离线的浏览器冷启动/冷重载未实现，无SW/PWA，不把IDB持久化当作离线app-shell。
+- 原schema1读取不伪称已迁移。首次明确保存草稿/模板时，原锁内同一严格IDB事务迁到schema2，保store_id/marker、原pending和outcome。坏根/未知布局/不一致不重建。旧001客户端对schema2只读拒绝，不降级删字段。
+- 最多12条本机全局快捷回复，标题40/正文1000码点；草稿文字最多4000码点。追加只在编辑器末尾插入换行与完整模板，不覆盖原文、不自动保存或发送。修改/删除均比对原id/revision，另一页修改会拒绝迟到操作。
+- schema2仍共享**128KiB整根预算**，包括未决、草稿快照/恢复材料和模板；数量上限不保证最大字段同时装入。超限明确拒绝新修改、保旧根，不截断。
+- “联网核对草稿”只GET准确原事件。换目标/期限/交互/action或失去资格就保原草稿拒绝；普通进展允许展示原版本→当前版本、当前问题/正文/操作/完整待交原文后再次确认。尚未保存的编辑、模板插入、取消、离页/设置、失前台、连接ABA、跨tab revision变化都会使确认失效。
+- 真正“确认提交此回应”才在同一原Web Lock中重读草稿/重GET当前事件，**同一事务**移走原草稿并建立prepared Pending（带不可变恢复材料），再持久unknown才POST。不会嵌套申请相同锁。第一事务失败原草稿在；第二事务失败材料在原prepared槽，均0POST且不自动复活第二份草稿。
+- 仅当前首次fetch直接收到001严格白名单拒绝时，才可同事务恢复原草稿/清原槽；不能因stage叫unknown或后来GET拒绝推断旧POST无效果。丢ACK/重开仅核原response_id，成功后不复活草稿；恢复连接或核对本身0POST。其他本机草稿/模板编辑不改原pending/outcome。
+
+完整收件箱/详情/历史目前仍只有内存只读旧快照，**未实现完整有界持久离线窗口**，按后继接续。`test/legacy-v1/`是本项目已审schema1源的精确兼容性夹具，不进入生产bundle。无原生推送、系统通知、后台/锁屏、Keystore或安卓壳。后续安卓采用 Capacitor WebView/实际需要的原生桥接，复用当前UI/业务，不迁写Compose；本任务不先安装空插件平台。
 
 ## 证据层级
 
-原任务/审查只作本地合同索引，不随源码上传。新54候选表`c8274718b4e845d904575eda3e54fc0044eee84bb1d98110d0db0cc39137fd45`、review `c9ea23423ad8cba6bac1e4b5bd2ce96338b405856d2072a90fb105eef90b1c65`及23源表`37306a8d6756b15985721e7e3cf805fa30cc4c7edcae4ff1fc407915fd497089`按原范围独立记录。发布者不复制TASK/review/raw evidence/截图/DB/token/会话/依赖或构建产物，产品执行状态仍由原共享路线单写者更新，不在此代写。
+原32项source表、68项候选表、22项独审证据表及最终审查以准确SHA256绑定，原始TASK/review/证据不上传。此公开README单独适配，其余31项源码逐字节保持；[公开清单](../docs/releases/web-002.json)分列source/export哈希。发布者实际运行80单元/类型/构建、002浏览器10、生产静态3及001浏览器在002新字节上的回归10，全部0失败/skip；父测试计入相应套件数量，不把原独审额外6项探针冒称本次复跑。dev普通路径和`/@fs`私有路径请求拒绝；自有7个请求变体未返回私有标记，其中编码斜杠请求为200 SPA回退，不能声称全部403。
 
-本次桌面Chromium与390×844 viewport、200% CSS缩放只能证明对应浏览器样本，不能代替物理Android、原生WebView、无障碍全面认证、后台/锁屏/生产或“大缓存性能已解决”。前台HTTP不冒充后台推送，隔离合成来源不冒充云端澪/Native收件。未新增付费模型请求，T007已耗尽许可不变。
-
-发布者仅作README公开说明适配，其余22项代码/测试/配置/锁与冻结源同字节。测试脚本内两处默认浏览器/库路径是作者明确同意公开的本机QA示例，未改为新入口；实测用环境变量显式指定已核工具，不把任意机器可移植性算作通过。生产短闭环的4318只在独立网络命名空间内使用，绝不停止或借用已有监听服务。分层结果与保留的环境失败见[发布说明](../docs/releases/web-001.md)。
+本次桌面Chromium与390×844 viewport、200% CSS缩放只能证明对应浏览器样本，不能代替物理Android、原生WebView、无障碍全面认证、后台/锁屏/生产或“大缓存性能已解决”。前台HTTP不冒充后台推送，隔离合成来源不冒充云端澪/Native收件。未新增模型调用、云端或生产操作，不扩张任何既有授权。
 
 ## 依赖与许可
 

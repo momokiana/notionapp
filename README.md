@@ -1,8 +1,8 @@
 # notionapp（开发中）
 
-> 当前独立开发分支 `wip/web-001`：准确23项H5当前事件客户端源码，已获同人限定FINAL PASS/F1–F4关闭；原55候选仍BLOCK。不是全产品稳定基线或正式Release，main未合。见[准确范围/来源哈希/实际复验](docs/releases/web-001.md)。
+> 当前独立开发分支 `wip/web-002`：准确32项H5源码，新增有界本机草稿/快捷回复与dev私有路径防护；同人独审对68项新候选限定FINAL PASS，作者接收零漂移。不是完整产品稳定基线或正式Release，main未合。见[准确范围/实际复验](docs/releases/web-002.md)及[source/export哈希](docs/releases/web-002.json)。
 
-> **001 dev服务已知私有文件暴露风险，当前分支未修。** `.gitignore`不提供HTTP访问控制；不得把dev/preview当生产服务或将dev端口暴露/转发。[安全补充与历史绑定](docs/releases/web-001-dev-private-files.md)。本次仅文档，不合入活动002。
+> **002的dev私有路径修复只属于002新字节，001旧源码仍未修。** `.gitignore`不是HTTP访问控制；不得把dev/preview当生产服务或暴露/转发dev端口。[001历史警示](docs/releases/web-001-dev-private-files.md)不因后继修复而倒签。
 
 面向个人自托管的轻量通知与交互 App：程序或 AI 助理发出事件，手机展示卡片，用户通过按钮或文字回应，来源的后续进展回到同一事件。
 
@@ -10,7 +10,7 @@
 
 ## 范围与现状
 
-- 用户已确认H5先行、安卓H5＋原生壳；本分支只交首个有界[H5事件客户端](web/README.md)，React/TypeScript/Vite，不重做既有Fastify/TypeScript/SQLite后端。原Compose工程保留、暂停扩展，旧结论不迁签；原生能力及缓存/WebView性能仍须分别实现/验证。
+- 用户已确认H5先行、安卓H5＋原生壳；本分支交有界[H5事件客户端与本机草稿/模板](web/README.md)，React/TypeScript/Vite，不重做既有Fastify/TypeScript/SQLite后端。原Compose工程保留、暂停扩展，旧结论不迁签；原生能力及缓存/WebView性能仍须分别实现/验证。
 - 可选独立 Pi SDK 宿主；可选自托管 ntfy / UnifiedPush 通知，不默认连接 AI、推送服务器或现有工作会话。
 - 历史Compose安卓已增量公开 [android-002 缓存区间与后继隔离修复](docs/releases/android-002.md)，保留 [001草稿/快捷回复及其历史范围](docs/releases/android-001.md)；不是正式发行、生产可用声明或完整产品验收。不含未就绪的新对话/媒体/复杂卡片、T014或待最终结论的新后端绑定接口；连接器候选仅在独立分支，不在 main。
 - 本仓库不包含私人部署、账号、人格、原始聊天、设备/原生会话标识、运行数据库或原始验收证据。
@@ -19,7 +19,7 @@
 
 ## 构建入口
 
-H5切片：按[web/README.md](web/README.md)使用Node22.23.2，在`web/`执行`npm ci && npm run check`。真实API测试只从固定公开commit导出64项后端到独立副本，不复制活动server、旧依赖/库或凭据；详见[web-001清单](docs/releases/web-001.json)。未交持久离线重开/草稿模板、Android壳/Native/模型/推送或公网部署。
+H5切片：按[web/README.md](web/README.md)使用Node22.23.2，在`web/`执行`npm ci && npm run check`。真实API测试只从固定公开commit导出64项后端到独立副本，不复制活动server、旧依赖/库或凭据；详见[web-002清单](docs/releases/web-002.json)。草稿重开仅覆盖API不可达、静态资源仍可加载；未交完整收件箱/详情/历史持久离线窗口、全网离线冷启动、Android壳/Native/模型/推送或公网部署。
 
 以下是保留的原公开组件入口，不构成恢复暂停工作或新端通过：
 

@@ -27,7 +27,9 @@ const proxy = {
 };
 export default defineConfig({
   define: { __DEPLOYMENT__: JSON.stringify({ instance, target }) },
-  server: { host: '127.0.0.1', port: 4317, strictPort: true, headers, proxy },
+  server: { host: '127.0.0.1', port: 4317, strictPort: true, headers, proxy,
+    fs: { deny: ['.env', '.env.*', '*.{crt,pem}', '**/.git/**', '**/.local/**'] },
+  },
   preview: { host: '127.0.0.1', port: 4317, strictPort: true, headers, proxy },
   build: { sourcemap: false, target: 'es2022' },
 });

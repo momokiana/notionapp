@@ -1,0 +1,385 @@
+{
+  "format": 1,
+  "component": "web",
+  "increment": "web-002",
+  "branch": "wip/web-002",
+  "parent_public_wip_commit": "139876ad9b1f49598c1b2a5eec32e7e0e220950b",
+  "main_unchanged_commit": "0a745c88fbba495f145263e5384af24215c394b2",
+  "source_manifest_sha256": "5d886cd4c17fdd03f67f595d0b8a8187803cdce250c8bbbfe993d4d81bab6b68",
+  "export_source_table_sha256": "5288aaf9d03a72b09b1a3f951be0dd6d7b47e0be7763db5f1251092df21c9845",
+  "table_hash_recipe": "SOURCE.sha256 original32-file order: selected source_sha256/export_sha256 + two ASCII spaces + repository-relative path + LF, UTF-8. Covers32 imported paths only, excluding publisher release/root/status/history docs; the original source table is unchanged.",
+  "source_files": 32,
+  "exact_source_files": 31,
+  "adapted_files": [
+    "web/README.md"
+  ],
+  "delta_vs_001_source": {
+    "reference_source_publication_commit": "b2142ef4549f8c45f39a00cb48fdd1869036eaa0",
+    "reference_source_manifest_sha256": "37306a8d6756b15985721e7e3cf805fa30cc4c7edcae4ff1fc407915fd497089",
+    "added_count": 9,
+    "modified_count": 8,
+    "same_bytes_count": 15,
+    "deleted_count": 0,
+    "added": [
+      "web/src/DraftPanel.tsx",
+      "web/src/draft-data.ts",
+      "web/src/drafts.ts",
+      "web/test/drafts-browser.ts",
+      "web/test/drafts.test.ts",
+      "web/test/legacy-v1/api.ts",
+      "web/test/legacy-v1/contracts.ts",
+      "web/test/legacy-v1/ledger.ts",
+      "web/test/legacy-v1/storage.ts"
+    ],
+    "modified": [
+      "web/README.md",
+      "web/package.json",
+      "web/src/client.ts",
+      "web/src/ledger.ts",
+      "web/src/main.tsx",
+      "web/src/storage.ts",
+      "web/src/style.css",
+      "web/vite.config.ts"
+    ],
+    "unchanged": [
+      "web/.gitignore",
+      "web/DESIGN.md",
+      "web/PRODUCT.md",
+      "web/index.html",
+      "web/package-lock.json",
+      "web/src/api.ts",
+      "web/src/contracts.ts",
+      "web/test/browser.ts",
+      "web/test/fixture-cli.mjs",
+      "web/test/fixture.mjs",
+      "web/test/ledger.test.ts",
+      "web/test/production-smoke.mjs",
+      "web/test/repair.test.ts",
+      "web/tools/export-baseline.mjs",
+      "web/tsconfig.json"
+    ],
+    "deleted": [],
+    "reference_readme_source_sha256": "8506820d5dbe29e4ebc686e8126adfad0da527ac3afe3d0ddeec37e618b16542",
+    "not_reference_readme_later_warning_export_sha256": "be41c645ef1c1bb11129b15ed0c1f8782dc88e63827e30d07902d2d2c393e8ef",
+    "legacy_v1_compatibility_fixtures": "Four project-owned API/contracts/ledger/storage source copies exactly match001 reviewed source; not a new third-party dependency or production-bundle module",
+    "dependency_lock_unchanged": true,
+    "backend_or_HTTP_contract_changes": false
+  },
+  "review": {
+    "status": "Same independent reviewer limited FINAL PASS for frozen68-entry candidate; not publisher replacing product review",
+    "review_sha256": "cd542f9eeed7c5380e37d3c31a24236281e552cd9a2e656c1d117b578be083ac",
+    "candidate68_table_sha256": "71c975c98482bba645d0fe12e99b45900f955ed1f6cd24f30a810fab8569d399",
+    "review22_evidence_table_sha256": "ad03e3a8840897a3d76027e02048c380ceef54756dec5a66e4ab8bd0f165562d",
+    "author_acceptance_sha256": "cfbcb8fac58c06c3ce8267d506cd9d424129b0bdb4d4f1f0a1437626da830768",
+    "author_acceptance_reported": {
+      "candidate_count": 68,
+      "review_evidence_count": 22,
+      "candidate_drift": 0,
+      "evidence_drift": 0,
+      "safe_source_export_count": 32
+    },
+    "publisher_subset_verified_against_candidate_table": true,
+    "raw_candidate_or_private_evidence_opened_or_imported": false,
+    "reported_not_publisher_original_probe_execution": "Original independent80/type/build,002 browser10,production3,001 regression10,adjacent6; original seven private-path probes had zero private-marker returns, one encoded-slash SPA fallback200 and others403; three synthetic credentials/markers had zero matches in original review artifacts. Adjacent6/original private scripts NOT rerun by publisher; publisher tests and separate synthetic checks below.",
+    "old_001_history": "Old55 FINAL BLOCK and new54 limited PASS/F1-F4 retain their original byte bindings; new002 approval does not fix or re-sign001"
+  },
+  "implemented": "Bounded local drafts/templates while event API unavailable but static resources load; same-lock schema1-to2 explicit-write migration, immutable pending draft-restore material, explicit current-question review and confirmed original-intent submission;002 dev private-path denial. Backend unchanged.",
+  "limits": [
+    "no persistent inbox/detail/history offline window or whole-network offline cold start; no SW/PWA",
+    "read/disposition unknown liveness unchanged: original slot retained; matching current value is not original-request proof",
+    "no silent retry/new-ID replay, identity takeover, automatic pending clearing or recovery-driven draft duplication",
+    "shared128KiB unencrypted IndexedDB root; up to8 drafts/12 templates does not promise maximal fields fit simultaneously; not Keystore",
+    "Web Locks cover same origin/storage partition only; missing Locks stays read-only",
+    "static credential fingerprint/deployment instance is not independent current-service proof; managed/static lifecycle not fully verified",
+    "no Android/Capacitor/native/WebView/background/lockscreen/push/model/full-lifecycle/production validation or paid-model authorization"
+  ],
+  "publisher_validation": {
+    "node": "22.23.2",
+    "npm": "10.9.8",
+    "chromium": "153.0.8010.12",
+    "chromium_binary_sha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e",
+    "unit_type_build": {
+      "unit_pass": 80,
+      "fail": 0,
+      "skip": 0,
+      "typecheck": true,
+      "production_build": true,
+      "exit": 0
+    },
+    "browser_002": {
+      "pass": 10,
+      "fail": 0,
+      "skip": 0,
+      "exit": 0,
+      "includes_parent_test": true,
+      "page_errors": 0
+    },
+    "production_static_002": {
+      "pass": 3,
+      "fail": 0,
+      "skip": 0,
+      "exit": 0,
+      "includes_parent_test": true,
+      "page_errors": 0
+    },
+    "browser_001_on_002_source": {
+      "pass": 10,
+      "fail": 0,
+      "skip": 0,
+      "exit": 0,
+      "includes_parent_test": true,
+      "not_rerunning001_old_product_source": true
+    },
+    "backend": "Real immutable-public64 Fastify/socket/disk-SQLite in fresh private fixture, independent install/build before HTTP tests; historical148 NOT rerun",
+    "own_private_file_and_artifact_check": {
+      "not_original_reviewer_private_scripts": true,
+      "synthetic_request_variants": 7,
+      "ordinary_and_at_fs_status": 403,
+      "all_marker_returns": 0,
+      "statuses": [
+        403,
+        403,
+        403,
+        403,
+        200,
+        403,
+        403
+      ],
+      "encoded_slash_200_was_SPA_fallback_not_private_marker": true,
+      "synthetic_production_credentials_checked": 3,
+      "synthetic_marker_checked": true,
+      "production_artifact_matches": 0,
+      "production_HTML_JS_CSS_artifacts_scanned": 3
+    },
+    "production_API_down_static_available_reopen": {
+      "schema": 2,
+      "text_preserved": true,
+      "observed_static_loads": 3,
+      "automatic_POSTs_on_API_restore": 0,
+      "explicit_confirmation_POSTs": 1
+    },
+    "visual_sample": "Actual production-static390px screenshots for API-down draft reload and explicit current-question confirmation read with CJK fonts; desktop/200percent browser assertions are suite samples, not physical Android/accessibility certification",
+    "isolation": "New private POSIX copy/HOME/env; Bubblewrap unshare-all user/PID/mount/network namespaces, internal loopback only, host /mnt and private local home absent, readonly tools/libraries/system-font mounts; no existing listeners touched",
+    "host_fallback": false,
+    "all32_source_files_unchanged_after_tests": true,
+    "product_code_or_lock_or_default_test_entry_modified_for_testing": false,
+    "private_test_wrapper_uploaded": false,
+    "binaries_fonts_screenshots_or_builds_uploaded": false,
+    "QA_cache_defaults": "Original author-approved Chromium/library default examples unchanged; explicit env overrides used, not a portability guarantee",
+    "install_audit": "This fresh Web33/backend58 package installation each reported0 known vulnerabilities; does not clear Pi dependency warnings",
+    "new_failed_install_build_or_test_attempts": 0
+  },
+  "backend_baseline": {
+    "public_commit": "0a745c88fbba495f145263e5384af24215c394b2",
+    "server_files": 64,
+    "table_sha256": "f05bb7fb4369f07718e3bcca47d177cda34a413edd55802a9381bc15d832e967",
+    "export_source": "Verified immutable Git blobs from exact original public server64 whitelist; no active backend tree or its installed native/config/storage reused",
+    "full_T013_review_inherited": false,
+    "T014_source_binding_imported": false,
+    "rejected_review_restarted": false,
+    "N1": "Only backend22.23.2 verified; installed native SQLite standalone-open SIGSEGV under22.13 cause unknown, not repaired or superseded by connector builtin-SQLite results"
+  },
+  "publisher_document_paths": [
+    "README.md",
+    "docs/status.md",
+    "docs/releases/web-001-dev-private-files.md",
+    "docs/releases/web-002.md",
+    "docs/releases/web-002.json"
+  ],
+  "excluded": "SOURCE.sha256 input table itself, non-whitelisted candidate files, TASK/review/raw evidence/logs/screenshots/chat/tokens/CASE/spool/DB/WAL/SHM/runtime markers/private identities/deployments, node_modules/native/browser/font binaries/builds, active backend/T014/source-binding, other paused work",
+  "application_license": "Undecided; no application MIT/Apache license added; upstream notices/licenses retained",
+  "files": [
+    {
+      "path": "web/.gitignore",
+      "source_sha256": "b26159ec520fa980e624c18da09474d8d5882877622d0baabc988c8204068849",
+      "export_sha256": "b26159ec520fa980e624c18da09474d8d5882877622d0baabc988c8204068849",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/DESIGN.md",
+      "source_sha256": "6f6547961c740f032f73fc973fedae4f20d79f3d2a24e81bea4b18c22e99c716",
+      "export_sha256": "6f6547961c740f032f73fc973fedae4f20d79f3d2a24e81bea4b18c22e99c716",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/PRODUCT.md",
+      "source_sha256": "33c67f5a92a56264ce89baa738a081b0491114709741ee0eefa25b3994f7f449",
+      "export_sha256": "33c67f5a92a56264ce89baa738a081b0491114709741ee0eefa25b3994f7f449",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/README.md",
+      "source_sha256": "0460e8635e4b8ae7b2314df425321ce3bd85be9683862c7702163fff2c8f66f8",
+      "export_sha256": "90f52618f88e303e4a900f13e53f075a41539d64e4d8603d9600697f9d15caf6",
+      "publication_adaptation": true
+    },
+    {
+      "path": "web/index.html",
+      "source_sha256": "e75f479f59be434c6178063da7fecd420b500c8e356bb3938331888348baabbd",
+      "export_sha256": "e75f479f59be434c6178063da7fecd420b500c8e356bb3938331888348baabbd",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/package-lock.json",
+      "source_sha256": "e3c8470e61a866249a488252f19b155675787bc482b9e8555d68cd29b72230fe",
+      "export_sha256": "e3c8470e61a866249a488252f19b155675787bc482b9e8555d68cd29b72230fe",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/package.json",
+      "source_sha256": "2b32e7ed46900485f848cf445314cb719affc4d724d78ed50b986827ec080211",
+      "export_sha256": "2b32e7ed46900485f848cf445314cb719affc4d724d78ed50b986827ec080211",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/src/DraftPanel.tsx",
+      "source_sha256": "e519087d95e2063f264059a10e5715a665c87315081a005651c51c8ebbf73165",
+      "export_sha256": "e519087d95e2063f264059a10e5715a665c87315081a005651c51c8ebbf73165",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/src/api.ts",
+      "source_sha256": "31435ab4bf0954798a1bfeee8fc654db83540dc197afadf0ba39f6d55b79958b",
+      "export_sha256": "31435ab4bf0954798a1bfeee8fc654db83540dc197afadf0ba39f6d55b79958b",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/src/client.ts",
+      "source_sha256": "472fa7191370999ccaf958604c3ca8776eae5155208d3aa3a421b1a6b2ce7e42",
+      "export_sha256": "472fa7191370999ccaf958604c3ca8776eae5155208d3aa3a421b1a6b2ce7e42",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/src/contracts.ts",
+      "source_sha256": "247f0b07342266f3707ad02d601b6eb9ad124225ef0a99195c53f324dc1091f4",
+      "export_sha256": "247f0b07342266f3707ad02d601b6eb9ad124225ef0a99195c53f324dc1091f4",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/src/draft-data.ts",
+      "source_sha256": "8038b3807cf0bc7c2909b54351756ea9ea3b025994108847b1088f80fc3d0f90",
+      "export_sha256": "8038b3807cf0bc7c2909b54351756ea9ea3b025994108847b1088f80fc3d0f90",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/src/drafts.ts",
+      "source_sha256": "27b44fa6667d76d929221897f86a779c1a2728298d9accd49bb60fa0a19f2cc3",
+      "export_sha256": "27b44fa6667d76d929221897f86a779c1a2728298d9accd49bb60fa0a19f2cc3",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/src/ledger.ts",
+      "source_sha256": "484b2d605cbcb4b23f7e2e8bf946d1814e86073e7f866afc3fa38fd6d370e927",
+      "export_sha256": "484b2d605cbcb4b23f7e2e8bf946d1814e86073e7f866afc3fa38fd6d370e927",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/src/main.tsx",
+      "source_sha256": "c2202b70937c596b0ca7490e32ad6f77923a3174fe1a998788611d22a053e8b3",
+      "export_sha256": "c2202b70937c596b0ca7490e32ad6f77923a3174fe1a998788611d22a053e8b3",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/src/storage.ts",
+      "source_sha256": "fbaacc7f7f59bc76c9ec6ade48929d51cb74db588c2ade5a3a3010605f5006ad",
+      "export_sha256": "fbaacc7f7f59bc76c9ec6ade48929d51cb74db588c2ade5a3a3010605f5006ad",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/src/style.css",
+      "source_sha256": "6e079dcd326e66c60556e20f0f034492f81929a0fc104f1936b7f880fa4be49f",
+      "export_sha256": "6e079dcd326e66c60556e20f0f034492f81929a0fc104f1936b7f880fa4be49f",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/browser.ts",
+      "source_sha256": "e7052b76effd1460896d89bea484e69c14e2aaae8166c602c167e4345b1f21fc",
+      "export_sha256": "e7052b76effd1460896d89bea484e69c14e2aaae8166c602c167e4345b1f21fc",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/drafts-browser.ts",
+      "source_sha256": "62b83b07aac857e66ad660ed5c8deb7a07f2118a1d2ec2be1b60a27770f77d18",
+      "export_sha256": "62b83b07aac857e66ad660ed5c8deb7a07f2118a1d2ec2be1b60a27770f77d18",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/drafts.test.ts",
+      "source_sha256": "59f5d15b260159449fc221532c592b15fcf26264e3cce4cf069aaa466692588c",
+      "export_sha256": "59f5d15b260159449fc221532c592b15fcf26264e3cce4cf069aaa466692588c",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/fixture-cli.mjs",
+      "source_sha256": "1b311c3980bf0e367b25299081f3c66a2574987575ade0a12d49c17a5aa58631",
+      "export_sha256": "1b311c3980bf0e367b25299081f3c66a2574987575ade0a12d49c17a5aa58631",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/fixture.mjs",
+      "source_sha256": "a8a8b26c6a071ac88c44cbc75c71ae36a55ef09d5cab61935879a9022b92a2eb",
+      "export_sha256": "a8a8b26c6a071ac88c44cbc75c71ae36a55ef09d5cab61935879a9022b92a2eb",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/ledger.test.ts",
+      "source_sha256": "6317e72b694f461bd5d06ceb2d1df527518dfad3666c2f9de128dd59d78c9505",
+      "export_sha256": "6317e72b694f461bd5d06ceb2d1df527518dfad3666c2f9de128dd59d78c9505",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/legacy-v1/api.ts",
+      "source_sha256": "31435ab4bf0954798a1bfeee8fc654db83540dc197afadf0ba39f6d55b79958b",
+      "export_sha256": "31435ab4bf0954798a1bfeee8fc654db83540dc197afadf0ba39f6d55b79958b",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/legacy-v1/contracts.ts",
+      "source_sha256": "247f0b07342266f3707ad02d601b6eb9ad124225ef0a99195c53f324dc1091f4",
+      "export_sha256": "247f0b07342266f3707ad02d601b6eb9ad124225ef0a99195c53f324dc1091f4",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/legacy-v1/ledger.ts",
+      "source_sha256": "e5e82be56d370808f74cc648c7b85a62f1dbcd5fc99b0d568f87d382a317518e",
+      "export_sha256": "e5e82be56d370808f74cc648c7b85a62f1dbcd5fc99b0d568f87d382a317518e",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/legacy-v1/storage.ts",
+      "source_sha256": "bfdafc8015e982a6d6ce7c23984e310b1d74293b0a6bf6ff1d3ddcd57a1a3c2e",
+      "export_sha256": "bfdafc8015e982a6d6ce7c23984e310b1d74293b0a6bf6ff1d3ddcd57a1a3c2e",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/production-smoke.mjs",
+      "source_sha256": "bd5206bb72a1e4d874f8b733418d6a288debaf6902e2d1d472fbc4f0b447b4ec",
+      "export_sha256": "bd5206bb72a1e4d874f8b733418d6a288debaf6902e2d1d472fbc4f0b447b4ec",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/test/repair.test.ts",
+      "source_sha256": "111a847dee9c376fcce324de3c5fee611880949e45408f1e5799a12c3bb3fd42",
+      "export_sha256": "111a847dee9c376fcce324de3c5fee611880949e45408f1e5799a12c3bb3fd42",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/tools/export-baseline.mjs",
+      "source_sha256": "7fa7f304de95a9422202d72475a2396e84dea05b3860b7ee143ce66e39046ca3",
+      "export_sha256": "7fa7f304de95a9422202d72475a2396e84dea05b3860b7ee143ce66e39046ca3",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/tsconfig.json",
+      "source_sha256": "1975d1706fc29bb01dc6fc0507652095c91d9af0ddca6882a8611044cb391500",
+      "export_sha256": "1975d1706fc29bb01dc6fc0507652095c91d9af0ddca6882a8611044cb391500",
+      "publication_adaptation": false
+    },
+    {
+      "path": "web/vite.config.ts",
+      "source_sha256": "5d98e86c7d5153d0cc74d7bd1430b1d9463cc97194a0d1c8715a11b769d23f91",
+      "export_sha256": "5d98e86c7d5153d0cc74d7bd1430b1d9463cc97194a0d1c8715a11b769d23f91",
+      "publication_adaptation": false
+    }
+  ]
+}

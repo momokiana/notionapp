@@ -1,6 +1,8 @@
 import { Api, HttpError, exactKeys, type Connection } from './api.ts';
 import { confirmation, event, integer, object, response, same, type Event, type Action, type Disposition } from './contracts.ts';
-import { pending, type Store, type Lock, type Pending, type Kind } from './storage.ts';
+import { pending, workspace, type Store, type Lock, type Pending, type Kind } from './storage.ts';
+import { draftConnection, sameDraftTarget, type Draft, type DraftReview } from './draft-data.ts';
+import { requireDraft } from './drafts.ts';
 
 export const knownRejection = (e: unknown): e is HttpError => e instanceof HttpError && (
   (e.status === 409 && ['EVENT_VERSION_CONFLICT','INTERACTION_VERSION_CONFLICT','ACTION_ALREADY_RESERVED','SOURCE_READ_ONLY','EVENT_CLOSED'].includes(e.code)) ||
@@ -16,13 +18,31 @@ export class Ledger {
   private async finish(p: Pending, state: 'saved' | 'rejected', code = '') {
     await this.store.change(r => {
       if (!r.pending || !same(r.pending, p)) throw new Error('STORAGE_PENDING_CHANGED');
-      return { ...r, pending: null, outcome: { id: p.id, event_id: p.event.id, kind: p.kind, state, at: new Date().toISOString(), code } };
+      const base=state==='rejected'&&p.draft_restore?workspace(r):r;
+      if(state==='rejected'&&p.draft_restore){
+        const w=workspace(base);
+        if(w.drafts.length>=8||w.drafts.some(d=>d.id===p.draft_restore!.id))throw new Error('STORAGE_DRAFT_RESTORE_CONFLICT');
+        return {...w,drafts:[...w.drafts,p.draft_restore],pending:null,outcome:{id:p.id,event_id:p.event.id,kind:p.kind,state,at:new Date().toISOString(),code}};
+      }
+      return { ...base, pending: null, outcome: { id: p.id, event_id: p.event.id, kind: p.kind, state, at: new Date().toISOString(), code } };
     });
   }
   async submit(api: Api, viewed: Event, kind: Kind, selection?: Action | Disposition, value = '', actor: string | null = null): Promise<string> {
-    return this.lock(async () => {
+    return this.lock(()=>this.submitLocked(api,viewed,kind,selection,value,actor));
+  }
+  async submitDraft(api:Api,review:DraftReview,actor:string|null=null):Promise<string>{
+    return this.lock(async()=>{
       api.assertCurrent();
-      if ((await this.store.read()).pending) throw new Error('已有未决提交，先查原请求，不生成新ID');
+      if(!draftConnection(review.draft,api.c)||!sameDraftTarget(review.draft,review.current)||!review.current.can_respond)throw new Error('草稿核对已失效，请重新核对');
+      return this.submitLocked(api,review.current,'response',review.draft.action,review.draft.text,actor,review.draft);
+    });
+  }
+  // Caller already owns the one Web Lock. Draft submission never nests public submit().
+  private async submitLocked(api:Api,viewed:Event,kind:Kind,selection?:Action|Disposition,value='',actor:string|null=null,originDraft?:Draft):Promise<string>{
+      api.assertCurrent();
+      const before=await this.store.read();
+      if (before.pending) throw new Error('已有未决提交，先查原请求，不生成新ID');
+      if(originDraft)requireDraft(workspace(before),originDraft);
       const current = event(await api.request('/v1/events/' + viewed.id));
       if (!same(confirmation(current), confirmation(viewed))) throw new Error('事件或问题已变化，请刷新详情并重新确认');
       const request_id = crypto.randomUUID(); let body: Record<string, unknown>;
@@ -34,9 +54,13 @@ export class Ledger {
       } else if (kind === 'read') body = { event_version: current.event_version };
       else body = { request_id, expected_event_version: current.event_version, disposition: selection };
       let p = pending({ id: request_id, kind, namespace: api.c.namespace, root: api.c.root, deployment: api.c.deployment, fingerprint: api.c.fingerprint, event: current, actor, body,
-        path: '/v1/events/' + current.id + (kind === 'response' ? '/responses' : kind === 'read' ? '/read-state' : '/disposition'), method: kind === 'read' ? 'PUT' : 'POST', stage: 'prepared', created_at: new Date().toISOString() });
+        path: '/v1/events/' + current.id + (kind === 'response' ? '/responses' : kind === 'read' ? '/read-state' : '/disposition'), method: kind === 'read' ? 'PUT' : 'POST', stage: 'prepared', created_at: new Date().toISOString(),...(originDraft?{draft_restore:originDraft}:{}) });
       api.assertCurrent();
-      await this.store.change(r => { if (r.pending) throw new Error('STORAGE_PENDING_CHANGED'); return { ...r, pending: p }; });
+      await this.store.change(r => {
+        if (r.pending) throw new Error('STORAGE_PENDING_CHANGED');
+        if(originDraft){const w=workspace(r);requireDraft(w,originDraft);return {...w,drafts:w.drafts.filter(d=>d.id!==originDraft.id),pending:p};}
+        return { ...r, pending: p };
+      });
       api.assertCurrent();
       const prepared = p; p = { ...p, stage: 'unknown' };
       await this.store.change(r => { if (!same(r.pending, prepared)) throw new Error('STORAGE_PENDING_CHANGED'); return { ...r, pending: p }; });
@@ -57,7 +81,6 @@ export class Ledger {
       api.assertCurrent();
       await this.finish(p, 'saved');
       return request_id;
-    });
   }
   async recover(api: Api): Promise<{ saved: boolean; message: string; eventId: string }> {
     return this.lock(async () => {
