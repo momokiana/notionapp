@@ -6,9 +6,9 @@ React 19.3.1＋TypeScript 5.9.3＋Vite 8.3.6。已有后端保持 Fastify/TypeSc
 
 ## 运行
 
-> **已知dev私有文件暴露风险，001当前未修。** 作者报告自有合成夹具的Vite dev服务可经`/.local/active-fixture.json`读取合成凭据描述；发布者未复现、未读取正文/token。**`.gitignore`只约束Git，不保护HTTP访问。** dev/preview不得用于生产，不要暴露或转发dev端口；不要把`.local`、凭据、数据库或证据视为已被静态服务隔离。隔离回环与旧测试通过都不证明私有文件访问控制已成立。详见[安全补充](../docs/releases/web-001-dev-private-files.md)。002防护仍待独审/准确交接，未合入本分支，不迁签其进展。
+> **已知dev私有文件暴露风险，001当前未修。** 作者报告自有合成夹具的Vite dev服务可经`/.local/active-fixture.json`读取合成凭据描述；发布者未复现、未读取正文/token。**`.gitignore`只约束Git，不保护HTTP访问。** dev/preview不得用于生产，不要暴露或转发dev端口；不要把`.local`、凭据、数据库或证据视为已被静态服务隔离。隔离回环与旧测试通过都不证明私有文件访问控制已成立。详见[安全补充](../docs/releases/web-001-dev-private-files.md)。后继002防护已按限定FINAL PASS及准确32源交接在独立提交[`f363d5967a01814bd784277a95653e1f3ae47d0f`](https://github.com/momokiana/notionapp/commit/f363d5967a01814bd784277a95653e1f3ae47d0f)发布，见[002实际复验/边界](https://github.com/momokiana/notionapp/blob/f363d5967a01814bd784277a95653e1f3ae47d0f/docs/releases/web-002.md)。本001分支未合其防护，旧源码仍未修，不迁签002结论。
 
-原23源表及原source/export清单继续绑定首发提交`b2142ef4549f8c45f39a00cb48fdd1869036eaa0`，不回写旧哈希或历史结论；本次只增加公开文档警示，不表示风险已经修复。
+原23源表及原source/export清单继续绑定首发提交`b2142ef4549f8c45f39a00cb48fdd1869036eaa0`，不回写旧哈希或历史结论；当前后继只更新公开文档与002发布链接，不表示001风险已经修复。
 
 Node **22.23.2**（本次实际验证版本），npm。全部命令在 `web/` 中执行：
 

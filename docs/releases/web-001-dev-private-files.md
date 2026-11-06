@@ -1,5 +1,7 @@
 # web-001后继安全说明：dev静态服务与私有文件
 
+> **后继发布记录（001仍未修）**：002的32项获审安全源码与dev私有路径防护已实际发布到独立`wip/web-002`，准确commit [`f363d5967a01814bd784277a95653e1f3ae47d0f`](https://github.com/momokiana/notionapp/commit/f363d5967a01814bd784277a95653e1f3ae47d0f)；[分层验证/未覆盖](https://github.com/momokiana/notionapp/blob/f363d5967a01814bd784277a95653e1f3ae47d0f/docs/releases/web-002.md)、[32项source-export哈希](https://github.com/momokiana/notionapp/blob/f363d5967a01814bd784277a95653e1f3ae47d0f/docs/releases/web-002.json)。**本001分支只更新文档，22项非README源字节及原23项source表/历史记录不变，001运行代码仍未修，不倒签原BLOCK/限定PASS。** 下文“本提交/本次/当前分支”及“002仍待独审”均为警示提交 `139876ad9b1f49598c1b2a5eec32e7e0e220950b` 当时记录。本次文档后继的Web README SHA256是`34e80c7e101b7189b91677b68f1a8ce5cb91401b9804b13893629785f9477e05`，不冒充原README source或旧export值；未复跑001、未请求其URL或读取其私有文件，也无main合并/部署。
+
 **001已公开WIP存在作者报告的dev私有文件暴露风险，本提交仅加警示，没有修复运行代码。** 不应从原限定FINAL PASS或原浏览器套件通过推导开发服务器的私有文件访问控制已验证。
 
 ## 报告范围与当前限制

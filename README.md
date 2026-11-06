@@ -2,7 +2,7 @@
 
 > 当前独立开发分支 `wip/web-001`：准确23项H5当前事件客户端源码，已获同人限定FINAL PASS/F1–F4关闭；原55候选仍BLOCK。不是全产品稳定基线或正式Release，main未合。见[准确范围/来源哈希/实际复验](docs/releases/web-001.md)。
 
-> **001 dev服务已知私有文件暴露风险，当前分支未修。** `.gitignore`不提供HTTP访问控制；不得把dev/preview当生产服务或将dev端口暴露/转发。[安全补充与历史绑定](docs/releases/web-001-dev-private-files.md)。本次仅文档，不合入活动002。
+> **001 dev服务已知私有文件暴露风险，当前分支未修。** `.gitignore`不提供HTTP访问控制；不得把dev/preview当生产服务或将dev端口暴露/转发。[安全补充与历史绑定](docs/releases/web-001-dev-private-files.md)。后继修复已在独立[web-002提交](https://github.com/momokiana/notionapp/commit/f363d5967a01814bd784277a95653e1f3ae47d0f)发布；本001分支只更新文档，不合入002防护或迁签其结论。
 
 面向个人自托管的轻量通知与交互 App：程序或 AI 助理发出事件，手机展示卡片，用户通过按钮或文字回应，来源的后续进展回到同一事件。
 
