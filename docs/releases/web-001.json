@@ -1,0 +1,260 @@
+{
+  "format": 1,
+  "component": "web",
+  "increment": "web-001",
+  "candidate": "new54/f1",
+  "branch": "wip/web-001",
+  "parent_and_unchanged_main_commit": "0a745c88fbba495f145263e5384af24215c394b2",
+  "source_manifest_sha256": "37306a8d6756b15985721e7e3cf805fa30cc4c7edcae4ff1fc407915fd497089",
+  "export_source_table_sha256": "ee37ab1e7ff22e39e56fafb6d5c7c16daaa4248820e2a3ced0af84590ecd03f9",
+  "table_hash_recipe": "Original SOURCE.sha256 file order: selected source_sha256/export_sha256 + two ASCII spaces + repository-relative path + LF, UTF-8. Export table covers23 imported files including adapted README, excludes new release/root docs. Original source table never changed.",
+  "source_files": 23,
+  "exact_source_files": 22,
+  "review": {
+    "status": "Same independent reviewer limited FINAL PASS, F1-F4 closed only for new54/current23. No replacement review by publisher.",
+    "review_sha256": "c9ea23423ad8cba6bac1e4b5bd2ce96338b405856d2072a90fb105eef90b1c65",
+    "candidate54_table_sha256": "c8274718b4e845d904575eda3e54fc0044eee84bb1d98110d0db0cc39137fd45",
+    "task_sha256_reported": "e9eeb79b184e1ce8a24601ab36fd8e93eec0efc6a0592205438b904003abb33a",
+    "review25_evidence_table_sha256": "11892684e3ddb1a8df89c49da7fa9b3c5ada6ae9be6462b7feb4ff6b1df6e7f9",
+    "author_acceptance_reported": {
+      "candidate_count": 54,
+      "review_evidence_count": 25,
+      "candidate_drift": 0,
+      "evidence_drift": 0
+    },
+    "publisher_source_subset_checked_against_candidate_table": true,
+    "publisher_opened_or_imported_other_local_candidate_or_raw_evidence_files": false,
+    "old55": "Remains FINAL BLOCK; original review hash980713807214197b42a1a1e0ff342a66977637cbe1043d49be88d891e45476a6 retained as received, no old-source import/re-signing",
+    "private_reviewer_extra_probes": "L1 original6, L2 original6, neighbor8 and production3 reported in formal review; NOT rerun/claimed by publisher"
+  },
+  "implemented": "Bounded current-event UI/connection fingerprint and optional managed self; real API pagination/current-window filters, detail/history/layered receipts, button/Unicode text response, explicit read/disposition, durable original ID and read-only recovery. Backend unchanged.",
+  "limits": [
+    "no persistent offline reopen or drafts/templates",
+    "plaintext bounded IndexedDB intention ledger, not Keystore",
+    "read/disposition unknown retains original slot; matching current value cannot prove original request",
+    "Web Locks only same origin/browser storage partition, missing Locks stays read-only",
+    "static fingerprint/deployment instance not service-currentness proof",
+    "managed/static mixed mode and credential lifecycle not fully verified",
+    "no Android/Capacitor/native/push/background/lockscreen/model/production or web-002 verdict"
+  ],
+  "publisher_validation": {
+    "node": "22.23.2",
+    "chromium": "153.0.8010.12",
+    "chromium_binary_sha256": "8c599d43aec53f2460a31ae2f4af6bd863f8258b34ff519564bc5d4726bfaa1e",
+    "web_check": {
+      "unit_pass": 52,
+      "fail": 0,
+      "skip": 0,
+      "typecheck": true,
+      "production_build": true,
+      "exit": 0
+    },
+    "real_browser": {
+      "tests": 10,
+      "pass": 10,
+      "fail": 0,
+      "skip": 0,
+      "exit": 0,
+      "real_Fastify_socket_disk_SQLite": true,
+      "page_errors": 0,
+      "final_synthetic_counts": {
+        "events": 112,
+        "responses": 7,
+        "commands": 0,
+        "readStates": 2
+      }
+    },
+    "public_production_smoke": {
+      "distinct_scenarios": 1,
+      "exit": 0,
+      "repeated_after_test_font_mount": true,
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "page_errors": 0,
+      "horizontal_overflow": false,
+      "text_contrast_ratios": {
+        "body": 16.81083494521396,
+        "secondary": 7.504090999598994,
+        "primaryButton": 7.1288268377722925,
+        "error": 9.382627306488766,
+        "warning": 10.541523085992889
+      },
+      "final_Chinese_screenshot_visually_read": true,
+      "not_private_reviewer_production3": true
+    },
+    "isolation": "Fresh persistent private POSIX copy, empty HOME/env; Bubblewrap new network/PID/mount/user namespaces, internal loopback only, readonly public tools/system libraries. Host /mnt and private local home absent; fixed4318 isolated, no existing listener borrowed/stopped.",
+    "host_fallback": false,
+    "product_source_or_lock_or_test_entry_changed": false,
+    "default_QA_cache_paths": "Two test files have author-approved local QA defaults; unchanged, explicit env overrides used, no claim of all-machine portability.",
+    "tool_font_or_binary_published": false,
+    "source23_unchanged_after_tests": true,
+    "install_audit": "Web33/backend58 installed-package trees each reported0 known vulnerabilities; no runtime/binary/dependency uploads",
+    "environment_failures_preserved": [
+      "first backend npm install SSL cipher error, same-lock normal retry succeeded without TLS/auth/global changes",
+      "first browser launch Unix socket path too long under publisher TMPDIR, corrected environment to fresh namespace short/tmp, source unchanged",
+      "minimal font mount rendered CJK tofu; not used as Chinese visual pass. readonly installed-system-font mount then same production scenario passed with readable390 screenshot"
+    ]
+  },
+  "backend_baseline": {
+    "public_commit": "0a745c88fbba495f145263e5384af24215c394b2",
+    "server_files": 64,
+    "table_sha256": "f05bb7fb4369f07718e3bcca47d177cda34a413edd55802a9381bc15d832e967",
+    "source": "Read-only immutable Git blobs, not current active backend or installed native",
+    "publisher_this_round": "Independent install/build only before real HTTP testing, NOT rerunning historical148 tests",
+    "full_T013_review_inherited": false,
+    "T014_source_binding_imported": false,
+    "N1": "Backend22.23.2 only verified; installed better-sqlite3 standalone open SIGSEGV on official22.13 cause unknown, no connector builtin-SQLite verdict migration",
+    "rejected_core_review_restarted": false
+  },
+  "exclusions": [
+    "source-table-outside raw TASK/review/evidence/CASE/DB/token/session/screenshots",
+    "SOURCE.sha256 input itself",
+    "dist/node_modules/browser/fonts/native binaries/build caches",
+    "active server/pi-host/T014/source-binding increments",
+    "old55 failed Web candidate",
+    "Android/connector failure/verdict migration"
+  ],
+  "application_license": "Undecided, no application MIT/Apache license selected; original dependency licenses retained",
+  "files": [
+    {
+      "path": "web/.gitignore",
+      "source_sha256": "b26159ec520fa980e624c18da09474d8d5882877622d0baabc988c8204068849",
+      "export_sha256": "b26159ec520fa980e624c18da09474d8d5882877622d0baabc988c8204068849",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/DESIGN.md",
+      "source_sha256": "6f6547961c740f032f73fc973fedae4f20d79f3d2a24e81bea4b18c22e99c716",
+      "export_sha256": "6f6547961c740f032f73fc973fedae4f20d79f3d2a24e81bea4b18c22e99c716",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/PRODUCT.md",
+      "source_sha256": "33c67f5a92a56264ce89baa738a081b0491114709741ee0eefa25b3994f7f449",
+      "export_sha256": "33c67f5a92a56264ce89baa738a081b0491114709741ee0eefa25b3994f7f449",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/README.md",
+      "source_sha256": "8506820d5dbe29e4ebc686e8126adfad0da527ac3afe3d0ddeec37e618b16542",
+      "export_sha256": "f2ead57837568c877b7d8ec0c50638a3fe5dd7c5447085d057a43effd7923472",
+      "adaptation": "public banner/source/scope/testing clarification only"
+    },
+    {
+      "path": "web/index.html",
+      "source_sha256": "e75f479f59be434c6178063da7fecd420b500c8e356bb3938331888348baabbd",
+      "export_sha256": "e75f479f59be434c6178063da7fecd420b500c8e356bb3938331888348baabbd",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/package-lock.json",
+      "source_sha256": "e3c8470e61a866249a488252f19b155675787bc482b9e8555d68cd29b72230fe",
+      "export_sha256": "e3c8470e61a866249a488252f19b155675787bc482b9e8555d68cd29b72230fe",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/package.json",
+      "source_sha256": "452bb024d6261ccaa8868460587ee1b6f0814b0543434d58700c255e3e1b63cd",
+      "export_sha256": "452bb024d6261ccaa8868460587ee1b6f0814b0543434d58700c255e3e1b63cd",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/src/api.ts",
+      "source_sha256": "31435ab4bf0954798a1bfeee8fc654db83540dc197afadf0ba39f6d55b79958b",
+      "export_sha256": "31435ab4bf0954798a1bfeee8fc654db83540dc197afadf0ba39f6d55b79958b",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/src/client.ts",
+      "source_sha256": "f05c4c8629b5490370865ec7e1cd09222958f32d97e5df25ada7e22af1b6f93e",
+      "export_sha256": "f05c4c8629b5490370865ec7e1cd09222958f32d97e5df25ada7e22af1b6f93e",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/src/contracts.ts",
+      "source_sha256": "247f0b07342266f3707ad02d601b6eb9ad124225ef0a99195c53f324dc1091f4",
+      "export_sha256": "247f0b07342266f3707ad02d601b6eb9ad124225ef0a99195c53f324dc1091f4",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/src/ledger.ts",
+      "source_sha256": "e5e82be56d370808f74cc648c7b85a62f1dbcd5fc99b0d568f87d382a317518e",
+      "export_sha256": "e5e82be56d370808f74cc648c7b85a62f1dbcd5fc99b0d568f87d382a317518e",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/src/main.tsx",
+      "source_sha256": "6c12287a8a938cf7f39ba53d1baeef517287e2b8cef93f6b06310525be56cf68",
+      "export_sha256": "6c12287a8a938cf7f39ba53d1baeef517287e2b8cef93f6b06310525be56cf68",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/src/storage.ts",
+      "source_sha256": "bfdafc8015e982a6d6ce7c23984e310b1d74293b0a6bf6ff1d3ddcd57a1a3c2e",
+      "export_sha256": "bfdafc8015e982a6d6ce7c23984e310b1d74293b0a6bf6ff1d3ddcd57a1a3c2e",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/src/style.css",
+      "source_sha256": "5fc7646e569ea470780d82e19f6abd416817230de0c6d2a6545668ce4ce9523d",
+      "export_sha256": "5fc7646e569ea470780d82e19f6abd416817230de0c6d2a6545668ce4ce9523d",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/test/browser.ts",
+      "source_sha256": "e7052b76effd1460896d89bea484e69c14e2aaae8166c602c167e4345b1f21fc",
+      "export_sha256": "e7052b76effd1460896d89bea484e69c14e2aaae8166c602c167e4345b1f21fc",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/test/fixture-cli.mjs",
+      "source_sha256": "1b311c3980bf0e367b25299081f3c66a2574987575ade0a12d49c17a5aa58631",
+      "export_sha256": "1b311c3980bf0e367b25299081f3c66a2574987575ade0a12d49c17a5aa58631",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/test/fixture.mjs",
+      "source_sha256": "a8a8b26c6a071ac88c44cbc75c71ae36a55ef09d5cab61935879a9022b92a2eb",
+      "export_sha256": "a8a8b26c6a071ac88c44cbc75c71ae36a55ef09d5cab61935879a9022b92a2eb",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/test/ledger.test.ts",
+      "source_sha256": "6317e72b694f461bd5d06ceb2d1df527518dfad3666c2f9de128dd59d78c9505",
+      "export_sha256": "6317e72b694f461bd5d06ceb2d1df527518dfad3666c2f9de128dd59d78c9505",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/test/production-smoke.mjs",
+      "source_sha256": "bd5206bb72a1e4d874f8b733418d6a288debaf6902e2d1d472fbc4f0b447b4ec",
+      "export_sha256": "bd5206bb72a1e4d874f8b733418d6a288debaf6902e2d1d472fbc4f0b447b4ec",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/test/repair.test.ts",
+      "source_sha256": "111a847dee9c376fcce324de3c5fee611880949e45408f1e5799a12c3bb3fd42",
+      "export_sha256": "111a847dee9c376fcce324de3c5fee611880949e45408f1e5799a12c3bb3fd42",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/tools/export-baseline.mjs",
+      "source_sha256": "7fa7f304de95a9422202d72475a2396e84dea05b3860b7ee143ce66e39046ca3",
+      "export_sha256": "7fa7f304de95a9422202d72475a2396e84dea05b3860b7ee143ce66e39046ca3",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/tsconfig.json",
+      "source_sha256": "1975d1706fc29bb01dc6fc0507652095c91d9af0ddca6882a8611044cb391500",
+      "export_sha256": "1975d1706fc29bb01dc6fc0507652095c91d9af0ddca6882a8611044cb391500",
+      "adaptation": "byte-identical"
+    },
+    {
+      "path": "web/vite.config.ts",
+      "source_sha256": "545658533f53ccea140412fca37f22036804e847426fb73619e8391f31ad818c",
+      "export_sha256": "545658533f53ccea140412fca37f22036804e847426fb73619e8391f31ad818c",
+      "adaptation": "byte-identical"
+    }
+  ]
+}
