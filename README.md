@@ -23,4 +23,4 @@
 
 ## 版权与许可证
 
-主工程基于修改后的 AGPL-3.0-only 源码构建，详见 [LICENSE](<xiaoaixiaoai/LICENSE>)、[NOTICE.md](<xiaoaixiaoai/NOTICE.md>) 与 [UPSTREAM.md](<xiaoaixiaoai/UPSTREAM.md>)。本仓库不包含任何私人部署配置、服务器地址、账号凭据、签名密钥、真实聊天数据或构建产物。
+主工程基于修改后的 AGPL-3.0-only 源码构建，详见 [LICENSE](<xiaoaixiaoai/LICENSE>)、[NOTICE.md](<xiaoaixiaoai/NOTICE.md>) 与 [MODIFICATIONS.md](<xiaoaixiaoai/MODIFICATIONS.md>)。本仓库不包含任何私人部署配置、服务器地址、账号凭据、签名密钥、真实聊天数据或构建产物。

@@ -152,8 +152,7 @@ export class LiveCall {
     this.toPhone({ action: "relay.state", data: { state: "connecting" } });
     const url = new URL(cfg.url);
     url.searchParams.set("model", cfg.model);
-    // Keep the provider's existing opaque per-device identifier across source renames.
-    url.searchParams.set("user", `herdr-pocket-${deviceId}`);
+    url.searchParams.set("user", `xiaoaixiaoai-${deviceId}`);
     this.upstream = new WebSocket(url, {
       headers: { Authorization: `Bearer ${cfg.apiKey}` },
       // PCM hardly compresses, and every frame would wait for zlib on the thread pool behind the hosts' screens.

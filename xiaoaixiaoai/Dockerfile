@@ -9,7 +9,7 @@ ARG NODE_IMAGE=node:24-alpine
 # copy them into every target platform, so multi-arch builds need no emulation.
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS build
 WORKDIR /app
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml LICENSE NOTICE.md UPSTREAM.md ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml LICENSE NOTICE.md ./
 # The pnpm version pinned in package.json ("packageManager"), unless the base image has pnpm.
 RUN command -v pnpm >/dev/null 2>&1 || npm install -g --no-fund --no-audit "$(node -p 'require("./package.json").packageManager')"
 COPY packages packages

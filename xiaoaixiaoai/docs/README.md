@@ -5,7 +5,7 @@
 - [小爱小爱外观](../apps/mobile/docs/starlight-theme.md) — 星海蓝粉、图标和手写字体。
 - [部署与配对](deploy/README.md) · [新装模板](../deploy/) · [模型与语音配置](config.md)。
 - [项目会话（DSH / Codex）](runtime-sessions.md) — 授权、同会话发送、验证边界。
-- [版权与许可](../NOTICE.md) · [上游参考（非产品使用文档）](../reference/upstream/ARCHIVE.md)。
+- [版权与许可](../NOTICE.md)。
 
 ## Contract ownership
 

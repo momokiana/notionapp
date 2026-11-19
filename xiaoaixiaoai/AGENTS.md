@@ -12,7 +12,7 @@ The repository contains the shared wire contract, the relay, the computer host d
 - `apps/hostd`: per-computer daemon. It bridges `hc`, the Herdr TUI socket, and Uniflo, and serves RPC/stream subscriptions.
 - `apps/mobile`: Expo SDK 58 Android app. It is intentionally excluded from the root pnpm workspace; run its checks from that directory.
 - `deploy`: systemd, Caddy, launchd, and environment examples. Never put real tokens in these files.
-- `apps/mobile/docs` and `apps/mobile/assets/brand`: current design and artwork; `reference/upstream` is historical only.
+- `apps/mobile/docs` and `apps/mobile/assets/brand`: current design and artwork.
 
 ## Commands
 

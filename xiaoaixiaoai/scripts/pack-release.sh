@@ -26,7 +26,7 @@ copy() {
     --exclude='*.db' --exclude='*.db-*' --exclude='.env' --exclude='.DS_Store' .) | (cd "$stage/$1" && tar -xf -)
 }
 
-for f in package.json pnpm-lock.yaml pnpm-workspace.yaml LICENSE NOTICE.md README.md UPSTREAM.md UPSTREAM-FILES.json MODIFICATIONS.md; do
+for f in package.json pnpm-lock.yaml pnpm-workspace.yaml LICENSE NOTICE.md README.md MODIFICATIONS.md; do
   [ -e "$root/$f" ] && cp "$root/$f" "$stage/"
 done
 for d in "$root"/packages/*/; do copy "packages/$(basename "$d")"; done

@@ -28,4 +28,4 @@ node --test scripts/test/*.test.mjs
 
 已安装的安卓身份 `dev.notifier.xiaoaixiaoai` 和配对 scheme `xiaoaixiaoai` 不随源码改名而改变。生成新部署不等于迁移已有实例，请先阅读[兼容与部署边界](<docs/deploy/README.md>)。
 
-**修改与许可（2026-11-18）：** 本项目包含已修改的 AGPL-3.0-only 源码。[完整许可证](<LICENSE>)、[原有版权和附加许可](<NOTICE.md>)及[源码来源](<UPSTREAM.md>)随代码保留；参考资料不作为本产品的安装指引。
+**修改与许可：** 本项目包含已修改的 AGPL-3.0-only 源码，详见[完整许可证](<LICENSE>)、[版权与许可说明](<NOTICE.md>)及[修改记录](<MODIFICATIONS.md>)。
