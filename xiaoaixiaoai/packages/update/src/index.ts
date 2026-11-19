@@ -56,8 +56,14 @@ export class ReleaseUpdatesDisabledError extends Error {
   }
 }
 
+/** Whether remote updates from the owned repository are active (tests/ops can disable via env). */
+export function remoteUpdatesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return RELEASE_UPDATES_ENABLED && typeof DEFAULT_REPO === "string" && DEFAULT_REPO.length > 0 &&
+    !/^(1|true|on|yes)$/i.test(env.XIAOAIXIAOAI_DISABLE_REMOTE_UPDATES ?? "");
+}
+
 function requireReleaseSource(): void {
-  if (!RELEASE_UPDATES_ENABLED || !DEFAULT_REPO) throw new ReleaseUpdatesDisabledError();
+  if (!remoteUpdatesEnabled()) throw new ReleaseUpdatesDisabledError();
 }
 
 /** Root of this copy: the folder with the workspace package.json. */
@@ -146,7 +152,7 @@ export function mirrorsFirst(): boolean {
 
 /** No network sources while disabled; otherwise a GitHub file may also use reviewed mirrors. */
 export function sourcesFor(url: string): string[] {
-  if (!RELEASE_UPDATES_ENABLED) return [];
+  if (!remoteUpdatesEnabled()) return [];
   return url.startsWith("https://github.com/") ? releaseSources(url, mirrorsFirst()) : [url];
 }
 
@@ -229,7 +235,7 @@ export async function checkForUpdate(current = VERSION): Promise<Check> {
  * XIAOAIXIAOAI_UPDATE_CHECK=0 turns it off. Failures (offline, rate limit) stay quiet.
  */
 export function watchForUpdates(log: (msg: string) => void, command: string, timing: { firstMs?: number; everyMs?: number } = {}): () => void {
-  if (!RELEASE_UPDATES_ENABLED || /^(0|false|off|no)$/i.test(process.env.XIAOAIXIAOAI_UPDATE_CHECK ?? "")) return () => {};
+  if (!remoteUpdatesEnabled() || /^(0|false|off|no)$/i.test(process.env.XIAOAIXIAOAI_UPDATE_CHECK ?? "")) return () => {};
   const check = () =>
     checkForUpdate().then(
       (c) => {
@@ -287,9 +293,14 @@ export interface UpdateResult {
 }
 
 export async function update(o: UpdateOptions): Promise<UpdateResult> {
-  // Fail before locating/writing an install. Only an explicit local file and rollback are
-  // available without an owned release source; --force/legacy env cannot bypass this.
-  if (!o.from || /^https?:\/\//i.test(o.from)) requireReleaseSource();
+  // Fail before locating/writing an install. Only an explicit local file, the owned GitHub
+  // download path, and rollback are usable; --force/legacy env cannot bypass this.
+  if (!o.from || /^https?:\/\//i.test(o.from)) {
+    requireReleaseSource();
+    if (o.from && !o.from.startsWith(`https://github.com/${repo()}/releases/download/`)) {
+      throw new ReleaseUpdatesDisabledError();
+    }
+  }
   const log = o.log ?? ((m: string) => console.log(m));
   const { root } = o.layout ?? findLayout();
   const current = readVersion(join(root, "current"));
@@ -449,10 +460,20 @@ export interface CommandInfo {
   bin: string;
 }
 
-export const UPDATE_HELP = `  version [--check]   Print the version; remote checks are disabled until an owned release source is configured.
+export function updateHelpText(env: NodeJS.ProcessEnv = process.env): string {
+  if (remoteUpdatesEnabled(env)) {
+    return `  version [--check]   Print the version (--check queries the owned release source).
+  update [--check] [--rollback] [--from <local-file>] [--force] [--no-restart]
+        Update from the owned release source or an explicit local bundle (--from);
+        --rollback switches back to the copy before the last update.`;
+  }
+  return `  version [--check]   Print the version; remote checks are disabled until an owned release source is configured.
   update [--check] [--rollback] [--from <local-file>] [--force] [--no-restart]
         Remote updates/downloads are disabled. --from installs an explicit local bundle;
         --rollback switches back to the copy before the last update.`;
+}
+
+export const UPDATE_HELP = updateHelpText();
 
 export async function versionCommand(argv: string[], info: CommandInfo): Promise<void> {
   const { values } = parseArgs({ args: argv, options: { check: { type: "boolean", default: false } } });

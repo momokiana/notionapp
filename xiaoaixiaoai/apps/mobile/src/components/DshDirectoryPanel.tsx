@@ -13,9 +13,10 @@ import { call, RelayError } from "../lib/relay";
 import { useLive, useSettings } from "../lib/store";
 import { fonts, radius, space } from "../theme/tokens";
 import { usePalette } from "../theme/theme";
+import { RuntimeSessionDetailCard } from "./RuntimeSessionDetailCard";
 import { Card, PageBackground, PageTitle } from "./ui";
 
-const STATE: Record<RuntimeSessionState, string> = { running: "工作中", idle: "空闲", inactive: "未加载", attention: "需检查", unknown: "状态未知" };
+const STATE: Record<RuntimeSessionState, string> = { running: "工作中", idle: "空闲", inactive: "未加载", attention: "等待回答", unknown: "状态未知" };
 const PROBLEM = {
   unsupported: "这台电脑或中继不支持 DSH 目录。",
   denied: "当前手机无权查看这台电脑的 DSH 目录。",
@@ -194,7 +195,7 @@ function HostDirectory({ host, intent, focusSessionId, onBack, onLegacy, server,
       <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: space.lg, paddingTop: insets.top + space.md, paddingBottom: insets.bottom + space.xxl, gap: space.md }}>
         <View style={ACTIONS}>
           <Button icon="arrow-left" contentStyle={ACTION} onPress={() => leave(onBack)}>返回设备</Button>
-          {onLegacy ? <Button contentStyle={ACTION} disabled={!connected || sending} onPress={() => { if (connectedNow()) leave(onLegacy); }}>旧版 / Codex 会话</Button> : null}
+          {onLegacy ? <Button contentStyle={ACTION} disabled={!connected || sending} onPress={() => { if (connectedNow()) leave(onLegacy); }}>全部运行时会话</Button> : null}
         </View>
         <PageTitle sub={demo ? "演示数据 · 未连接真实 DSH" : ready ? liveHost?.name : undefined}>DSH 会话目录</PageTitle>
         {foreground && paired && (notice || sending) ? (
@@ -252,13 +253,14 @@ function DirectoryContent({ hostId, intent, focusSessionId, tab, setTab, follows
   const [chooseProject, setChooseProject] = useState(false);
   const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
   const [revision, setRevision] = useState(0);
+  const [openEntry, setOpenEntry] = useState<DshDirectoryEntry>();
   const [target, setTarget] = useState<Target>();
   const [focus, setFocus] = useState(focusSessionId);
   const [suggestedDraft, setSuggestedDraft] = useState(intent?.action === "send" ? intent.draft : undefined);
   const [editorDraft, setEditorDraft] = useState<string>();
   const after = cursors.at(-1);
   const ids = focus ?? (tab === "follows" ? follows.slice(0, DSH_DIRECTORY_PAGE_SIZE).map((item) => item.sessionId).join(",") : "");
-  const view = target ? undefined : focus || tab === "follows" ? "exact" : chooseProject ? "projects" : "sessions";
+  const view = openEntry || target ? undefined : focus || tab === "follows" ? "exact" : chooseProject ? "projects" : "sessions";
   const request = useMemo<DshDirectoryRequest | undefined>(() => {
     if (view === "exact") return ids ? { view, sessionIds: ids.split(",") } : undefined;
     const page = after ? { after } : {};
@@ -288,6 +290,13 @@ function DirectoryContent({ hostId, intent, focusSessionId, tab, setTab, follows
     Keyboard.dismiss();
     setSearch(title); setBadSearch(false); refresh();
   }
+  function openSession(entry: DshDirectoryEntry) {
+    if (!current() || !isRuntimeId(entry.project.id) || !isRuntimeId(entry.session.id)) return;
+    setEditorDraft(suggestedDraft);
+    setSuggestedDraft(undefined);
+    setOpenEntry(entry);
+    scrollTop();
+  }
   function chooseTarget(entry: DshDirectoryEntry) {
     if (!current() || sending || entry.archived || entry.session.canSend !== true || !isRuntimeId(entry.project.id) || !isRuntimeId(entry.session.id)) return;
     setEditorDraft(suggestedDraft);
@@ -300,17 +309,34 @@ function DirectoryContent({ hostId, intent, focusSessionId, tab, setTab, follows
     firstPage(); setRevision((n) => n + 1);
   }
 
+  if (openEntry) {
+    return (
+      <RuntimeSessionDetailCard
+        hostId={hostId}
+        runtime={openEntry.runtime ?? "dsh"}
+        projectId={openEntry.project.id}
+        projectTitle={openEntry.project.title}
+        sessionId={openEntry.session.id}
+        sessionTitle={openEntry.session.title}
+        canSendHint={!openEntry.archived && openEntry.session.canSend === true}
+        initialDraft={editorDraft}
+        current={current}
+        onNotice={setNotice}
+        onBack={() => { setOpenEntry(undefined); refresh(); }}
+      />
+    );
+  }
   if (target) return <Composer {...{ hostId, target, current, dispatch, setNotice }} initialDraft={editorDraft} onClose={closeEditor} />;
   if (focus) return (
     <>
       <Button mode="outlined" contentStyle={ACTION} onPress={() => { setFocus(undefined); setTab("directory"); }}>查看全部会话</Button>
-      <Text style={{ color: p.muted }}>通知对应的会话。若需工具审批，请在电脑上的原 DSH 会话中决定。</Text>
+      <Text style={{ color: p.muted }}>通知对应的会话。点“查看对话”可查看最近消息并直接回答待选问题。</Text>
       <Button icon="refresh" contentStyle={ACTION} disabled={waiting} onPress={refresh}>刷新</Button>
       {waiting ? <ActivityIndicator accessibilityLabel="正在读取通知对应的会话" /> : null}
       {error ? <Text accessibilityLiveRegion="polite" style={{ color: p.error }}>{PROBLEM[error]}</Text> : null}
       {data && !exact.has(focus) ? <Text style={{ color: p.muted }}>原会话已不可见或不在这台电脑上。</Text> : null}
       {entries.filter((entry) => entry.session.id === focus).map((entry) => (
-        <SessionRow key={entry.session.id} {...{ entry, sending, changeFollow, chooseTarget }} follow={saved.get(entry.session.id)} />
+        <SessionRow key={entry.session.id} {...{ entry, sending, changeFollow, chooseTarget, openSession }} follow={saved.get(entry.session.id)} />
       ))}
     </>
   );
@@ -354,13 +380,13 @@ function DirectoryContent({ hostId, intent, focusSessionId, tab, setTab, follows
       )) : <Text style={{ color: p.muted }}>没有可见项目。</Text>) : null}
       {data?.view === "sessions" && !entries.length ? <Text style={{ color: p.muted }}>{search ? "没有匹配的可见会话。" : "没有可见会话。"}</Text> : null}
       {data?.view === "sessions" ? entries.map((entry) => (
-        <SessionRow key={entry.session.id} {...{ entry, sending, changeFollow, chooseTarget }} follow={saved.get(entry.session.id)} />
+        <SessionRow key={entry.session.id} {...{ entry, sending, changeFollow, chooseTarget, openSession }} follow={saved.get(entry.session.id)} />
       )) : null}
       {followTab && !waiting ? (data?.view === "exact" ? (
         <>
           {follows.map((follow) => {
             const entry = exact.get(follow.sessionId);
-            return entry ? <SessionRow key={follow.sessionId} {...{ entry, follow, sending, changeFollow, chooseTarget }} /> : null;
+            return entry ? <SessionRow key={follow.sessionId} {...{ entry, follow, sending, changeFollow, chooseTarget, openSession }} /> : null;
           })}
           {follows.some((item) => !exact.has(item.sessionId)) ? <UnavailableFollows items={follows.filter((item) => !exact.has(item.sessionId))} onRemove={(id) => changeFollow(id, "unfollow")} /> : null}
         </>
@@ -375,12 +401,14 @@ function DirectoryContent({ hostId, intent, focusSessionId, tab, setTab, follows
   );
 }
 
-function SessionRow({ entry, follow, sending, changeFollow, chooseTarget }: {
-  entry: DshDirectoryEntry; follow?: DshFollow; sending: boolean; changeFollow: (id: string, mode: FollowAction) => void; chooseTarget: (entry: DshDirectoryEntry) => void;
+function SessionRow({ entry, follow, sending, changeFollow, chooseTarget, openSession }: {
+  entry: DshDirectoryEntry; follow?: DshFollow; sending: boolean; changeFollow: (id: string, mode: FollowAction) => void;
+  chooseTarget: (entry: DshDirectoryEntry) => void; openSession: (entry: DshDirectoryEntry) => void;
 }) {
   const p = usePalette();
   const { session, project, archived } = entry;
   const writable = !archived && session.canSend === true;
+  const attention = session.state === "attention";
   const followLabel = follow ? "取消关注" : "关注";
   const remindLabel = follow?.remind ? "关闭空闲提醒" : "开启空闲提醒";
   return (
@@ -388,6 +416,14 @@ function SessionRow({ entry, follow, sending, changeFollow, chooseTarget }: {
       <Text style={{ color: p.ink, fontFamily: fonts.bodyBold }}>{session.title}</Text>
       <Text style={{ color: p.muted }}>{project.title} · {archived ? "已归档 · 只读" : `${STATE[session.state] ?? "状态未知"}${writable ? "" : " · 只读"}`} · {session.id.slice(-8)}</Text>
       <View style={ACTIONS}>
+        <Button
+          contentStyle={ACTION}
+          mode={attention ? "contained-tonal" : "outlined"}
+          accessibilityLabel={`查看对话：${project.title}／${session.title}`}
+          onPress={() => openSession(entry)}
+        >
+          {attention ? "查看对话 · 回答问题" : "查看对话"}
+        </Button>
         <Button contentStyle={ACTION} accessibilityLabel={`${followLabel}：${session.title}`} onPress={() => changeFollow(session.id, follow ? "unfollow" : "follow")}>{followLabel}</Button>
         {follow && (!archived || follow.remind) ? <Button contentStyle={ACTION} accessibilityLabel={`${remindLabel}：${session.title}`} onPress={() => changeFollow(session.id, follow.remind ? "mute" : "remind")}>{remindLabel}</Button> : null}
         {writable ? <Button contentStyle={ACTION} disabled={sending} accessibilityLabel={`选择发送目标：${project.title}／${session.title}`} onPress={() => chooseTarget(entry)}>选为发送目标</Button> : null}

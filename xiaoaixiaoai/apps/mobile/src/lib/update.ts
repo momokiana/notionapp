@@ -43,8 +43,14 @@ interface UpdateState {
 
 export const useUpdate = create<UpdateState>()(() => ({ phase: "idle", progress: 0, path: null, note: null }));
 
-const CHECK_EVERY_MS = 12 * 3600_000;
+const CHECK_EVERY_MS = 4 * 3600_000;
 const set = (patch: Partial<UpdateState>) => useUpdate.setState(patch);
+
+function pairedRelayReleaseUrl(fileName: string): string | null {
+  const srv = useSettings.getState().server?.trim().replace(/\/+$/, "");
+  if (!srv || isMockServer(srv) || !/^https?:\/\//i.test(srv)) return null;
+  return `${srv}/v1/releases/${fileName}`;
+}
 
 const releasesEnabled = () => updatesConfigured({
   enabled: RELEASE_UPDATES_ENABLED, repository: RELEASE_REPO, page: RELEASES_PAGE,
@@ -124,12 +130,16 @@ async function fetchFromSums(url: string): Promise<Latest> {
   };
 }
 
-/** Sources in order until one answers; mirrors first in mainland China. */
+/** Sources in order until one answers; paired relay first, mirrors/GitHub after. */
 async function fetchLatest(): Promise<Latest> {
   if (!releasesEnabled()) return { kind: "none" };
   const china = inMainlandChina();
   const sums = releaseSources(LATEST_SUMS_URL, china).map((u) => () => fetchFromSums(u));
-  const tries = china ? [...sums.slice(0, -1), fetchFromApi, sums[sums.length - 1]!] : [fetchFromApi, ...sums];
+  const relaySumsUrl = pairedRelayReleaseUrl("SHA256SUMS");
+  const tries = [
+    ...(relaySumsUrl ? [() => fetchFromSums(relaySumsUrl)] : []),
+    ...(china ? [...sums.slice(0, -1), fetchFromApi, sums[sums.length - 1]!] : [fetchFromApi, ...sums]),
+  ];
   let last: Latest = { kind: "unknown", why: "offline" };
   for (const attempt of tries) {
     last = await attempt();
@@ -198,7 +208,7 @@ export async function checkForUpdate(manual = false): Promise<void> {
   if (latest.kind === "unknown") {
     applog("info", "update", `update check failed: ${latest.why}`);
     // Try again on the next start rather than in 12 hours.
-    syncPhase(manual ? (latest.why === "limited" ? "GitHub 暂时不让查了，过一会儿再试" : "暂时连不上 GitHub，过会儿再试") : null);
+    syncPhase(manual ? (latest.why === "limited" ? "请求太频繁了，过一会儿再试" : "暂时连不上更新服务器，过会儿再试") : null);
     return;
   }
   const release = latest.kind === "release" ? latest.release : null;
@@ -240,7 +250,9 @@ export async function downloadUpdate(): Promise<void> {
   try {
     let path: string | null = null;
     let failed: unknown;
-    for (const url of releaseSources(r.url, inMainlandChina())) {
+    const relayApk = pairedRelayReleaseUrl(r.fileName);
+    const urls = [...new Set([...(relayApk ? [relayApk] : []), ...releaseSources(r.url, inMainlandChina())])];
+    for (const url of urls) {
       try {
         path = await native.downloadUpdate(url, r.fileName, r.size, r.sha256 ?? "");
         break;

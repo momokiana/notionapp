@@ -10,6 +10,7 @@ import {
   APP_DISPLAY_NAME,
   APP_PACKAGE_ID,
   APP_SCHEME,
+  RELEASES_PAGE,
   RELEASE_UPDATES_ENABLED,
   apkAssetName,
   compareVersions,
@@ -146,15 +147,18 @@ test("landing pages open the app, show the code and look nothing up", async () =
     assert.match(r.headers.get("content-security-policy")!, /default-src 'none'/);
     assert.ok(r.html.includes(real.code));
     const app = pairAppLink(PUBLIC, real.code).replace(`${APP_SCHEME}://`, "intent://");
-    assert.ok(r.html.includes(`${app.replace(/&/g, "&#38;")}#Intent;scheme=${APP_SCHEME};package=${APP_PACKAGE_ID};end`), "opens only this app through an intent");
+    assert.ok(
+      r.html.includes(`${app.replace(/&/g, "&#38;")}#Intent;scheme=${APP_SCHEME};package=${APP_PACKAGE_ID};S.browser_fallback_url=${encodeURIComponent(RELEASES_PAGE!)};end`),
+      "opens only this app through an intent",
+    );
     assert.ok(r.html.includes(APP_DISPLAY_NAME));
-    assert.equal(RELEASE_UPDATES_ENABLED, false);
-    assert.ok(r.html.includes("下载已停用"));
-    assert.ok(!r.html.includes("github.com"), "no upstream download page");
-    assert.ok(!r.html.includes("browser_fallback_url"), "no download fallback until an owned source exists");
+    assert.equal(RELEASE_UPDATES_ENABLED, true);
+    assert.ok(r.html.includes("https://github.com/momokiana/notionapp/releases/latest"), "links only to owned release page");
+    assert.ok(r.html.includes("browser_fallback_url="), "provides owned fallback download URL");
+    assert.ok(r.html.includes('class="ghost"'), "shows download link for owned repo");
+    assert.ok(!/crosery/i.test(r.html), "never references upstream repo");
     assert.ok(!r.html.includes("herdrpocket"));
     assert.ok(!r.html.includes("Herdr Pocket"));
-    assert.ok(!r.html.includes('class="ghost"'), "no apparently usable download link");
 
     // A code that does not exist gets the same page: nothing to learn from it.
     const fake = await page("/p/MEOW-0000");
@@ -174,8 +178,8 @@ test("landing pages open the app, show the code and look nothing up", async () =
     const j = await page("/j/abcdEFGH1234_-xy");
     assert.equal(j.status, 200);
     assert.ok(j.html.includes(joinAppLink(PUBLIC, "abcdEFGH1234_-xy").replace(`${APP_SCHEME}://`, "intent://").replace(/&/g, "&#38;")));
-    assert.ok(j.html.includes("下载已停用"));
-    assert.ok(!j.html.includes("github.com"));
+    assert.ok(j.html.includes("https://github.com/momokiana/notionapp/releases/latest"));
+    assert.ok(!/crosery/i.test(j.html));
     assert.equal((await page("/j/short")).status, 404);
   } finally {
     await relay.close();

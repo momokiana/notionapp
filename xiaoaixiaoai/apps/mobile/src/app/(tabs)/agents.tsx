@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, RefreshControl, SectionList, View } from "react-native";
-import { Searchbar, Text } from "react-native-paper";
+import { Button, Searchbar, Text } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useNavigation, router } from "expo-router";
 import type { Agent, AgentStatus } from "@xiaoaixiaoai/protocol";
 import { AgentRow, ConnectionBanner, SpaceBadge } from "../../components/agents";
-import { EmptyState, IconTile, PageBackground } from "../../components/ui";
+import { Card, EmptyState, IconTile, PageBackground } from "../../components/ui";
 import { LiveMascot } from "../../components/LiveMascot";
 import { CuteIcon } from "../../components/icons";
 import { Sidebar, useSidebar } from "../../components/Sidebar";
@@ -179,6 +179,7 @@ export default function AgentsHub() {
   }, []);
 
   const multiHost = hosts.length > 1 && !hostFilter;
+  const sessionHosts = useMemo(() => hosts.filter((h) => h.online && h.sources?.includes("runtime-sessions")), [hosts]);
   const allDone = counts.blocked === 0 && counts.working === 0 && counts.done > 0;
   const headline = counts.blocked ? `有 ${counts.blocked} 个 agent 在等你` : counts.working ? `${counts.working} 个 agent 正在忙` : allDone ? "大家都忙完啦" : "大家都歇着呢";
   const hostName = hostFilter ? hosts.find((h) => h.id === hostFilter)?.name ?? "这台电脑" : null;
@@ -200,6 +201,19 @@ export default function AgentsHub() {
       </View>
 
       <StatRow counts={counts} active={filter} onPick={setFilter} />
+
+      {sessionHosts.length > 0 ? (
+        <Card flat style={{ padding: space.md, gap: space.xs }}>
+          <Text style={{ color: p.ink, fontFamily: fonts.bodyBold, fontSize: 13.5 }}>项目会话 · DSH / Codex / Antigravity</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
+            {sessionHosts.map((h) => (
+              <Button key={h.id} mode="contained-tonal" compact icon="folder-open-outline" onPress={() => router.navigate({ pathname: "/devices", params: { openHost: h.id } })}>
+                {h.name}
+              </Button>
+            ))}
+          </View>
+        </Card>
+      ) : null}
 
       {hostName || activeSpace ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}>

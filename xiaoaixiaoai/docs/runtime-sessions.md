@@ -66,3 +66,35 @@ xiaoaixiaoai run --runtime-only --read-only --runtime-config /absolute/private/r
 - 固定版本 DSH 的 Cordis Loader 已在隔离测试中加载/卸载此插件。使用临时 socket 与合成会话验证权限和调用，不启动真实会话、不发真实测试消息。
 - 测试环境使用实际小爱电脑端及本机中转，验证同一身份投递、请求去重、任务事件归属、通知补送及撤销授权。部署状态与隔离测试分开记录。
 - Codex 使用受鉴权的本机 App Server 夹具验证协议；用 Windows 原生 Node 解包电脑端预览，15 项连接器、范围和去重测试通过。真实 Windows Codex 桌面的可接管性未验证。没有在真实电脑会话发送测试任务，也未安装到真实手机。
+
+## 会话消息查看与手机端回答（0.2.0）
+
+- 通过新增的 `runtimeSessions.detail` RPC，手机端点击任意可见的 DSH / Codex / Antigravity 会话的「查看对话」，可按需拉取最近一页脱敏消息记录（默认 60 条，仅返回正文、工具调用名与时间，不传环境变量或系统提示前缀），无需在电脑前也能了解会话进展。
+- 对于 DSH 中触发 `ask_user_question` 的会话，支持通过 `runtimeSessions.answer` 直接在手机端提交单选、多选及自定义补充回答：
+  - **前台等待中（`open`）**：小爱插件监听 `user-questions/request`；若桌面 UI 可用，手机与电脑任一端先提交即生效，另一端自动结束；若当前无桌面等待器（`NO_PROVIDER`），直接由手机端回答接续。
+  - **超时挂起（`continued`）**：若问题已超时转为后台挂起，只要该会话处于可发送授权且 `userQuestions.answer` 可用，手机端提交答案后会从挂起点续跑；历史记录或只读会话中的问题仅显示为 `readonly` 预览。
+
+## Windows 本机 Codex 与 Antigravity 接入（0.2.0）
+
+在 Windows 原生环境中以独立电脑端（如 `"Windows 桌面"`）配合 `--runtime-only --runtime-config <path>` 运行时，可通过以下私有配置同时接入本机 Codex 与 Antigravity（文件权限仅当前用户可读）：
+
+```json
+{
+  "viewerId": "approved-phone-id",
+  "codexLocal": {
+    "codexHome": "C:\\Users\\<User>\\.codex",
+    "enableSend": true
+  },
+  "antigravity": {
+    "brainDir": "C:\\Users\\<User>\\.gemini\\antigravity\\brain"
+  }
+}
+```
+
+- **Codex 本机接入（`codexLocal`）**：以只读模式读取 `state_5.sqlite` `threads` 索引，并通过尾部有限字节窗口（不整文件读入大日志）解析近期 rollout 对话消息与运行状态；仅当 `enableSend: true`、会话未归档、非运行态且原工作目录存在时，才允许从手机经本机 `codex.exe app-server --listen stdio://` 发起一轮续跑（支持经 `RuntimeTaskEvent` 发送进展/需确认/结束通知；与旧版显式 `codex` WS 配置互斥）。
+- **Antigravity 只读接入（`antigravity`）**：扫描 `brain/*/transcript.jsonl` 头部项目信息和尾部步骤窗口，提取用户请求、工具调用、助手回复及未解决的 `ask_question` 问题选项（状态标记为 `attention`）。Antigravity 会话始终强制为只读（`canSend: false`），禁止手机端注入消息或代答。
+
+## 中转加速检查更新（0.2.0）
+
+- 手机端每隔 4 小时或在「设置 → 检查更新」手动检查最新版本（指向 `momokiana/notionapp` 发布产物）：优先请求已配对中转站的 `/v1/releases/SHA256SUMS` 与 `/v1/releases/<apk>`，不可用时回退到 GitHub Releases / 镜像站，并在下载后强制校验 APK 的 SHA-256 摘要再交由系统安装器安装。
+- 说明：`0.1.9` 版本中发布仓库默认关闭，因此需要手动安装一次 `0.2.0` APK 后，后续版本才可直接在应用内自动检测并一键下载更新。

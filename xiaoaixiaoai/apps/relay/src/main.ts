@@ -29,6 +29,7 @@ setTimeZone(models.timeZone);
 
 const relay = new Relay({
   dbPath,
+  releasesDir: env.POCKET_RELEASES_DIR ? resolve(env.POCKET_RELEASES_DIR) : resolve(dirname(dbPath), "releases"),
   adminToken: env.POCKET_ADMIN_TOKEN,
   publicUrl: env.POCKET_PUBLIC_URL,
   trustProxy: env.POCKET_TRUST_PROXY === "1",

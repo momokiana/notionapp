@@ -31,7 +31,7 @@ function object(value: unknown): Record<string, unknown> | undefined {
 /** Only the exact dispatch target; the opaque input is not part of a task notice. */
 export function runtimeTaskDispatch(params: unknown): RuntimeTaskDispatch | undefined {
   const p = object(params);
-  if (p?.runtime !== "dsh" || !isRuntimeId(p.projectId) || !isRuntimeId(p.sessionId) || !isRuntimeRequestId(p.requestId)) return;
+  if ((p?.runtime !== "dsh" && p?.runtime !== "codex") || !isRuntimeId(p.projectId) || !isRuntimeId(p.sessionId) || !isRuntimeRequestId(p.requestId)) return;
   return { projectId: p.projectId, sessionId: p.sessionId, requestId: p.requestId.toLowerCase() };
 }
 
@@ -53,10 +53,10 @@ export function parseRuntimeTaskFrame(value: unknown): RuntimeTaskEvent | undefi
 }
 
 const COPY: Record<RuntimeTaskEvent["kind"], Pick<Notice, "kind" | "title" | "body" | "verdict">> = {
-  progress: { kind: "progress", title: "DSH · 已观察到执行步骤", body: "在这轮 DSH 请求中观察到一个执行步骤。" },
-  attention: { kind: "blocked", verdict: "decide", title: "DSH · 需要你确认", body: "这轮 DSH 请求需要你查看并决定下一步。" },
-  completed: { kind: "done", title: "DSH · 此轮已结束", body: "此轮已结束。请在原会话查看结果。" },
-  stopped: { kind: "done", verdict: "stopped", title: "DSH · 此轮已停止", body: "此轮已停止，未确认结果。" },
+  progress: { kind: "progress", title: "项目会话 · 已观察到执行步骤", body: "在这轮请求中观察到一个执行步骤。" },
+  attention: { kind: "blocked", verdict: "decide", title: "项目会话 · 需要你确认", body: "这轮请求需要你查看并决定下一步。" },
+  completed: { kind: "done", title: "项目会话 · 此轮已结束", body: "此轮已结束。请在会话详情查看结果。" },
+  stopped: { kind: "done", verdict: "stopped", title: "项目会话 · 此轮已停止", body: "此轮已停止，未确认结果。" },
 };
 
 export function runtimeTaskNotice(id: string, kind: RuntimeTaskEvent["kind"], ts: number, runtimeTask: RuntimeTaskNoticeTarget): Notice {

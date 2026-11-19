@@ -107,3 +107,62 @@ test("configuration is opt-in and rejects public addresses, missing scope and Un
     assert.throws(() => loadRuntimeSessions(p), has("bad_request"));
   }
 });
+
+test("RuntimeSessions routes detail, idempotent answer, Antigravity read-only fences, and multi-runtime adapters", async (t) => {
+  const dir = folder(); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const ledger = join(dir, "dispatch");
+  let answerCalls = 0;
+  const dshAdapter: RuntimeAdapter = {
+    list: async () => demo,
+    send: async (arg) => receipt(arg.requestId),
+    detail: async (projectId, sessionId) => ({
+      runtime: "dsh",
+      project: { id: projectId, title: "同工程" },
+      session: { id: sessionId, title: "需要决策", state: "attention", canSend: true },
+      messages: [{ id: "m1", role: "assistant", text: "请选择" }],
+      pendingQuestions: [{ callId: "q-call-1", state: "open", questions: [{ id: "q1", question: "继续？", options: [{ label: "是" }], multiSelect: false }] }],
+    }),
+    answer: async (arg) => {
+      answerCalls++;
+      return receipt(arg.requestId);
+    },
+  };
+  const agAdapter: RuntimeAdapter = {
+    list: async () => [{ runtime: "antigravity", id: "ag-p1", title: "AG 工程", sessions: [{ id: "ag-s1", title: "AG 只读", state: "attention", canSend: true }] }],
+    browse: async () => ({
+      runtime: "antigravity",
+      view: "sessions",
+      scope: "profile",
+      entries: [{ runtime: "antigravity", project: { runtime: "antigravity", id: "ag-p1", title: "AG 工程" }, session: { id: "ag-s1", title: "AG 只读", state: "attention", canSend: true }, archived: false }],
+    }),
+    detail: async () => ({
+      runtime: "antigravity",
+      project: { id: "ag-p1", title: "AG 工程" },
+      session: { id: "ag-s1", title: "AG 只读", state: "attention", canSend: true },
+      messages: [{ id: "a1", role: "user", text: "hi" }],
+      pendingQuestions: [{ callId: "ag-call-1", state: "open", questions: [{ id: "q1", question: "选项" }] }],
+    }),
+    send: async () => assert.fail("antigravity send must be blocked before adapter"),
+    answer: async () => assert.fail("antigravity answer must be blocked before adapter"),
+  };
+
+  const rs = new RuntimeSessions("viewer", { dsh: dshAdapter, antigravity: agAdapter }, ledger);
+  const dshDetail = await rs.detail({ runtime: "dsh", projectId: "dsh-project", sessionId: "session-one", limit: 20 });
+  assert.equal(dshDetail.pendingQuestions.length, 1);
+
+  const reqId = randomUUID();
+  const ansPayload = { runtime: "dsh", projectId: "dsh-project", sessionId: "session-one", requestId: reqId, callId: "q-call-1", answers: [{ id: "q1", selected: ["是"] }] };
+  assert.deepEqual(await rs.answer(ansPayload), receipt(reqId));
+  assert.deepEqual(await rs.answer(ansPayload), receipt(reqId));
+  assert.equal(answerCalls, 1);
+
+  // Antigravity is always forced read-only even if a test adapter sets canSend: true.
+  const browsed = await rs.browse({ runtime: "antigravity", view: "sessions" });
+  assert.equal(browsed.view, "sessions");
+  assert.equal(browsed.entries[0]!.session.canSend, false);
+  const agDetail = await rs.detail({ runtime: "antigravity", projectId: "ag-p1", sessionId: "ag-s1" });
+  assert.equal(agDetail.session.canSend, false);
+  assert.equal(agDetail.pendingQuestions[0]!.state, "readonly");
+  await assert.rejects(rs.send({ runtime: "antigravity", projectId: "ag-p1", sessionId: "ag-s1", requestId: randomUUID(), input: "nope" }), has("forbidden"));
+  await assert.rejects(rs.answer({ runtime: "antigravity", projectId: "ag-p1", sessionId: "ag-s1", requestId: randomUUID(), callId: "ag-call-1", answers: [{ id: "q1", selected: ["x"] }] }), has("forbidden"));
+});

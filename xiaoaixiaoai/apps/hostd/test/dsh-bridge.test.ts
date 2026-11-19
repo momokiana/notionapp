@@ -605,3 +605,138 @@ test("installed Cordis Loader activates and disposes the file-URL plugin with sy
     await root.fiber.dispose();
   }
 });
+
+test("POST /v4/detail inspects cold and live sessions with bounded events and pending questions", async (t) => {
+  const f = await setup(t);
+  const inspected: string[] = [];
+  const ctx = f.ctx as Record<string, unknown>;
+  (ctx.sessionController as Record<string, unknown>).inspect = async (sessionId: string, signal: AbortSignal) => {
+    assert.equal(signal.aborted, false);
+    inspected.push(sessionId);
+    return {
+      events: [
+        { type: "user/message", seq: 1, time: 1000, data: { source: { kind: "user" }, content: [{ type: "text", text: "检查冷会话详情" }] } },
+        { type: "tool/call", seq: 2, time: 1500, data: { callId: "t-1", name: "read_file" } },
+        { type: "tool/result", seq: 3, time: 1600, data: { message: { toolCallId: "t-1", isError: false } } },
+        {
+          type: "tool/ptc-dispatch",
+          seq: 4,
+          time: 1800,
+          data: {
+            name: "ask_user_question",
+            subCallId: "cont-cold-1",
+            content: [{ type: "text", text: JSON.stringify({ pending: true }) }],
+            arguments: { questions: [{ id: "q1", question: "是否继续部署？", options: [{ label: "是" }, { label: "否" }], multiSelect: false }] },
+          },
+        },
+        { type: "assistant/message", seq: 5, time: 2000, data: { message: { content: [{ type: "text", text: "等待你的选择。" }] } } },
+      ],
+    };
+  };
+  await f.start({ enableSend: true });
+
+  const res = await exchange(f.socketPath, "POST", "/v4/detail", JSON.stringify({ projectId: "second", sessionId: "cold", limit: 20 }), json);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.deepEqual(inspected, ["cold"]);
+  const body = res.body as { project: { id: string }; session: { id: string; state: string; canSend: boolean }; messages: Array<{ role: string; text: string }>; pendingQuestions: Array<{ callId: string; state: string }> };
+  assert.equal(body.project.id, "second");
+  assert.equal(body.session.id, "cold");
+  assert.equal(body.session.canSend, false);
+  assert.deepEqual(body.messages.map((m) => m.role), ["user", "tool", "assistant"]);
+  assert.equal(body.messages[1]!.text, "read_file（完成）");
+  assert.equal(body.pendingQuestions.length, 1);
+  assert.equal(body.pendingQuestions[0]!.callId, "cont-cold-1");
+  // Cold session with enableSend=true & resumeExisting=false is read-only, so pendingQuestions stays readonly.
+  assert.equal(body.pendingQuestions[0]!.state, "readonly");
+
+  // Live session with canSend=true exposes continued state so mobile can answer it.
+  const liveRes = await exchange(f.socketPath, "POST", "/v4/detail", JSON.stringify({ projectId: "second", sessionId: "live", limit: 20 }), json);
+  assert.equal(liveRes.status, 200, JSON.stringify(liveRes.body));
+  const liveBody = liveRes.body as { pendingQuestions: Array<{ callId: string; state: string }> };
+  assert.equal(liveBody.pendingQuestions[0]!.callId, "cont-cold-1");
+  assert.equal(liveBody.pendingQuestions[0]!.state, "continued");
+});
+
+test("POST /v4/answer coordinates desktop vs mobile NO_PROVIDER waterfall and background continued answers", async (t) => {
+  const f = await setup(t);
+  let hook: ((req: unknown, next: () => Promise<unknown>) => Promise<unknown>) | undefined;
+  const answeredCalls: Array<{ callId: string; clean: unknown }> = [];
+  const ctx = f.ctx as Record<string, unknown>;
+  ctx.on = (ev: string, fn: (req: unknown, next: () => Promise<unknown>) => Promise<unknown>) => {
+    if (ev === "user-questions/request") hook = fn;
+    return () => { if (hook === fn) hook = undefined; };
+  };
+  (ctx.sessionController as Record<string, unknown>).inspect = async () => ({ events: [] });
+  ctx.get = (name: string) => {
+    if (name === "userQuestions") {
+      return {
+        answer: (targetAgent: unknown, callId: string, clean: unknown) => {
+          assert.equal(targetAgent, f.live.get("live"));
+          answeredCalls.push({ callId, clean });
+          return true;
+        },
+      };
+    }
+    if (name === "sessionProjections") {
+      return {
+        stateOf: () => ({
+          questions: {
+            active: [{
+              callId: "cont-bg-1",
+              state: "continued",
+              questions: [{ id: "q1", question: "后台继续吗？", options: [{ label: "确认" }, { label: "放弃" }], multiSelect: false }],
+            }],
+          },
+        }),
+      };
+    }
+    return undefined;
+  };
+  await f.start({ enableSend: true });
+  assert.ok(hook);
+
+  // 1) Desktop wins race
+  const desktopWin = hook!(
+    { agent: f.live.get("live"), questions: [{ id: "q1", question: "桌面还是手机？", options: [{ label: "桌面" }, { label: "手机" }] }], wait: { callId: "fg-win-1" } },
+    async () => {
+      await delay(25);
+      return { answers: [{ id: "q1", selected: ["桌面"] }] };
+    },
+  );
+  const duringFg = await exchange(f.socketPath, "POST", "/v2/browse", JSON.stringify({ view: "exact", sessionIds: ["live"] }), json);
+  assert.equal((duringFg.body as { entries: Array<{ session: { state: string } }> }).entries[0]!.session.state, "attention");
+  assert.deepEqual(await desktopWin, { answers: [{ id: "q1", selected: ["桌面"] }] });
+
+  // 2) NO_PROVIDER triggers mobile answer path
+  const mobileRace = hook!(
+    { agent: f.live.get("live"), questions: [{ id: "q1", question: "选择构建模式", options: [{ label: "Debug" }, { label: "Release" }] }], wait: { callId: "fg-mob-2" } },
+    async () => { throw Object.assign(new Error("no desktop ui"), { code: "NO_PROVIDER" }); },
+  );
+  await delay(15);
+  const fgDetail = await exchange(f.socketPath, "POST", "/v4/detail", JSON.stringify({ projectId: "second", sessionId: "live", limit: 20 }), json);
+  assert.equal((fgDetail.body as { pendingQuestions: Array<{ callId: string; state: string }> }).pendingQuestions[0]!.callId, "fg-mob-2");
+  assert.equal((fgDetail.body as { pendingQuestions: Array<{ state: string }> }).pendingQuestions[0]!.state, "open");
+
+  const ansReq1 = "22222222-2222-4222-8222-222222222222";
+  const fgAns = await exchange(
+    f.socketPath,
+    "POST",
+    "/v4/answer",
+    JSON.stringify({ projectId: "second", sessionId: "live", requestId: ansReq1, callId: "fg-mob-2", answers: [{ id: "q1", selected: ["Release"] }] }),
+    json,
+  );
+  assert.equal(fgAns.status, 200, JSON.stringify(fgAns.body));
+  assert.deepEqual(await mobileRace, { answers: [{ id: "q1", selected: ["Release"] }] });
+
+  // 3) Background continued question dispatches via userQuestions.answer
+  const ansReq2 = "33333333-3333-4333-8333-333333333333";
+  const bgAns = await exchange(
+    f.socketPath,
+    "POST",
+    "/v4/answer",
+    JSON.stringify({ projectId: "second", sessionId: "live", requestId: ansReq2, callId: "cont-bg-1", answers: [{ id: "q1", selected: ["确认"] }] }),
+    json,
+  );
+  assert.equal(bgAns.status, 200, JSON.stringify(bgAns.body));
+  assert.deepEqual(answeredCalls, [{ callId: "cont-bg-1", clean: { answers: [{ id: "q1", selected: ["确认"] }] } }]);
+});

@@ -38,7 +38,7 @@ import { VERSION } from "@xiaoaixiaoai/update";
 export const HOSTD_VERSION = VERSION;
 
 /** Calls that change something here: logged when they work too. */
-const MUTATING = new Set(["terminal.send", "terminal.keys", "terminal.put", "agent.create", "terminal.interrupt", "terminal.kill", "herdr.command", "sessions.resume", "runtimeSessions.send"]);
+const MUTATING = new Set(["terminal.send", "terminal.keys", "terminal.put", "agent.create", "terminal.interrupt", "terminal.kill", "herdr.command", "sessions.resume", "runtimeSessions.send", "runtimeSessions.answer"]);
 
 /** What a call was about, short: never more than 200 characters of anyone's message. */
 function callSummary(params: unknown, result?: unknown): Record<string, unknown> | undefined {
@@ -190,8 +190,10 @@ export class Host {
     this.log(
       `sources: herdr GUI core (hc) ${hc ? `✓ ${this.hc.version ?? ""}` : "✗"} · herdr TUI ${herdr ? "✓" : "✗"} · uniflo ${uniflo ? "✓" : "✗"}`,
     );
-    if (this.opts.runtimeSessions) this.sources.push("runtime-sessions");
-    if (this.opts.runtimeSessions?.hasDirectory) this.sources.push("dsh-directory");
+    if (this.opts.runtimeSessions) {
+      this.sources.push("runtime-sessions", "runtime-detail");
+      if (this.opts.runtimeSessions.hasDirectory) this.sources.push("dsh-directory");
+    }
     if (!hc && !herdr && !this.opts.runtimeSessions) this.log("no herdr runtime found: start the herdr app (hc) or `herdr` first. Waiting anyway.");
     this.logTimer = setInterval(() => this.flushLogs(), this.logEveryMs);
     this.logTimer.unref?.();
@@ -277,7 +279,7 @@ export class Host {
     let taskCapability = false;
     let taskSnapshot = false;
     let taskTimer: NodeJS.Timeout | undefined;
-    const reports = runtime?.hasDirectory && !this.opts.readOnly ? new RuntimeTaskReporter(
+    const reports = runtime?.hasTaskEvents && !this.opts.readOnly ? new RuntimeTaskReporter(
       () => runtime.taskEvents(),
       (event) => ws.send(JSON.stringify({ type: "runtime_task_event", event } satisfies ClientFrame)),
       () => {
@@ -417,7 +419,7 @@ export class Host {
     try {
       const allow = this.opts.allow ?? [];
       if (allow.length && !allow.includes(f.from)) throw new RpcFailure("forbidden", "这台电脑没有授权给你");
-      if (this.opts.runtimeOnly && !["runtimeSessions.list", "runtimeSessions.browse", "runtimeSessions.send", "host.info", "agents.list"].includes(f.method)) {
+      if (this.opts.runtimeOnly && !["runtimeSessions.list", "runtimeSessions.browse", "runtimeSessions.detail", "runtimeSessions.answer", "runtimeSessions.send", "host.info", "agents.list"].includes(f.method)) {
         throw new RpcFailure("unsupported", "这台电脑仅提供共享的项目会话，不开放终端。");
       }
       const handler = (this.handlers as Record<string, Handler<any> | undefined>)[f.method];
@@ -756,6 +758,20 @@ export class Host {
       const data = await this.runtimeAccess(from).browse(p);
       if (this.opts.readOnly && data.view !== "projects") for (const entry of data.entries) entry.session.canSend = false;
       return data;
+    },
+    "runtimeSessions.detail": async (p, from) => {
+      const data = await this.runtimeAccess(from).detail(p);
+      if (this.opts.readOnly) {
+        data.session.canSend = false;
+        data.pendingQuestions = data.pendingQuestions.map((q) => ({ ...q, state: "readonly" as const }));
+        data.readOnlyReason ??= "这台电脑当前为只读模式。";
+      }
+      return data;
+    },
+    "runtimeSessions.answer": async (p, from) => {
+      const view = this.runtimeAccess(from);
+      this.writable();
+      return view.answer(p);
     },
     "runtimeSessions.send": async (p, from) => {
       const view = this.runtimeAccess(from);

@@ -23,7 +23,7 @@ const RUN_VALUE = "XiaoAiXiaoAi";
 export const SERVICE_LOG = join(stateDir(), "hostd.log");
 const LOG_MAX = 10 * 1024 * 1024;
 
-export const SERVICE_HELP = `  service install [--read-only] [--allow <deviceId,...>]
+export const SERVICE_HELP = `  service install [--read-only] [--allow <deviceId,...>] [--runtime-only --runtime-config <path>] [--relay-proxy <url>]
         Windows: start xiaoaixiaoai hidden at logon and keep it running (no admin needed).
   service start | stop | restart | status | remove`;
 
@@ -98,8 +98,8 @@ export async function serviceCommand(argv: string[]): Promise<void> {
 
 async function install(args: string[]): Promise<void> {
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === "--allow" && args[i + 1]) i++;
-    else if (args[i] !== "--read-only") fail(`unknown option for service install: ${args[i]}`);
+    if ((args[i] === "--allow" || args[i] === "--runtime-config" || args[i] === "--relay-proxy") && args[i + 1]) i++;
+    else if (args[i] !== "--read-only" && args[i] !== "--runtime-only") fail(`unknown option for service install: ${args[i]}`);
   }
   const root = installRoot();
   if (!root) fail("this copy was not installed by scripts/install-host.ps1; run that first (docs/deploy/host.md).");

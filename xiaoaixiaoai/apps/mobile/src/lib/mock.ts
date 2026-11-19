@@ -492,12 +492,36 @@ export function mockLink(): Link {
         }
         case "runtimeSessions.list":
           return {
-            runtimes: [{ runtime: "dsh", online: true }, { runtime: "codex", online: true }],
+            runtimes: [{ runtime: "dsh", online: true }, { runtime: "codex", online: true }, { runtime: "antigravity", online: true }],
             projects: [
-              { runtime: "dsh", id: "demo-dsh", title: "WSL 演示项目", sessions: [{ id: "dsh-demo-session", title: "演示：检查项目布局", state: "idle", canSend: true }] },
+              { runtime: "dsh", id: "demo-dsh", title: "WSL 演示项目", sessions: [{ id: "dsh-demo-session", title: "演示：检查项目布局", state: "attention", canSend: true }] },
               { runtime: "codex", id: "demo-codex", title: "Windows 演示项目", sessions: [{ id: "codex-demo-session", title: "演示：查看运行状态", state: "running", canSend: false }] },
+              { runtime: "antigravity", id: "demo-ag", title: "Antigravity 演示工程", sessions: [{ id: "ag-demo-session", title: "演示：查看对话历史", state: "idle", canSend: false }] },
             ],
           };
+        case "runtimeSessions.detail": {
+          const d = params as { runtime?: "dsh" | "codex" | "antigravity"; projectId?: string; sessionId?: string };
+          return {
+            runtime: d.runtime ?? "dsh",
+            project: { id: d.projectId ?? "demo-dsh", title: d.runtime === "codex" ? "Windows 演示项目" : d.runtime === "antigravity" ? "Antigravity 演示工程" : "WSL 演示项目" },
+            session: { id: d.sessionId ?? "dsh-demo-session", title: "演示会话详情", state: d.runtime === "dsh" ? "attention" : "idle", canSend: d.runtime === "dsh" },
+            messages: [
+              { id: "m1", role: "user", text: "检查项目构建并汇报可选项。", ts: now() - 90_000 },
+              { id: "m2", role: "tool", text: "ask_user_question（完成）", ts: now() - 60_000, toolName: "ask_user_question", isError: false },
+              { id: "m3", role: "assistant", text: "检查完成了，你可以直接在这里确认构建方案。", ts: now() - 30_000 },
+            ],
+            pendingQuestions: d.runtime === "dsh" ? [{
+              callId: "demo-q-1",
+              state: "open" as const,
+              questions: [{ id: "q1", header: "发布确认", question: "先构建哪一版安装包？", options: [{ label: "ARM64 正式包", description: "适合真机升级" }, { label: "仅检查类型", description: "不导出安装包" }], multiSelect: false }],
+            }] : [],
+            ...(d.runtime === "antigravity" ? { readOnlyReason: "Antigravity 会话在演示模式下仅支持查看。" } : {}),
+          };
+        }
+        case "runtimeSessions.answer": {
+          const a = params as { requestId?: string };
+          return { accepted: true, requestId: isRuntimeRequestId(a.requestId) ? a.requestId.toLowerCase() : "00000000-0000-4000-8000-000000000000" };
+        }
         case "runtimeSessions.send": {
           const t = params as { runtime?: string; projectId?: string; sessionId?: string; requestId?: string; input?: string };
           if (_to !== HOST_A || t.runtime !== "dsh" || typeof t.sessionId !== "string" || !isRuntimeRequestId(t.requestId) ||

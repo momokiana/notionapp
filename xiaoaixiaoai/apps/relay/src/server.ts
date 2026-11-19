@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createReadStream, lstatSync } from "node:fs";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { join, resolve } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   PROTOCOL_VERSION,
@@ -46,6 +48,8 @@ import {
 
 export interface RelayOptions {
   dbPath: string;
+  /** Optional local directory holding verified release bundles & signed APKs for direct downloads. */
+  releasesDir?: string;
   /** Admin token: may mint pair codes. Required to bootstrap the first device. */
   adminToken?: string;
   /** Public base URL put into pairing links, e.g. https://xiaoaixiaoai.example.com */
@@ -289,6 +293,50 @@ export class Relay {
         assistant: [...new Set((this.opts.assistant?.targets ?? []).map((t) => t.provider))],
         voice: this.opts.live ? (this.opts.live.provider ?? "moss-live") : null,
       });
+      return;
+    }
+
+    if ((req.method === "GET" || req.method === "HEAD") && path.startsWith("/v1/releases/")) {
+      const name = path.slice("/v1/releases/".length);
+      const valid =
+        name === "SHA256SUMS" ||
+        /^xiaoaixiaoai-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:-android-arm64\.apk|\.tar\.gz)$/.test(name);
+      if (!valid || !this.opts.releasesDir) {
+        sendError(res, 404, "not_found", "release asset not found");
+        return;
+      }
+      const targetPath = join(resolve(this.opts.releasesDir), name);
+      try {
+        const st = lstatSync(targetPath);
+        if (st.isSymbolicLink() || !st.isFile()) {
+          sendError(res, 404, "not_found", "release asset not found");
+          return;
+        }
+        const contentType = name === "SHA256SUMS"
+          ? "text/plain; charset=utf-8"
+          : name.endsWith(".apk")
+            ? "application/vnd.android.package-archive"
+            : "application/gzip";
+        res.writeHead(200, {
+          "Content-Type": contentType,
+          "Content-Length": String(st.size),
+          "Cache-Control": "no-cache",
+        });
+        if (req.method === "HEAD") {
+          res.end();
+          return;
+        }
+        await new Promise<void>((done) => {
+          const stream = createReadStream(targetPath);
+          const cleanup = () => { stream.destroy(); done(); };
+          stream.on("error", cleanup);
+          res.on("close", cleanup);
+          res.on("finish", done);
+          stream.pipe(res);
+        });
+      } catch {
+        if (!res.headersSent) sendError(res, 404, "not_found", "release asset not found");
+      }
       return;
     }
 
@@ -585,7 +633,7 @@ export class Relay {
     const from = p.from === "relay" ? "assistant" : (this.store.getDevice(p.from)?.name ?? p.from);
     const to = this.store.getDevice(p.target)?.name ?? p.target;
     // Don't let a runtime-supplied dispatch error accidentally put private task data in the log.
-    const outcome = error ? (p.method === "runtimeSessions.send" ? "failed" : `${error.code}: ${error.message.slice(0, 200)}`) : "ok";
+    const outcome = error ? (p.method.startsWith("runtimeSessions.") ? "failed" : `${error.code}: ${error.message.slice(0, 200)}`) : "ok";
     this.events.record({
       kind: "rpc",
       level: error ? (error.code === "internal" || error.code === "timeout" || error.code === "offline" ? "warn" : "info") : "info",
@@ -1016,7 +1064,7 @@ export class Relay {
       fail({ code: "forbidden", message: "只能调用电脑端（host）" });
       return;
     }
-    const dispatch = caller.device.kind === "viewer" && method === "runtimeSessions.send" ? runtimeTaskDispatch(params) : undefined;
+    const dispatch = caller.device.kind === "viewer" && (method === "runtimeSessions.send" || method === "runtimeSessions.answer") ? runtimeTaskDispatch(params) : undefined;
     const id = randomUUID();
     const timer = setTimeout(() => {
       this.pending.delete(id);

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { FlatList, View } from "react-native";
 import { Button, Dialog, IconButton, Menu, Portal, Text } from "react-native-paper";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import type { Device } from "@xiaoaixiaoai/protocol";
@@ -69,7 +69,7 @@ function DeviceRow({ d, isSelf, agentCount, onRevoke, onSessions }: { d: Device;
           contentStyle={{ backgroundColor: p.surface, borderRadius: radius.md }}
         >
           {d.kind === "host" && d.sources?.includes("runtime-sessions") ? (
-            <Menu.Item leadingIcon="folder-open-outline" title="项目会话 · DSH / Codex" onPress={() => { setMenu(false); onSessions(); }} />
+            <Menu.Item leadingIcon="folder-open-outline" title="项目会话 · DSH / Codex / Antigravity" onPress={() => { setMenu(false); onSessions(); }} />
           ) : null}
           <Menu.Item
             leadingIcon="link-off"
@@ -95,6 +95,7 @@ export default function DevicesScreen() {
   const server = useSettings((s) => s.server);
   const [target, setTarget] = useState<Device | null>(null);
   const viewer = useSettings((s) => s.deviceId);
+  const { openHost } = useLocalSearchParams<{ openHost?: string }>();
   const pending = useDshIntent((s) => s.pending);
   const intent = server && viewer && self?.id === viewer && pending?.server === server && pending.viewer === viewer ? pending : null;
   const [sessionHost, setSessionHost] = useState<{ id: string; intent: typeof pending; legacy?: boolean }>();
@@ -130,10 +131,16 @@ export default function DevicesScreen() {
   ];
 
   const dshHosts = hosts.filter((d) => d.sources?.includes("dsh-directory"));
+  const sessionHosts = hosts.filter((d) => d.sources?.includes("runtime-sessions"));
   const onlyDshHost = dshHosts.length === 1 ? dshHosts[0] : undefined;
-  const candidate = sessionHost && sessionHost.intent === intent ? sessionHost.id : intent ? onlyDshHost?.id : undefined;
+  const openHostDevice = openHost && devices[openHost]?.kind === "host" && devices[openHost]?.sources?.includes("runtime-sessions") ? devices[openHost] : undefined;
+  const candidate = sessionHost && sessionHost.intent === intent ? sessionHost.id : openHostDevice ? openHostDevice.id : intent ? onlyDshHost?.id : undefined;
   const connectedHost = candidate ? devices[candidate] : undefined;
-  const back = () => { setSessionHost(undefined); useDshIntent.setState({ pending: null }); };
+  const back = () => {
+    setSessionHost(undefined);
+    useDshIntent.setState({ pending: null });
+    if (openHost) router.setParams({ openHost: undefined });
+  };
   if (connectedHost?.kind === "host" && connectedHost.sources?.includes("runtime-sessions")) {
     const key = `${server}:${self?.id}:${connectedHost.id}:${intent?.sequence ?? 0}`;
     if (connectedHost.sources.includes("dsh-directory") && !(sessionHost?.id === candidate && sessionHost?.intent === intent && sessionHost?.legacy)) {
@@ -175,8 +182,14 @@ export default function DevicesScreen() {
                 {dshHosts.map((h) => <Button key={h.id} mode="outlined" onPress={() => openSessions(h.id)}>{h.name}</Button>)}
                 <Button onPress={back}>取消</Button>
               </Card>
-            ) : onlyDshHost ? (
-              <Button icon="folder-open-outline" mode="outlined" onPress={() => openSessions(onlyDshHost.id)}>DSH 项目会话</Button>
+            ) : sessionHosts.length ? (
+              <View style={{ gap: space.xs }}>
+                {sessionHosts.map((h) => (
+                  <Button key={h.id} icon="folder-open-outline" mode="outlined" onPress={() => openSessions(h.id)}>
+                    项目会话 · {h.name}
+                  </Button>
+                ))}
+              </View>
             ) : null}
             <View style={{ flexDirection: "row", gap: space.sm }}>
               <Button mode="contained" icon="qrcode-scan" onPress={() => router.push("/scan")} contentStyle={{ height: 50 }} style={{ flex: 1, borderRadius: radius.pill }} labelStyle={{ fontSize: 16 }}>

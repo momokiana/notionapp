@@ -44,15 +44,18 @@ test("only this app's scheme is generated and accepted", () => {
   assert.equal(parseJoinLink(join.replace("xiaoaixiaoai:", "herdrpocket:")), null);
 });
 
-test("an absent owned release source never produces a download or proxy URL", () => {
-  assert.equal(RELEASE_UPDATES_ENABLED, false);
-  assert.equal(RELEASE_REPO, null);
-  assert.equal(RELEASES_PAGE, null);
-  assert.equal(LATEST_SUMS_URL, null);
+test("the owned release source points only to momokiana/notionapp with no third-party mirrors", () => {
+  assert.equal(RELEASE_UPDATES_ENABLED, true);
+  assert.equal(RELEASE_REPO, "momokiana/notionapp");
+  assert.equal(RELEASES_PAGE, "https://github.com/momokiana/notionapp/releases/latest");
+  assert.equal(LATEST_SUMS_URL, "https://github.com/momokiana/notionapp/releases/latest/download/SHA256SUMS");
   assert.deepEqual(RELEASE_MIRRORS, []);
-  assert.equal(releaseAssetUrl("1.2.3", apkAssetName("1.2.3")), null);
-  assert.deepEqual(releaseSources(LATEST_SUMS_URL, true), []);
-  assert.deepEqual(releaseSources("https://github.com/Crosery/herdr-pocket/releases/latest", false), []);
+  assert.equal(
+    releaseAssetUrl("1.2.3", apkAssetName("1.2.3")),
+    "https://github.com/momokiana/notionapp/releases/download/v1.2.3/xiaoaixiaoai-1.2.3-android-arm64.apk",
+  );
+  assert.deepEqual(releaseSources(LATEST_SUMS_URL, true), [LATEST_SUMS_URL]);
+  assert.equal(releaseSources(null, false).length, 0);
 });
 
 test("assistant display name is optional for old relays and read-only for consumers", () => {

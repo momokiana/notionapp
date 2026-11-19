@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { inMainlandChina, releaseFromSums, releaseSources } from "@xiaoaixiaoai/protocol";
-import { ASSETS, DEFAULT_REPO, ReleaseUpdatesDisabledError, checkForUpdate, compareVersions, fileMentions, findLayout, latestRelease, linkTarget, readVersion, repo, rollback, setLink, sourcesFor, sumFor, update, watchForUpdates } from "../src/index.ts";
+import { ASSETS, DEFAULT_REPO, ReleaseUpdatesDisabledError, checkForUpdate, compareVersions, fileMentions, findLayout, latestRelease, linkTarget, readVersion, remoteUpdatesEnabled, repo, rollback, setLink, sourcesFor, sumFor, update, watchForUpdates } from "../src/index.ts";
 
 /** Windows' own tar (bsdtar): Git's GNU tar on PATH reads `C:` in paths as a remote host. */
 const TAR = process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe") : "tar";
@@ -59,24 +59,28 @@ describe("versions", () => {
     assert.equal(releaseFromSums(`${h}  xiaoaixiaoai-1.0.0-rc.1-android-arm64.apk\n`)?.version, "1.0.0-rc.1");
   });
 
-  test("release downloads and mirrors stay disabled in every time zone", () => {
-    const gh = "https://github.com/owner/repo/releases/download/v1/x.tar.gz";
-    assert.deepEqual(releaseSources(gh, true), []);
-    assert.deepEqual(releaseSources(gh, false), []);
+  test("owned release sources honor XIAOAIXIAOAI_DISABLE_REMOTE_UPDATES and have no third-party mirrors", () => {
+    const gh = "https://github.com/momokiana/notionapp/releases/download/v0.2.0/xiaoaixiaoai-0.2.0.tar.gz";
+    assert.deepEqual(releaseSources(gh, true), [gh]);
+    assert.deepEqual(releaseSources(gh, false), [gh]);
     assert.deepEqual(releaseSources(null, false), []);
     assert.equal(inMainlandChina("Asia/Shanghai"), true);
     assert.equal(inMainlandChina("Asia/Hong_Kong"), false);
     assert.equal(inMainlandChina("UTC"), false);
-    const before = process.env.XIAOAIXIAOAI_MIRROR;
+    const before = { mirror: process.env.XIAOAIXIAOAI_MIRROR, off: process.env.XIAOAIXIAOAI_DISABLE_REMOTE_UPDATES };
     try {
+      process.env.XIAOAIXIAOAI_DISABLE_REMOTE_UPDATES = "1";
+      assert.equal(remoteUpdatesEnabled(), false);
       process.env.XIAOAIXIAOAI_MIRROR = "1";
       assert.deepEqual(sourcesFor(gh), []);
       process.env.XIAOAIXIAOAI_MIRROR = "0";
       assert.deepEqual(sourcesFor(gh), []);
       assert.deepEqual(sourcesFor("https://example.com/x.tar.gz"), []);
     } finally {
-      if (before === undefined) delete process.env.XIAOAIXIAOAI_MIRROR;
-      else process.env.XIAOAIXIAOAI_MIRROR = before;
+      if (before.mirror === undefined) delete process.env.XIAOAIXIAOAI_MIRROR;
+      else process.env.XIAOAIXIAOAI_MIRROR = before.mirror;
+      if (before.off === undefined) delete process.env.XIAOAIXIAOAI_DISABLE_REMOTE_UPDATES;
+      else process.env.XIAOAIXIAOAI_DISABLE_REMOTE_UPDATES = before.off;
     }
   });
 
@@ -130,21 +134,23 @@ describe("update from a file", () => {
   });
 });
 
-describe("release isolation without an owned source", () => {
-  test("lookup and update fail closed before fetch or install writes, even with legacy overrides", async (t) => {
+describe("release isolation and env disablement", () => {
+  test("untrusted external URLs and XIAOAIXIAOAI_DISABLE_REMOTE_UPDATES fail closed before fetch or install writes", async (t) => {
     const fetched = t.mock.method(globalThis, "fetch", async () => { throw new Error("network must not be used"); });
     const env = { ...process.env };
     const dir = mkdtempSync(join(tmpdir(), "xiaoaixiaoai-disabled-"));
     try {
+      assert.equal(DEFAULT_REPO, "momokiana/notionapp");
+      assert.equal(repo(), "momokiana/notionapp");
+      // Even when remote updates are enabled, arbitrary URLs via --from are rejected before any network/disk work.
+      await assert.rejects(update({ service: "host", from: "https://example.com/bundle.tar.gz", layout: { root: dir } }), ReleaseUpdatesDisabledError);
       process.env.HERDR_POCKET_API = "https://api.example.com";
       process.env.HERDR_POCKET_REPO = "Crosery/herdr-pocket";
       process.env.XIAOAIXIAOAI_UPDATE_CHECK = "1";
-      assert.equal(DEFAULT_REPO, null);
-      assert.throws(repo, ReleaseUpdatesDisabledError);
+      process.env.XIAOAIXIAOAI_DISABLE_REMOTE_UPDATES = "1";
       await assert.rejects(latestRelease(), ReleaseUpdatesDisabledError);
       await assert.rejects(checkForUpdate(), { code: "RELEASE_UPDATES_DISABLED" });
       await assert.rejects(update({ service: "host", force: true, layout: { root: dir } }), ReleaseUpdatesDisabledError);
-      await assert.rejects(update({ service: "host", from: "https://example.com/bundle.tar.gz", layout: { root: dir } }), ReleaseUpdatesDisabledError);
       assert.deepEqual(readdirSync(dir), [], "disabled updates never lock or stage an install");
       assert.equal(fetched.mock.callCount(), 0);
     } finally {
@@ -153,15 +159,21 @@ describe("release isolation without an owned source", () => {
     }
   });
 
-  test("background update watcher schedules no timers or network", (t) => {
+  test("background update watcher schedules no timers or network when disabled", (t) => {
+    const env = { ...process.env };
+    process.env.XIAOAIXIAOAI_DISABLE_REMOTE_UPDATES = "1";
     const first = t.mock.method(globalThis, "setTimeout", () => { throw new Error("no timeout expected"); });
     const every = t.mock.method(globalThis, "setInterval", () => { throw new Error("no interval expected"); });
     const log = t.mock.fn();
-    const stop = watchForUpdates(log, "xiaoaixiaoai update", { firstMs: 0, everyMs: 1 });
-    stop();
-    assert.equal(first.mock.callCount(), 0);
-    assert.equal(every.mock.callCount(), 0);
-    assert.equal(log.mock.callCount(), 0);
+    try {
+      const stop = watchForUpdates(log, "xiaoaixiaoai update", { firstMs: 0, everyMs: 1 });
+      stop();
+      assert.equal(first.mock.callCount(), 0);
+      assert.equal(every.mock.callCount(), 0);
+      assert.equal(log.mock.callCount(), 0);
+    } finally {
+      process.env = env;
+    }
   });
 
   test("bundle and APK names belong to this app", () => {

@@ -4,6 +4,7 @@ import { View } from "react-native";
 import { Button, Text } from "react-native-paper";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DshDirectoryPanel } from "../components/DshDirectoryPanel";
+import { RuntimeSessionsPanel } from "../components/RuntimeSessionsPanel";
 import { PageBackground, PageTitle } from "../components/ui";
 import { useLive, useSettings } from "../lib/store";
 import { usePalette } from "../theme/theme";
@@ -18,8 +19,13 @@ export default function DshTaskScreen() {
   const insets = useSafeAreaInsets();
   const p = usePalette();
   const back = () => { if (router.canGoBack()) router.back(); else router.replace("/devices"); };
-  if (viewer && self === viewer && host?.kind === "host" && host.sources?.includes("dsh-directory") && isRuntimeId(params.session)) {
-    return <DshDirectoryPanel key={`${host.id}:${params.session}`} host={host} onBack={back} focusSessionId={params.session} />;
+  if (viewer && self === viewer && host?.kind === "host" && isRuntimeId(params.session)) {
+    if (host.sources?.includes("dsh-directory")) {
+      return <DshDirectoryPanel key={`${host.id}:${params.session}`} host={host} onBack={back} focusSessionId={params.session} />;
+    }
+    if (host.sources?.includes("runtime-sessions")) {
+      return <RuntimeSessionsPanel key={`${host.id}:${params.session}`} host={host} onBack={back} focusSessionId={params.session} />;
+    }
   }
   return (
     <PageBackground>

@@ -47,7 +47,7 @@ export interface Device {
 /** Where the agent lives on its host. */
 export type AgentSource = "hc" | "herdr" | "uniflo";
 /** Metadata and operations for explicitly shared runtime sessions, not terminal Agents. */
-export type HostSource = AgentSource | "runtime-sessions" | "dsh-directory";
+export type HostSource = AgentSource | "runtime-sessions" | "dsh-directory" | "runtime-detail";
 
 export const RUNTIME_TASK_EVENTS_LIMIT = 128;
 export const RUNTIME_TASK_EVENT_KINDS = ["progress", "attention", "completed", "stopped"] as const;
@@ -371,15 +371,17 @@ export function splitFiles(message: string): { text: string; lines: string[]; co
 // RPC methods a host serves (callable by viewers and by other hosts)
 // ---------------------------------------------------------------------------
 
-export type SessionRuntime = "dsh" | "codex";
+export type SessionRuntime = "dsh" | "codex" | "antigravity";
 export type RuntimeSessionState = "running" | "idle" | "inactive" | "attention" | "unknown";
 export const RUNTIME_SESSION_TEXT_LIMIT = 4000;
+export const RUNTIME_DETAIL_LIMIT = 100;
 
 export interface RuntimeSession {
   id: string;
   title: string;
   state: RuntimeSessionState;
   canSend: boolean;
+  updatedAt?: number;
 }
 
 export interface RuntimeProject {
@@ -414,8 +416,9 @@ export const DSH_DIRECTORY_SEARCH_LIMIT = 120;
 export const DSH_UNFILED = "dsh:unfiled";
 export const DSH_ARCHIVE = "dsh:archive";
 
-export interface DshDirectoryProject { id: string; title: string }
+export interface DshDirectoryProject { id: string; title: string; runtime?: SessionRuntime }
 export interface DshDirectoryEntry {
+  runtime?: SessionRuntime;
   project: DshDirectoryProject;
   session: RuntimeSession;
   archived: boolean;
@@ -423,15 +426,75 @@ export interface DshDirectoryEntry {
 
 /** `after` is the last stable ID on the previous page; missing/removed IDs are fine. */
 export type DshDirectoryRequest =
-  | { view: "projects"; after?: string }
-  | { view: "sessions"; projectId?: string; search?: string; after?: string }
-  | { view: "exact"; sessionIds: string[] };
+  | { runtime?: SessionRuntime; view: "projects"; after?: string }
+  | { runtime?: SessionRuntime; view: "sessions"; projectId?: string; search?: string; after?: string }
+  | { runtime?: SessionRuntime; view: "exact"; sessionIds: string[] };
 
 type DshDirectoryScope = "profile" | "selected";
 export type DshDirectoryReply =
-  | { view: "projects"; scope: DshDirectoryScope; projects: DshDirectoryProject[]; next?: string }
-  | { view: "sessions"; scope: DshDirectoryScope; entries: DshDirectoryEntry[]; next?: string }
-  | { view: "exact"; scope: DshDirectoryScope; entries: DshDirectoryEntry[] };
+  | { runtime?: SessionRuntime; view: "projects"; scope: DshDirectoryScope; projects: DshDirectoryProject[]; next?: string }
+  | { runtime?: SessionRuntime; view: "sessions"; scope: DshDirectoryScope; entries: DshDirectoryEntry[]; next?: string }
+  | { runtime?: SessionRuntime; view: "exact"; scope: DshDirectoryScope; entries: DshDirectoryEntry[] };
+
+export interface RuntimeQuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface RuntimeQuestionItem {
+  id: string;
+  header?: string;
+  question: string;
+  detail?: string;
+  options?: RuntimeQuestionOption[];
+  multiSelect?: boolean;
+}
+
+export interface RuntimePendingQuestion {
+  callId: string;
+  state: "open" | "continued" | "readonly";
+  questions: RuntimeQuestionItem[];
+}
+
+export interface RuntimeSessionMessage {
+  id: string;
+  role: "user" | "assistant" | "tool" | "system";
+  text: string;
+  ts?: number;
+  toolName?: string;
+  isError?: boolean;
+}
+
+export interface RuntimeSessionDetailRequest {
+  runtime: SessionRuntime;
+  projectId: string;
+  sessionId: string;
+  limit?: number;
+}
+
+export interface RuntimeSessionDetail {
+  runtime: SessionRuntime;
+  project: { id: string; title: string };
+  session: RuntimeSession;
+  messages: RuntimeSessionMessage[];
+  pendingQuestions: RuntimePendingQuestion[];
+  readOnlyReason?: string;
+}
+
+export interface RuntimeQuestionAnswerItem {
+  id: string;
+  selected: string[];
+  custom?: string;
+}
+
+export interface RuntimeSessionAnswer {
+  runtime: SessionRuntime;
+  projectId: string;
+  sessionId: string;
+  requestId: string;
+  callId: string;
+  answers: RuntimeQuestionAnswerItem[];
+}
 
 /** Opaque, bounded IDs; labels are display-only and never form a dispatch target. */
 export function isRuntimeId(value: unknown): value is string {
@@ -447,6 +510,10 @@ export interface RpcMethods {
   "runtimeSessions.list": { params: Record<string, never>; result: RuntimeCatalog };
   /** Paged DSH metadata and exact lookups, with the same device authorization as list. */
   "runtimeSessions.browse": { params: DshDirectoryRequest; result: DshDirectoryReply };
+  /** Read bounded recent conversation history and pending interactive questions for one session. */
+  "runtimeSessions.detail": { params: RuntimeSessionDetailRequest; result: RuntimeSessionDetail };
+  /** Answer a pending interactive question for one shared session. */
+  "runtimeSessions.answer": { params: RuntimeSessionAnswer; result: RuntimeSessionReceipt };
   /** `input` keeps legacy relay RPC summaries from recording this text. */
   "runtimeSessions.send": { params: Omit<RuntimeSessionSend, "text"> & { input: string }; result: RuntimeSessionReceipt };
   /** Full agent list of this host. */
@@ -1152,12 +1219,10 @@ export function parsePairInput(input: string): { server?: string; code: string }
   return /^(https?:\/\/)?[\w.-]+(:\d+)?(\/\S*)?$/i.test(server) ? { server, code: normalized } : null;
 }
 
-// Releases are intentionally disconnected from upstream. Configure and review an owned
-// source before enabling any remote lookup/download; null is not a placeholder address.
-
-export const RELEASE_REPO: string | null = null;
+// Releases are served exclusively from the owned repository below (or via the user's paired relay).
+export const RELEASE_REPO: string | null = "momokiana/notionapp";
 export const RELEASE_UPDATES_ENABLED: boolean = RELEASE_REPO !== null;
-export const RELEASE_UPDATES_DISABLED_REASON = `Release updates are disabled: no release source is configured for ${APP_DISPLAY_NAME}.`;
+export const RELEASE_UPDATES_DISABLED_REASON = `Release updates are disabled: remote release lookup is turned off for ${APP_DISPLAY_NAME}.`;
 
 /** Where people download this app by hand; null means no owned download source exists. */
 export const RELEASES_PAGE: string | null = RELEASE_REPO ? `https://github.com/${RELEASE_REPO}/releases/latest` : null;

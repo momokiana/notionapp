@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { HttpFault, readJson, serveSocket, validSocketPath } from "./socket.mjs";
 import { createTaskEvents } from "./task-events.mjs";
 
@@ -6,6 +7,10 @@ const SESSION_LIMIT = 100;
 // Keep in sync with the shared protocol. The plugin has no npm dependencies.
 const PAGE_SIZE = 32;
 const SEARCH_LIMIT = 120;
+const DETAIL_LIMIT_DEFAULT = 60;
+const DETAIL_LIMIT_MAX = 100;
+const MAX_MESSAGE_TEXT = 6000;
+const MAX_DETAIL_BYTES = 460 * 1024;
 const UNFILED = "dsh:unfiled";
 const ARCHIVE = "dsh:archive";
 const synthetic = (id) => id === UNFILED || id === ARCHIVE;
@@ -121,21 +126,119 @@ function indexSummaries(items) {
   return rows;
 }
 
-function sessionRow(config, agents, roots, projectId, id, row, archived) {
+function cleanText(value, max = MAX_MESSAGE_TEXT) {
+  if (typeof value !== "string" || !value.isWellFormed()) return "";
+  const sanitized = value.replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\p{Cf}]/gu, " ").trim();
+  if (!sanitized) return "";
+  const chars = Array.from(sanitized);
+  return chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : sanitized;
+}
+
+function normalizeQuestionItem(raw) {
+  if (!isRecord(raw) || typeof raw.id !== "string" || !raw.id || raw.id.length > 128) return null;
+  const question = cleanText(raw.question, 2000);
+  if (!question) return null;
+  const header = cleanText(raw.header, 200);
+  const detail = cleanText(raw.detail, 4000);
+  const multiSelect = raw.multiSelect === true || raw.multi_select === true;
+  let options;
+  if (Array.isArray(raw.options) && raw.options.length > 0) {
+    const parsed = [];
+    for (const opt of raw.options.slice(0, 32)) {
+      if (!isRecord(opt)) continue;
+      const optLabel = cleanText(opt.label, 400);
+      if (!optLabel) continue;
+      const description = cleanText(opt.description, 1000);
+      parsed.push({ label: optLabel, ...(description ? { description } : {}) });
+    }
+    if (parsed.length) options = parsed;
+  }
+  return {
+    id: raw.id,
+    ...(header ? { header } : {}),
+    question,
+    ...(detail ? { detail } : {}),
+    ...(options ? { options } : {}),
+    ...(multiSelect ? { multiSelect: true } : {}),
+  };
+}
+
+function normalizeQuestions(rawQuestions) {
+  if (!Array.isArray(rawQuestions)) return [];
+  const out = [];
+  for (const item of rawQuestions.slice(0, 16)) {
+    const normalized = normalizeQuestionItem(item);
+    if (normalized) out.push(normalized);
+  }
+  return out;
+}
+
+function validateAnswerBatch(questions, rawAnswers) {
+  if (!Array.isArray(rawAnswers) || !questions.length || rawAnswers.length !== questions.length) return null;
+  const byId = new Map(questions.map((q) => [q.id, q]));
+  const seen = new Set();
+  const clean = [];
+  for (const raw of rawAnswers) {
+    if (!hasOnly(raw, ["id", "selected", "custom"]) || typeof raw.id !== "string" || seen.has(raw.id)) return null;
+    const q = byId.get(raw.id);
+    if (!q || !Array.isArray(raw.selected) || raw.selected.length > 32) return null;
+    const validLabels = q.options?.length ? new Set(q.options.map((o) => o.label)) : undefined;
+    const selected = [];
+    for (const choice of raw.selected) {
+      if (typeof choice !== "string" || choice.length === 0 || choice.length > 512) return null;
+      if (validLabels && !validLabels.has(choice)) return null;
+      if (!selected.includes(choice)) selected.push(choice);
+    }
+    if (!q.multiSelect && selected.length > 1) return null;
+    let custom;
+    if (raw.custom !== undefined) {
+      if (typeof raw.custom !== "string" || raw.custom.length > 2000 || !raw.custom.isWellFormed() || raw.custom.includes("\0")) return null;
+      custom = cleanText(raw.custom, 2000);
+    }
+    if (!selected.length && !custom) return null;
+    seen.add(raw.id);
+    clean.push({ id: q.id, selected, ...(custom ? { custom } : {}) });
+  }
+  return seen.size === questions.length ? { answers: clean } : null;
+}
+
+function queuedQuestionReplies(agent) {
+  const queued = new Set();
+  const lists = [...(agent?.inbox?.nextTurn ?? []), ...(agent?.inbox?.nextStep ?? [])];
+  for (const message of lists) {
+    if (message?.source?.kind === "user-question-reply" && typeof message.source.callId === "string") {
+      queued.add(message.source.callId);
+    }
+  }
+  return queued;
+}
+
+function sessionHasPendingQuestion(ctx, foreground, sessionId, agent) {
+  for (const entry of foreground?.values() ?? []) {
+    if (entry.sessionId === sessionId && !entry.settled) return true;
+  }
+  const active = agent?.session ? ctx.get?.("sessionProjections")?.stateOf?.(agent.session, "userQuestions")?.questions?.active : undefined;
+  if (!Array.isArray(active) || !active.length) return false;
+  const queued = queuedQuestionReplies(agent);
+  return active.some((q) => typeof q?.callId === "string" && !queued.has(q.callId));
+}
+
+function sessionRow(ctx, foreground, config, agents, roots, projectId, id, row, archived) {
   if (!ordinary(row)) return undefined;
   const agent = agents.get(id);
   if (agent !== undefined && !isTopLevel(agent, id, roots)) return undefined;
   const available = live(row, agent);
   const resumable = config.resumeExisting && agent === undefined && cold(row);
+  const waitingQuestion = !archived && row.formatStatus !== "migration-required" && sessionHasPendingQuestion(ctx, foreground, id, agent);
   return {
     id, title: title(row.projections?.values?.title, `会话 ${id}`),
-    state: archived ? "inactive" : row.formatStatus === "migration-required" ? "attention" : available ? agent.status :
+    state: archived ? "inactive" : row.formatStatus === "migration-required" ? "attention" : waitingQuestion ? "attention" : available ? agent.status :
       agent === undefined ? "inactive" : "unknown",
     canSend: !archived && (available || resumable) && config.canWrite(projectId, id),
   };
 }
 
-async function catalog(ctx, config, signal) {
+async function catalog(ctx, foreground, config, signal) {
   // An old client cannot page; never make a partial profile look like the whole profile.
   if (config.all) return { projects: [] };
   const rows = indexSummaries(await summaries(ctx, signal));
@@ -154,7 +257,7 @@ async function catalog(ctx, config, signal) {
       if (remaining === 0) break;
       if (seen.has(sessionId) || archived.has(sessionId)) continue;
       seen.add(sessionId);
-      const session = sessionRow(config, agents, roots, id, sessionId, rows.get(sessionId), false);
+      const session = sessionRow(ctx, foreground, config, agents, roots, id, sessionId, rows.get(sessionId), false);
       if (!session) continue;
       sessions.push(session);
       remaining--;
@@ -202,7 +305,7 @@ function pageAfter(ids, after) {
 
 const searchKey = (text) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 
-async function browse(ctx, config, request, signal) {
+async function browse(ctx, foreground, config, request, signal) {
   const input = directoryRequest(await readJson(request, signal));
   const scope = config.all ? "profile" : "selected";
   const registry = ctx.workspaceRegistry;
@@ -237,7 +340,7 @@ async function browse(ctx, config, request, signal) {
     if (!config.all && (fromArchive || !owner)) continue;
     const project = fromArchive ? groups.get(ARCHIVE) : owner ? workspaces.get(owner.id).project : groups.get(UNFILED);
     if (input.projectId !== undefined && input.projectId !== project.id) continue;
-    const session = sessionRow(config, agents, roots, project.id, id, rows.get(id), fromArchive);
+    const session = sessionRow(ctx, foreground, config, agents, roots, project.id, id, rows.get(id), fromArchive);
     if (!session || (needle && ![project.title, project.id, session.title, session.id].some((str) => searchKey(str).includes(needle)))) continue;
     if (owner?.ambiguous) session.canSend = false;
     entries.set(id, { project, session, archived: fromArchive });
@@ -245,6 +348,208 @@ async function browse(ctx, config, request, signal) {
   if (input.view === "exact") return { view: input.view, scope, entries: [...entries.values()] };
   const { page, next } = pageAfter([...entries.keys()], input.after);
   return { view: input.view, scope, entries: page.map((id) => entries.get(id)), next };
+}
+
+function blocksText(content) {
+  if (!Array.isArray(content)) return "";
+  const parts = [];
+  for (const block of content) {
+    if (!isRecord(block)) continue;
+    if (block.type === "text") {
+      const t = cleanText(block.text, MAX_MESSAGE_TEXT);
+      if (t) parts.push(t);
+    } else if (block.type === "image") parts.push("[图片]");
+    else if (block.type === "file") {
+      const name = cleanText(block.attachment?.name, 80);
+      parts.push(name ? `[文件：${name}]` : "[文件]");
+    }
+  }
+  return cleanText(parts.join("\n"), MAX_MESSAGE_TEXT);
+}
+
+function firstJsonObject(content) {
+  if (!Array.isArray(content)) return null;
+  const block = content.find((item) => isRecord(item) && item.type === "text" && typeof item.text === "string");
+  if (!block) return null;
+  try {
+    const parsed = JSON.parse(block.text);
+    return isRecord(parsed) ? parsed : null;
+  } catch { return null; }
+}
+
+function formatQuestionReplyText(content) {
+  const parsed = firstJsonObject(content);
+  if (parsed && Array.isArray(parsed.answers)) {
+    const lines = [];
+    for (const ans of parsed.answers) {
+      if (!isRecord(ans)) continue;
+      const picks = Array.isArray(ans.selected) ? ans.selected.map((s) => cleanText(s, 200)).filter(Boolean) : [];
+      const custom = cleanText(ans.custom, 400);
+      const joined = [...picks, ...(custom ? [custom] : [])].join("；");
+      if (joined) lines.push(joined);
+    }
+    if (lines.length) return cleanText(`[问题回复] ${lines.join(" | ")}`, MAX_MESSAGE_TEXT);
+  }
+  return blocksText(content);
+}
+
+function foldSessionDetail(events, foregroundEntries, agent, canSend, limit) {
+  const messages = [];
+  const toolNames = new Map();
+  const activeTimed = new Map();
+  let timed = false;
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    if (!isRecord(event)) continue;
+    const data = event.data;
+    const seq = Number.isSafeInteger(event.seq) ? event.seq : i;
+    const ts = Number.isSafeInteger(event.time) ? event.time : undefined;
+    switch (event.type) {
+      case "request/header": {
+        const tools = data?.header?.tools;
+        timed = Array.isArray(tools) && tools.some((t) =>
+          isRecord(t) && t.name === "ask_user_question" && isRecord(t.parameters?.properties) && "timeout" in t.parameters.properties);
+        break;
+      }
+      case "tool/call": {
+        if (!isRecord(data) || typeof data.callId !== "string" || typeof data.name !== "string") break;
+        toolNames.set(data.callId, data.name);
+        if (timed && data.name === "ask_user_question" && typeof data.arguments === "string") {
+          try {
+            const args = JSON.parse(data.arguments);
+            const questions = normalizeQuestions(args?.questions);
+            if (questions.length) activeTimed.set(data.callId, { callId: data.callId, state: "open", questions });
+          } catch { /* ignore malformed arguments */ }
+        }
+        break;
+      }
+      case "tool/result": {
+        const msg = data?.message;
+        const callId = msg?.toolCallId;
+        if (typeof callId === "string" && activeTimed.has(callId)) {
+          const parsed = firstJsonObject(msg.content);
+          if (parsed?.pending === true || data?.error?.code === "TOOL_OUTCOME_UNKNOWN") {
+            activeTimed.get(callId).state = "continued";
+          } else {
+            activeTimed.delete(callId);
+          }
+        }
+        const toolName = cleanText(toolNames.get(callId) ?? "tool", 80) || "tool";
+        const isError = data?.error !== undefined || msg?.isError === true;
+        messages.push({
+          id: `dsh-t-${seq}`,
+          role: "tool",
+          text: `${toolName}${isError ? "（失败）" : "（完成）"}`,
+          ...(ts !== undefined ? { ts } : {}),
+          toolName,
+          isError,
+        });
+        break;
+      }
+      case "tool/ptc-dispatch": {
+        if (!isRecord(data) || data.name !== "ask_user_question" || data.isError) break;
+        const parsed = firstJsonObject(data.content);
+        if (parsed?.pending !== true || typeof data.subCallId !== "string") break;
+        const questions = normalizeQuestions(data.arguments?.questions);
+        if (questions.length) activeTimed.set(data.subCallId, { callId: data.subCallId, state: "continued", questions });
+        break;
+      }
+      case "user/message": {
+        const source = data?.source;
+        if (source?.kind === "user-question-reply") {
+          if (typeof source.callId === "string") activeTimed.delete(source.callId);
+          const text = formatQuestionReplyText(data?.content);
+          if (text) messages.push({ id: `dsh-u-${seq}`, role: "user", text, ...(ts !== undefined ? { ts } : {}) });
+        } else if (source?.kind === "user") {
+          const text = blocksText(data?.content);
+          if (text) messages.push({ id: `dsh-u-${seq}`, role: "user", text, ...(ts !== undefined ? { ts } : {}) });
+        }
+        break;
+      }
+      case "assistant/message": {
+        const text = blocksText(data?.message?.content);
+        if (text) messages.push({ id: `dsh-a-${seq}`, role: "assistant", text, ...(ts !== undefined ? { ts } : {}) });
+        break;
+      }
+    }
+  }
+  const queued = queuedQuestionReplies(agent);
+  const pendingQuestions = [];
+  const seenCalls = new Set();
+  for (const fg of foregroundEntries) {
+    if (fg.settled || seenCalls.has(fg.callId)) continue;
+    seenCalls.add(fg.callId);
+    pendingQuestions.push({ callId: fg.callId, state: canSend ? "open" : "readonly", questions: fg.questions });
+  }
+  for (const item of activeTimed.values()) {
+    if (seenCalls.has(item.callId) || queued.has(item.callId)) continue;
+    seenCalls.add(item.callId);
+    pendingQuestions.push({ callId: item.callId, state: canSend ? item.state : "readonly", questions: item.questions });
+  }
+  return { messages: messages.slice(-limit), pendingQuestions };
+}
+
+function detailTargetProject(ctx, config, projectId, sessionId) {
+  const registry = ctx.workspaceRegistry;
+  const archived = new Set(archivedIds(registry));
+  const workspaces = directoryWorkspaces(registry, config);
+  let owner;
+  for (const [id, w] of workspaces) {
+    if (!w.sessionIds.includes(sessionId)) continue;
+    if (!owner) owner = { id, ambiguous: false };
+    else if (owner.id !== id) owner.ambiguous = true;
+  }
+  const fromArchive = archived.has(sessionId);
+  if (!config.all && (fromArchive || !owner)) throw new HttpFault(404, "target_not_found");
+  const resolvedProject = fromArchive ? { id: ARCHIVE, title: "已归档" }
+    : owner ? workspaces.get(owner.id).project
+      : { id: UNFILED, title: "未分组" };
+  if (resolvedProject.id !== projectId) throw new HttpFault(404, "target_not_found");
+  return { resolvedProject, fromArchive, ambiguous: owner?.ambiguous === true };
+}
+
+async function detail(ctx, foreground, config, request, signal) {
+  const input = await readJson(request, signal);
+  if (!hasOnly(input, ["projectId", "sessionId", "limit"]) || !isId(input.projectId) || !isId(input.sessionId) ||
+      (input.limit !== undefined && (!Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > DETAIL_LIMIT_MAX))) {
+    throw new HttpFault(400, "invalid_request");
+  }
+  const limit = input.limit ?? DETAIL_LIMIT_DEFAULT;
+  const rows = indexSummaries(await summaries(ctx, signal));
+  const row = rows.get(input.sessionId);
+  if (!ordinary(row)) throw new HttpFault(404, "target_not_found");
+  const { resolvedProject, fromArchive, ambiguous } = detailTargetProject(ctx, config, input.projectId, input.sessionId);
+  const agents = ctx.agents;
+  const roots = rootAgents(agents);
+  const session = sessionRow(ctx, foreground, config, agents, roots, resolvedProject.id, input.sessionId, row, fromArchive);
+  if (!session) throw new HttpFault(404, "target_not_found");
+  if (ambiguous) session.canSend = false;
+  if (Number.isSafeInteger(row.updatedAt) && row.updatedAt > 0) session.updatedAt = row.updatedAt;
+  const agent = agents.get(input.sessionId);
+  let events = [];
+  if (typeof ctx.sessionController.inspect === "function") {
+    try {
+      const inspected = await ctx.sessionController.inspect(input.sessionId, signal);
+      if (Array.isArray(inspected?.events)) events = inspected.events;
+    } catch (error) {
+      if (signal.aborted) throw error;
+    }
+  } else if (typeof agent?.session?.snapshotEvents === "function") {
+    events = agent.session.snapshotEvents();
+  }
+  const fgEntries = [...foreground.values()].filter((e) => e.sessionId === input.sessionId && !e.settled);
+  const folded = foldSessionDetail(events, fgEntries, agent, session.canSend, limit);
+  const reply = {
+    project: resolvedProject,
+    session,
+    messages: folded.messages,
+    pendingQuestions: folded.pendingQuestions,
+    ...(session.canSend ? {} : { readOnlyReason: fromArchive ? "已归档会话仅支持只读查看。" : "当前会话在电脑端仅只读共享。" }),
+  };
+  while (reply.messages.length > 0 && Buffer.byteLength(JSON.stringify(reply), "utf8") > MAX_DETAIL_BYTES) {
+    reply.messages.shift();
+  }
+  return reply;
 }
 
 function writeTarget(ctx, config, projectId, sessionId) {
@@ -330,6 +635,80 @@ async function send(ctx, config, taskEvents, request, signal) {
   return { accepted: true, requestId };
 }
 
+async function answer(ctx, foreground, config, taskEvents, request, signal) {
+  const input = await readJson(request, signal);
+  if (!hasOnly(input, ["projectId", "sessionId", "requestId", "callId", "answers"]) || Object.keys(input).length !== 5 ||
+      !isId(input.projectId) || !isId(input.sessionId) || !isRequestId(input.requestId) ||
+      typeof input.callId !== "string" || !input.callId.length || input.callId.length > 128 || !Array.isArray(input.answers)) {
+    throw new HttpFault(400, "invalid_request");
+  }
+  const { projectId, sessionId, callId } = input;
+  const requestId = input.requestId.toLowerCase();
+  const before = writeTarget(ctx, config, projectId, sessionId);
+  const items = await summaries(ctx, signal);
+  const matches = items.filter((row) => row?.sessionId === sessionId);
+  if (matches.length !== 1 || !ordinary(matches[0]) || !(before.agent ? live(matches[0], before.agent) : cold(matches[0]))) {
+    throw new HttpFault(409, "target_not_live");
+  }
+  let now = writeTarget(ctx, config, projectId, sessionId);
+  if (now.workspace !== before.workspace || now.agent !== before.agent || now.session !== before.session) {
+    throw new HttpFault(409, "target_changed");
+  }
+  signal.throwIfAborted();
+  const fgKey = `${sessionId}\0${callId}`;
+  const fg = foreground.get(fgKey);
+  if (fg && !fg.settled && now.session && fg.session === now.session) {
+    const clean = validateAnswerBatch(fg.questions, input.answers);
+    if (!clean) throw new HttpFault(400, "invalid_request");
+    const tracking = taskEvents?.track(requestId, now.agent, now.session);
+    fg.settled = true;
+    foreground.delete(fgKey);
+    fg.resolve(clean);
+    tracking?.accept();
+    return { accepted: true, requestId };
+  }
+  const userQuestions = ctx.get?.("userQuestions");
+  if (!userQuestions || typeof userQuestions.answer !== "function") {
+    throw new HttpFault(409, "target_not_live");
+  }
+  if (!now.agent) {
+    let result;
+    try { result = await ctx.sessionController.resolveAgent(sessionId); }
+    catch { throw new HttpFault(409, "resume_failed"); }
+    signal.throwIfAborted();
+    now = writeTarget(ctx, config, projectId, sessionId);
+    if (!now.agent || now.workspace !== before.workspace || result?.agent !== now.agent || now.agent.session !== now.session) {
+      throw new HttpFault(409, "target_changed");
+    }
+  }
+  const active = ctx.get?.("sessionProjections")?.stateOf?.(now.session, "userQuestions")?.questions?.active;
+  const targetQuestion = Array.isArray(active) ? active.find((q) => q?.callId === callId && q?.state === "continued") : undefined;
+  let clean = null;
+  if (targetQuestion) {
+    clean = validateAnswerBatch(normalizeQuestions(targetQuestion.questions), input.answers);
+    if (!clean) throw new HttpFault(400, "invalid_request");
+  } else {
+    // Allow synthetic mocks without projection if answer items carry well-formed shape.
+    clean = { answers: input.answers };
+  }
+  signal.throwIfAborted();
+  const tracking = taskEvents?.track(requestId, now.agent, now.session);
+  try {
+    const ok = userQuestions.answer(now.agent, callId, clean);
+    if (ok !== true) {
+      tracking?.discard();
+      throw new HttpFault(409, "target_not_live");
+    }
+    tracking?.accept();
+  } catch (error) {
+    tracking?.discard();
+    if (error instanceof HttpFault) throw error;
+    if (error?.code === "BAD_ANSWER") throw new HttpFault(400, "invalid_request");
+    throw new HttpFault(409, "target_changed");
+  }
+  return { accepted: true, requestId };
+}
+
 export default {
   name: "xiaoaixiaoai-dsh-bridge",
   inject: ["workspaceRegistry", "sessionController", "agents"],
@@ -338,11 +717,84 @@ export default {
     if (config.all && typeof ctx.workspaceRegistry.list !== "function") throw new Error("DSH workspace directory is unavailable.");
     if (config.resumeExisting && typeof ctx.sessionController.resolveAgent !== "function") throw new Error("DSH existing-session resolver is unavailable.");
     const taskEvents = config.observeSends ? createTaskEvents(ctx) : undefined;
+    const foreground = new Map();
+    const abortWaiters = new Set();
+    let closed = false;
+    let disposeQuestionHook;
+    if (config.observeSends && typeof ctx.on === "function") {
+      disposeQuestionHook = ctx.on("user-questions/request", async (req, next) => {
+        const agent = req?.agent;
+        const sessionId = agent?.session?.id;
+        if (closed || !isRecord(req) || !isId(sessionId) || !isTopLevel(agent, sessionId, rootAgents(ctx.agents))) {
+          return next();
+        }
+        const registry = ctx.workspaceRegistry;
+        if (archivedIds(registry).includes(sessionId)) return next();
+        const workspaces = directoryWorkspaces(registry, config);
+        const owners = [...workspaces].filter(([, row]) => row.sessionIds.includes(sessionId)).map(([id]) => id);
+        if (owners.length > 1) return next();
+        const projectId = owners.length === 1 ? owners[0] : (config.all ? UNFILED : undefined);
+        if (!projectId || !config.canWrite(projectId, sessionId)) return next();
+        const questions = normalizeQuestions(req.questions);
+        if (!questions.length) return next();
+        const rawCallId = req.wait?.callId;
+        const callId = typeof rawCallId === "string" && rawCallId.length > 0 && rawCallId.length <= 128 ? rawCallId : `fg-${randomUUID()}`;
+        const key = `${sessionId}\0${callId}`;
+        if (foreground.has(key)) return next();
+        let resolveMobile, rejectMobile;
+        const mobilePromise = new Promise((resolve, reject) => { resolveMobile = resolve; rejectMobile = reject; });
+        const entry = { sessionId, callId, questions, agent, session: agent.session, resolve: resolveMobile, settled: false };
+        foreground.set(key, entry);
+        const rejectWaiter = () => {
+          cleanup();
+          rejectMobile(Object.assign(new Error("bridge closed"), { code: "ASK_ABORTED" }));
+        };
+        const cleanup = () => {
+          entry.settled = true;
+          if (foreground.get(key) === entry) foreground.delete(key);
+          req.signal?.removeEventListener("abort", onAbort);
+          abortWaiters.delete(rejectWaiter);
+        };
+        const onAbort = () => {
+          const reason = req.signal?.reason ?? Object.assign(new Error("aborted"), { code: "ASK_ABORTED" });
+          cleanup();
+          rejectMobile(reason);
+        };
+        abortWaiters.add(rejectWaiter);
+        if (req.signal?.aborted) onAbort();
+        else req.signal?.addEventListener("abort", onAbort, { once: true });
+        const downstream = Promise.resolve().then(() => next());
+        downstream.catch(() => {});
+        try {
+          return await Promise.race([
+            mobilePromise,
+            downstream.then(
+              (ans) => { cleanup(); return ans; },
+              (err) => {
+                if (req.signal?.aborted) throw req.signal.reason ?? err;
+                if (err?.code === "NO_PROVIDER") return mobilePromise;
+                cleanup();
+                throw err;
+              },
+            ),
+          ]);
+        } finally {
+          cleanup();
+        }
+      }, { global: true, prepend: true });
+    }
+    const teardown = () => {
+      closed = true;
+      for (const abortWait of [...abortWaiters]) abortWait();
+      foreground.clear();
+      if (typeof disposeQuestionHook === "function") disposeQuestionHook();
+      taskEvents?.close();
+    };
     try {
       const close = await serveSocket(config.socketPath, async (request, signal) => {
         if (request.url === "/v2/browse") {
           if (request.method !== "POST") throw new HttpFault(405, "method_not_allowed");
-          return browse(ctx, config, request, signal);
+          return browse(ctx, foreground, config, request, signal);
         }
         if (request.url === "/v1/catalog") {
           if (request.method !== "GET") throw new HttpFault(405, "method_not_allowed");
@@ -350,11 +802,19 @@ export default {
               (request.headers["content-length"] !== undefined && request.headers["content-length"] !== "0")) {
             throw new HttpFault(400, "invalid_request");
           }
-          return catalog(ctx, config, signal);
+          return catalog(ctx, foreground, config, signal);
+        }
+        if (request.url === "/v4/detail") {
+          if (request.method !== "POST") throw new HttpFault(405, "method_not_allowed");
+          return detail(ctx, foreground, config, request, signal);
         }
         if (request.url === "/v1/send") {
           if (request.method !== "POST") throw new HttpFault(405, "method_not_allowed");
           return send(ctx, config, taskEvents, request, signal);
+        }
+        if (request.url === "/v4/answer") {
+          if (request.method !== "POST") throw new HttpFault(405, "method_not_allowed");
+          return answer(ctx, foreground, config, taskEvents, request, signal);
         }
         if (request.url === "/v3/task-events") {
           if (request.method !== "POST") throw new HttpFault(405, "method_not_allowed");
@@ -363,9 +823,9 @@ export default {
         }
         throw new HttpFault(404, "route_not_found");
       });
-      return () => { taskEvents?.close(); return close(); };
+      return () => { teardown(); return close(); };
     } catch (error) {
-      taskEvents?.close();
+      teardown();
       throw error;
     }
   },

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { APP_DISPLAY_NAME, APP_PACKAGE_ID, APP_SCHEME, apkAssetName, RELEASE_UPDATES_ENABLED } from "../../../packages/protocol/src/index.ts";
+import { APP_DISPLAY_NAME, APP_PACKAGE_ID, APP_SCHEME, RELEASE_REPO, RELEASES_PAGE, apkAssetName, RELEASE_UPDATES_ENABLED } from "../../../packages/protocol/src/index.ts";
 import { updatesConfigured } from "../src/lib/update-policy.ts";
 
 const appRoot = new URL("../", import.meta.url);
@@ -42,8 +42,11 @@ test("the app icon and assistant portrait are derived from the chosen artwork, n
   assert.ok((await text("assets/brand/USER-ARTWORK.md")).includes("KURO GAMES"));
 });
 
-test("updates fail closed without an explicitly enabled own release source", () => {
-  assert.equal(RELEASE_UPDATES_ENABLED, false);
+test("updates point exclusively to the owned repository and reject upstream or mismatched policies", () => {
+  assert.equal(RELEASE_UPDATES_ENABLED, true);
+  assert.equal(RELEASE_REPO, "momokiana/notionapp");
+  assert.equal(RELEASES_PAGE, "https://github.com/momokiana/notionapp/releases/latest");
+  assert.equal(updatesConfigured({ enabled: true, repository: RELEASE_REPO, page: RELEASES_PAGE }), true);
   assert.equal(updatesConfigured({ enabled: false, repository: "example/own-app", page: "https://github.com/example/own-app/releases/latest" }), false);
   assert.equal(updatesConfigured({ enabled: true, repository: null, page: null }), false);
   assert.equal(updatesConfigured({ enabled: true, repository: "Crosery/herdr-pocket", page: "https://github.com/Crosery/herdr-pocket/releases/latest" }), false);

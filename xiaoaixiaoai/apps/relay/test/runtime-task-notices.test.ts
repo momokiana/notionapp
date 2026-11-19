@@ -258,7 +258,7 @@ test("a real matching receipt must come from the routed host socket for a viewer
   await upload(host, event(p.requestId, "attention"), true); // A confirmed task survives a normal host reconnect.
 
   for (const [modify, response] of [
-    [{ runtime: "codex" }, receipt],
+    [{ runtime: "antigravity" }, receipt],
     [{ projectId: "p".repeat(97) }, receipt],
     [{ sessionId: "not/a/session" }, receipt],
     [{ requestId: "not-a-uuid" }, receipt],
@@ -282,6 +282,20 @@ test("a real matching receipt must come from the routed host socket for a viewer
   await relayCall;
   await upload(host, event(relayParams.requestId, "progress"), false);
   assert.equal(f.tables().runtime_tasks!.length, 1);
+
+  // Codex send and DSH answer RPCs also bind task notifications for the originating viewer.
+  const codexSend = { ...sendParams(), runtime: "codex" as const };
+  await (await dispatch(main, host, computer, codexSend)).finish(receipt(codexSend.requestId));
+  await upload(host, event(codexSend.requestId, "completed"), true);
+  const dshAnswerReqId = randomUUID();
+  const ansRpcId = randomUUID();
+  const ansStart = host.frames.length;
+  main.send({ type: "rpc", id: ansRpcId, to: computer.device.id, method: "runtimeSessions.answer", params: { runtime: "dsh", projectId: PROJECT, sessionId: SESSION, requestId: dshAnswerReqId, callId: "call-1", answers: [] } });
+  const ansFwd = await host.frame("rpc", (x) => host.frames.indexOf(x) >= ansStart);
+  host.send({ type: "rpc_result", id: ansFwd.id, ...receipt(dshAnswerReqId) });
+  await main.frame("rpc_result", (x) => x.id === ansRpcId);
+  await upload(host, event(dshAnswerReqId, "completed"), true);
+  assert.equal(f.tables().runtime_tasks!.length, 3);
   assert.ok(!f.logs.join("\n").includes(INPUT));
 });
 

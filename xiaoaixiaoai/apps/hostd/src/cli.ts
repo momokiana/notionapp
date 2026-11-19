@@ -15,7 +15,7 @@ import { localRelayProxy } from "./relay-proxy.ts";
 import { IS_WINDOWS } from "./platform.ts";
 import { lineSplitter } from "./util.ts";
 import { SERVICE_HELP, control as controlAt, serviceCommand } from "./winservice.ts";
-import { UPDATE_HELP, updateCommand, versionCommand, watchForUpdates } from "@xiaoaixiaoai/update";
+import { updateCommand, updateHelpText, versionCommand, watchForUpdates } from "@xiaoaixiaoai/update";
 
 const HELP = `xiaoaixiaoai ${HOSTD_VERSION} — put this computer's herdr agents in your pocket
 
@@ -30,7 +30,7 @@ Setup
         Register only (same options). POCKET_ADMIN_TOKEN, when set, also registers directly.
   run [--read-only] [--allow <deviceId,...>] [--runtime-config <absolute-path>] [--runtime-only]
       [--relay-proxy http://127.0.0.1:<port>]
-        Keep this computer online. Opt in to explicitly selected DSH/Codex sessions using a private local config.
+        Keep this computer online. Opt in to explicitly selected DSH/Codex/Antigravity sessions using a private local config.
         With --runtime-only, do not read or expose Herdr terminals or Uniflo history.
         --relay-proxy explicitly uses a trusted local HTTP CONNECT proxy for an HTTPS relay (Node 24.5+).
   pair  (alias: invite)
@@ -39,7 +39,7 @@ Setup
 ${SERVICE_HELP}
 
 Updates
-${UPDATE_HELP}
+${updateHelpText()}
 
 Look and talk (works with any computer on the relay)
   devices                     List paired devices.
