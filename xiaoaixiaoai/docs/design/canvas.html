@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Herdr Pocket · 设计画布</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&family=Nunito:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #4a3b5c; --muted: #6e6280; --faint: #8e849c; --ghost: #b3aabd; --line: #f1e4ec;
+    --s0: #ffffff; --s1: #fff9fb; --s2: #fbf3f8; --s3: #f5ecf3;
+    --accent: #ff7ea8; --accent-c: #ffe3ec;
+    --work: #1e9a7c; --work-c: #ddf5ee; --block: #e2556a; --block-c: #ffe6e9;
+    --done: #7a5fd6; --done-c: #eee8ff; --idle: #7d7390; --idle-c: #f2eff5;
+    --kl: "ZCOOL KuaiLe", "Nunito", system-ui, sans-serif;
+    --ui: "Nunito", system-ui, -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+    --mono: "JetBrains Mono", "Maple Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; font-family: var(--ui); color: var(--ink); }
+  body {
+    background-color: #e9edf5;
+    background-image: radial-gradient(#c9d0de 1.2px, transparent 1.2px);
+    background-size: 24px 24px;
+  }
+  #viewport { position: fixed; inset: 0; cursor: grab; touch-action: none; }
+  #viewport.panning { cursor: grabbing; }
+  #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  #wires { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+  #wires path { fill: none; transition: opacity .15s, stroke-width .15s; }
+  #wires path.why { stroke-width: 2.2; opacity: .55; }
+  #wires path.nav { stroke: var(--accent); stroke-width: 3.2; stroke-dasharray: 10 7; opacity: .75; }
+  #wires path.arch { stroke: #7d8699; stroke-width: 3; opacity: .9; }
+  #wires path.hl { stroke-width: 4.5; opacity: 1; }
+  #wires text { font: 700 15px var(--ui); fill: #4f5562; paint-order: stroke; stroke: #e9edf5; stroke-width: 6px; }
+  body.only-why #wires .nav, body.only-nav #wires .why { opacity: 0; }
+
+  /* ---------- nodes (ComfyUI-like) ---------- */
+  .node {
+    position: absolute; background: #fff; border-radius: 14px; border: 1.5px solid #cfd6e4;
+    box-shadow: 0 6px 24px rgba(40, 55, 90, .10); min-width: 200px;
+  }
+  .node.sel { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(75,103,180,.25), 0 6px 24px rgba(40,55,90,.12); }
+  .nh {
+    display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid #e3e7ef;
+    border-radius: 13px 13px 0 0; background: #f4f6fb; cursor: move; user-select: none; font-weight: 800; font-size: 15px;
+  }
+  .nh .kind { margin-left: auto; font-size: 11px; font-weight: 700; color: var(--faint); letter-spacing: .04em; }
+  .nh .num {
+    width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; color: #fff; flex: none;
+  }
+  .nb { padding: 12px 14px 14px; font-size: 14px; line-height: 1.6; }
+  .node.screen { background: #f7f9fd; }
+  .node.screen .nh { background: linear-gradient(90deg, #dee8ff, #f4f6fb); font-family: var(--kl); font-weight: 400; font-size: 19px; }
+  .node.screen .nb { padding: 14px; }
+  .node.why { width: 330px; }
+  .node.why .nb p { margin: 0 0 8px; }
+  .node.why .alt { color: var(--muted); font-size: 13px; background: #f6f7fb; border-radius: 8px; padding: 6px 9px; margin-top: 6px; }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+  .tag { font-size: 12px; font-weight: 800; padding: 2px 9px; border-radius: 99px; color: #fff; }
+  .src { font-size: 12px; color: var(--faint); border-top: 1px dashed #dde2ec; margin-top: 8px; padding-top: 7px; }
+  .node.arch { width: 300px; }
+  .node.arch .nh { background: #eef1f9; font-size: 16px; }
+  .node.note .nh { background: #fff5e8; }
+  .node.hl-node { border-color: #f0a35c; box-shadow: 0 0 0 4px rgba(240,163,92,.3); }
+
+  /* ---------- toolbar ---------- */
+  #bar {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 6px; align-items: center;
+    background: rgba(255,255,255,.92); backdrop-filter: blur(12px); border: 1px solid #d6dce8; border-radius: 99px;
+    padding: 6px; box-shadow: 0 8px 30px rgba(40,55,90,.18); z-index: 10; flex-wrap: wrap; max-width: 96vw; justify-content: center;
+  }
+  #bar button {
+    font: 700 13px var(--ui); border: 0; background: transparent; padding: 8px 13px; border-radius: 99px; cursor: pointer; color: var(--ink);
+  }
+  #bar button:hover { background: #eef1f9; }
+  #bar button.on { background: var(--accent-c); color: var(--accent); }
+  #bar .sep { width: 1px; height: 22px; background: #dce0e8; margin: 0 2px; }
+  #zoom { font: 700 12px var(--mono); color: var(--faint); min-width: 48px; text-align: center; }
+  #title {
+    position: fixed; left: 18px; top: 14px; z-index: 10; font-family: var(--kl); font-size: 24px; color: var(--ink);
+    background: rgba(255,255,255,.85); padding: 6px 16px; border-radius: 99px; border: 1px solid #d6dce8;
+  }
+
+  /* ---------- phone (Android, 360 x 760 dp) ---------- */
+  .phone {
+    width: 360px; height: 760px; border-radius: 34px; border: 9px solid #1d212b; position: relative; overflow: hidden;
+    background: linear-gradient(180deg, #fff6f9 0%, #f7f2ff 80%); font-family: var(--ui); color: var(--ink);
+    display: flex; flex-direction: column; font-size: 14px;
+  }
+  .phone .sb { height: 26px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; font-size: 12px; font-weight: 700; }
+  .phone .gest { height: 18px; flex: none; display: grid; place-items: center; }
+  .phone .gest::after { content: ""; width: 110px; height: 4px; border-radius: 4px; background: #1e232e; opacity: .55; }
+  .kl { font-family: var(--kl); }
+  .appbar { height: 56px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 4px; }
+  .appbar .t { flex: 1; min-width: 0; }
+  .appbar .t b { display: block; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .appbar .t span { display: block; font-size: 12px; color: var(--faint); }
+  .ib { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-size: 20px; flex: none; color: var(--muted); }
+  .scroll { flex: 1; overflow: hidden; padding: 0 14px; display: flex; flex-direction: column; gap: 10px; }
+  .card { background: var(--s0); border-radius: 14px; border: 1px solid #e6eaf2; padding: 12px; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 800; padding: 3px 9px; border-radius: 99px; white-space: nowrap; }
+  .st-working { color: var(--work); background: var(--work-c); }
+  .st-blocked { color: var(--block); background: var(--block-c); }
+  .st-done { color: var(--done); background: var(--done-c); }
+  .st-idle { color: var(--idle); background: var(--idle-c); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+  .breath { animation: breath 2.4s ease-in-out infinite; }
+  @keyframes breath { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+  .chips { display: flex; gap: 6px; overflow: hidden; }
+  .chip { flex: none; font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 10px; border: 1px solid #cfd6e4; background: var(--s0); color: var(--muted); }
+  .chip.on { background: var(--accent-c); border-color: transparent; color: var(--accent); }
+  .grp { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 800; color: var(--muted); margin-top: 2px; }
+  .grp .on { color: var(--work); }
+  .grp .off { color: var(--ghost); }
+  .row { display: flex; gap: 10px; align-items: center; padding: 9px 10px; border-radius: 14px; background: var(--s0); border: 1px solid #e9ecf3; }
+  .row.need { border-color: #f3c6b0; background: #fffaf7; }
+  .av { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; font-weight: 800; font-size: 15px; flex: none; }
+  .av.c { background: #ffe1cf; color: #b9572f; } .av.o { background: #dcefff; color: #3b6fb0; } .av.x { background: #e3f6e9; color: #2f8a52; }
+  .row .m { flex: 1; min-width: 0; }
+  .row .m b { display: block; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .m span { display: block; font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .r { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 11px; color: var(--ghost); }
+  .navbar { height: 72px; flex: none; display: flex; background: #f0f3fa; border-top: 1px solid #e3e7ef; }
+  .navbar div { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 12px; font-weight: 700; color: var(--muted); position: relative; }
+  .navbar i { font-style: normal; width: 56px; height: 30px; border-radius: 99px; display: grid; place-items: center; font-size: 17px; }
+  .navbar .on i { background: var(--accent-c); }
+  .navbar .on { color: var(--ink); }
+  .badge { position: absolute; top: 9px; left: calc(50% + 8px); background: var(--block); color: #fff; font-size: 10px; font-weight: 800; border-radius: 99px; padding: 0 5px; line-height: 16px; }
+  .btn { height: 52px; border-radius: 99px; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 800; font-size: 15px; }
+  .btn.fill { background: var(--accent); color: #fff; }
+  .btn.tonal { background: var(--accent-c); color: var(--accent); }
+  .btn.text { color: var(--accent); height: 44px; }
+  .field { border: 1.5px solid #b9c2d4; border-radius: 10px; padding: 14px 12px 10px; position: relative; background: var(--s0); font-size: 15px; color: var(--ghost); }
+  .field label { position: absolute; top: -9px; left: 10px; background: #eef3fd; padding: 0 4px; font-size: 12px; color: var(--accent); font-weight: 700; }
+  .seg { display: flex; background: var(--s2); border-radius: 99px; padding: 3px; margin: 0 14px 8px; flex: none; }
+  .seg div { flex: 1; text-align: center; padding: 7px 0; border-radius: 99px; font-weight: 800; font-size: 13px; color: var(--muted); }
+  .seg .on { background: #fff; color: var(--ink); box-shadow: 0 1px 4px rgba(30,35,46,.12); }
+  .bub { max-width: 82%; padding: 9px 12px; border-radius: 18px; font-size: 13.5px; line-height: 1.5; }
+  .bub.me { align-self: flex-end; background: #ffe3ec; border-bottom-right-radius: 6px; }
+  .bub.ai { align-self: flex-start; background: var(--s0); border: 1px solid #e6eaf2; border-bottom-left-radius: 6px; }
+  .think { align-self: flex-start; font-size: 12px; font-weight: 700; color: #6b578f; background: #ece5fb; padding: 4px 10px; border-radius: 99px; }
+  .tool { align-self: stretch; border: 1px solid #e1e6ef; border-radius: 12px; background: var(--s0); font-size: 12.5px; overflow: hidden; }
+  .tool .h { display: flex; gap: 6px; align-items: center; padding: 7px 10px; font-weight: 800; }
+  .tool .h span { color: var(--faint); font-weight: 600; font-family: var(--mono); font-size: 11.5px; }
+  .tool .h em { margin-left: auto; font-style: normal; color: var(--ghost); }
+  .tool pre { margin: 0; padding: 6px 10px 8px; font: 11px/1.5 var(--mono); color: var(--muted); background: #f3f5fa; border-top: 1px solid #e8ecf3; }
+  .tool.err { border-color: #f0c2bf; } .tool.err .h { color: #a54743; }
+  .ask { margin: 0 10px 6px; background: var(--block-c); border-radius: 18px; padding: 10px 12px; flex: none; }
+  .ask p { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: #7a3a1f; }
+  .ask .bs { display: flex; gap: 8px; }
+  .ask .bs div { flex: 1; height: 44px; border-radius: 99px; display: grid; place-items: center; font-weight: 800; }
+  .ask .y { background: var(--block); color: #fff; } .ask .n { background: #fff; color: var(--block); } .ask .v { background: transparent; color: #7a3a1f; flex: .7 !important; }
+  .keys { display: flex; gap: 6px; padding: 0 10px 6px; flex: none; overflow: hidden; }
+  .key { flex: none; font: 700 12.5px var(--mono); padding: 0 12px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: var(--s0); border: 1px solid #d5dbe7; color: var(--muted); }
+  .key.danger { border: 1.5px solid #e2a19e; color: #a54743; margin-left: auto; }
+  .composer { margin: 0 10px 6px; display: flex; gap: 8px; align-items: center; background: rgba(251,252,255,.97); border-radius: 28px; padding: 6px 6px 6px 16px; border: 1px solid #dde3ee; box-shadow: 0 4px 16px rgba(60,80,130,.10); flex: none; }
+  .composer .in { flex: 1; color: var(--ghost); font-size: 14px; }
+  .send { width: 48px; height: 48px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 19px; font-weight: 800; }
+  .term { flex: 1; margin: 0 10px 8px; background: #1c1f28; color: #d6dbe6; border-radius: 14px; padding: 10px 11px; font: 11px/1.55 var(--mono); overflow: hidden; position: relative; white-space: pre; }
+  .term .g { color: #8fd3a8; } .term .y { color: #f0c674; } .term .d { color: #7d8597; }
+  .tbar { display: flex; align-items: center; gap: 8px; margin: 0 14px 8px; font-size: 12px; color: var(--faint); font-weight: 700; flex: none; }
+  .jump { position: absolute; right: 10px; bottom: 10px; background: #fff; color: var(--ink); font: 800 12px var(--ui); padding: 7px 12px; border-radius: 99px; box-shadow: 0 3px 10px rgba(0,0,0,.35); white-space: normal; }
+  .fab { position: absolute; right: 16px; bottom: 98px; height: 56px; padding: 0 20px; border-radius: 16px; background: var(--accent-c); color: var(--accent); display: flex; align-items: center; gap: 8px; font-weight: 800; box-shadow: 0 4px 14px rgba(60,80,130,.22); }
+  .scrim { position: absolute; inset: 0; background: rgba(20,24,32,.42); }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; background: #fbfcff; border-radius: 28px 28px 0 0; padding: 8px 18px 0; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .handle { width: 36px; height: 4px; border-radius: 4px; background: #c5cbd7; margin: 4px 0 2px; }
+  .code { font-family: var(--kl); font-size: 40px; letter-spacing: .06em; color: var(--ink); }
+  .code span { color: var(--accent); }
+  .qr { width: 150px; height: 150px; border-radius: 14px; background:
+      conic-gradient(from 90deg at 2px 2px, transparent 25%, #1e232e 0) 0 0/15px 15px; border: 8px solid #fff; outline: 1px solid #e3e7ef; opacity: .85; }
+  .bar { width: 100%; height: 6px; border-radius: 6px; background: #e3e7ef; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 72%; background: var(--accent); border-radius: 6px; }
+  .set { display: flex; align-items: center; gap: 10px; padding: 12px 4px; border-bottom: 1px solid #eceff5; }
+  .set:last-child { border-bottom: 0; }
+  .set b { flex: 1; font-size: 14px; } .set span { font-size: 13px; color: var(--faint); }
+  .sw { width: 44px; height: 26px; border-radius: 99px; background: var(--accent); position: relative; }
+  .sw::after { content: ""; position: absolute; right: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; }
+  .sw.off { background: #c7cdd8; } .sw.off::after { right: auto; left: 3px; }
+  .swatch { width: 26px; height: 26px; border-radius: 50%; display: inline-block; margin-left: 4px; border: 3px solid #fff; outline: 1px solid #dce0e8; }
+  .swatch.on { outline: 2.5px solid var(--ink); }
+  .h2 { font-size: 12px; font-weight: 800; color: var(--faint); margin: 4px 4px -4px; letter-spacing: .06em; }
+
+  /* anchors + badges */
+  [data-a] { position: relative; }
+  [data-a].hl { outline: 3px solid #f0a35c; outline-offset: 2px; border-radius: 12px; }
+  .bdg {
+    position: absolute; top: -9px; right: -9px; width: 22px; height: 22px; border-radius: 50%; color: #fff; font: 800 12px/22px var(--ui);
+    text-align: center; z-index: 3; box-shadow: 0 0 0 2px #fff; pointer-events: none;
+  }
+  /* thumb zone overlay (Hoober-style map for one-handed use) */
+  .thumb { position: absolute; inset: 0; pointer-events: none; display: none; z-index: 4; mix-blend-mode: multiply; }
+  body.thumb-r .thumb, body.thumb-l .thumb { display: block; }
+  body.thumb-r .thumb { background: radial-gradient(circle at 92% 104%, rgba(46,170,120,.42) 0 46%, rgba(240,190,60,.36) 46% 72%, rgba(225,90,80,.34) 72%); }
+  body.thumb-l .thumb { background: radial-gradient(circle at 8% 104%, rgba(46,170,120,.42) 0 46%, rgba(240,190,60,.36) 46% 72%, rgba(225,90,80,.34) 72%); }
+  .legend-z { display: flex; gap: 10px; font-size: 13px; margin-top: 6px; }
+  .legend-z i { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 4px; }
+  table.tk { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.tk td { padding: 5px 4px; border-bottom: 1px solid #eef0f5; vertical-align: middle; }
+  .sq { display: inline-block; width: 18px; height: 18px; border-radius: 5px; vertical-align: -4px; margin-right: 4px; border: 1px solid rgba(0,0,0,.08); }
+</style>
+</head>
+<body class="thumb-off">
+<div id="title"><img src="../brand/logo.svg" style="width:30px;height:30px;border-radius:8px;vertical-align:-6px;margin-right:6px">Herdr Pocket · 设计画布</div>
+<div id="viewport"><div id="world"><svg id="wires"></svg></div></div>
+<div id="bar">
+  <button data-act="fit">适应全部</button>
+  <span id="zoom">100%</span>
+  <span class="sep"></span>
+  <button data-go="g-arch">架构</button>
+  <button data-go="s1">首次连接</button>
+  <button data-go="s2">总览</button>
+  <button data-go="s3">对话</button>
+  <button data-go="s4">终端</button>
+  <button data-go="s5">设备</button>
+  <button data-go="s6">配对</button>
+  <button data-go="s7">设置</button>
+  <span class="sep"></span>
+  <button data-thumb="r" title="快捷键 H">拇指热区：关</button>
+  <button data-wires="all">连线：全部</button>
+</div>
+
+<script>
+/* =====================================================================
+   Principles. Every rationale card cites one or more of these.
+   "judge" marks a product decision with no direct research behind it.
+   ===================================================================== */
+const P = {
+  thumb:   { t: "拇指热区",   c: "#2e9c78", src: "Steven Hoober, “How Do Users Really Hold Mobile Devices?”（UXmatters, 2013）：约 49% 的人单手握持，拇指最容易够到屏幕中下部，顶部和远侧角落最难够到。" },
+  fitts:   { t: "费茨定律",   c: "#3b7fc4", src: "Fitts（1954）：目标越大、离手指越近，点得越快越准。" },
+  hick:    { t: "希克定律",   c: "#7a5cc2", src: "Hick（1952）/ Hyman（1953）：可选项越多，做决定越慢。" },
+  load:    { t: "渐进披露",   c: "#8a6d3b", src: "Nielsen Norman Group「Progressive Disclosure」：先给最常用的，细节按需展开，降低认知负荷。" },
+  status:  { t: "状态可见",   c: "#2b8fa3", src: "Nielsen 十大可用性原则 #1：系统状态可见，及时反馈。" },
+  prevent: { t: "防误触",     c: "#c4513c", src: "Nielsen #5 防错：破坏性、不可撤销的操作要提高触发成本或二次确认。" },
+  control: { t: "用户掌控",   c: "#4b67b4", src: "Nielsen #3 用户控制与自由：随时能退出、能回到原处，不被系统强行带走。" },
+  recog:   { t: "识别优于回忆", c: "#5a7d2a", src: "Nielsen #6：让用户看见选项，而不是记住它。" },
+  platform:{ t: "安卓规范",   c: "#3f6f5f", src: "Material Design 3：触控目标 ≥ 48dp、底部导航栏 3–5 项、FAB、底部弹窗、对话框按钮用动词；Android 系统返回手势。" },
+  a11y:    { t: "无障碍",     c: "#6b6f7c", src: "WCAG 2.2：1.4.1 不只靠颜色传达信息；1.4.3 文字对比度 ≥ 4.5:1；1.4.4 文字可放大。" },
+  emotion: { t: "情绪设计",   c: "#d0607e", src: "Don Norman《Emotional Design》（2004）：外观带来的愉悦感会提高人对可用性的感受和对小问题的容忍。" },
+  chunk:   { t: "组块记忆",   c: "#9a6a18", src: "Miller（1956）：把信息切成小块更容易记住和转述。" },
+  judge:   { t: "产品判断",   c: "#8b8f99", src: "没有现成研究直接支持，是按这个产品的使用场景做的取舍，可以讨论。" },
+};
+
+const STATUS = (s, label, breath) => `<span class="pill st-${s}"><i class="dot${breath ? " breath" : ""}"></i>${label}</span>`;
+const SB = `<div class="sb"><span>9:41</span><span>▾ ◢ ▮</span></div>`;
+const GEST = `<div class="gest"></div>`;
+const NAV = (on, badgeA) => `<div class="navbar" data-a="nav">
+  <div class="${on === 0 ? "on" : ""}"><i>🐑</i>Agents${badgeA ? `<span class="badge">${badgeA}</span>` : ""}</div>
+  <div class="${on === 1 ? "on" : ""}"><i>💻</i>设备</div>
+  <div class="${on === 2 ? "on" : ""}"><i>⚙︎</i>设置</div></div>`;
+const DETAIL_BAR = `<div class="appbar"><div class="ib" data-a="back">←</div>
+  <div class="t"><b>新需求推送问题</b><span>claude-code · MacBook Pro</span></div>${STATUS("blocked", "需要你", true)}<div class="ib">⋮</div></div>`;
+const KEYS = `<div class="keys" data-a="keys"><div class="key">Enter</div><div class="key">Esc</div><div class="key">↑</div><div class="key">↓</div><div class="key">Tab</div><div class="key danger">Ctrl+C</div></div>`;
+const COMPOSER = `<div class="composer" data-a="composer"><div class="in">跟它说点什么…</div><div class="send">↑</div></div>`;
+
+/* =====================================================================
+   Screens (Android, 360 × 760 dp). Design mock-ups, not app screenshots.
+   ===================================================================== */
+const SCREENS = [
+  { id: "s1", title: "① 首次连接", x: 0, y: 0, html: `${SB}
+    <div class="scroll" style="padding:0 22px;gap:14px">
+      <div style="height:40px"></div>
+      <img src="../brand/logo.svg" data-a="logo" style="width:120px;height:120px;border-radius:30px;box-shadow:0 8px 24px rgba(75,103,180,.22);align-self:center" />
+      <div class="kl" style="font-size:30px;text-align:center">把 agent 装进口袋</div>
+      <div style="text-align:center;color:var(--muted);font-size:14px;line-height:1.6">随时看看每台电脑上的 agent 在忙什么，<br/>卡住了就顺手回它一句。</div>
+      <div style="height:14px"></div>
+      <div class="field" data-a="server"><label>你的服务器地址</label>https://pocket.example.com</div>
+      <div style="font-size:12px;color:var(--faint);margin-top:-6px">填你自己部署的服务器，比如你租的云服务器。</div>
+    </div>
+    <div style="padding:0 18px 6px;display:flex;flex-direction:column;gap:4px;flex:none">
+      <div class="btn fill" data-a="scan">⌗ 扫码配对</div>
+      <div class="btn text" data-a="manual">手动输入配对码</div>
+      <div style="text-align:center;font-size:12.5px;color:var(--faint);padding:4px 0 6px" data-a="demo">还没有服务器？<b style="color:var(--accent)">先用演示数据逛逛</b></div>
+    </div>${GEST}` },
+
+  { id: "s2", title: "② Agents 总览", x: 1000, y: 0, html: `${SB}
+    <div class="appbar" style="padding-left:14px"><div class="t"><b class="kl" style="font-size:24px;font-weight:400">下午好呀 🐑</b></div>
+      <span class="pill st-working" data-a="conn"><i class="dot"></i>云服务器 · 38ms</span><div class="ib" data-a="search">⌕</div></div>
+    <div class="scroll">
+      <div class="card" data-a="overview" style="display:flex;gap:8px;padding:10px">
+        <div style="flex:1;background:var(--block-c);border-radius:12px;padding:8px 10px"><div class="kl" style="font-size:28px;color:var(--block)">2</div><div style="font-size:12px;font-weight:800;color:var(--block)">需要你</div></div>
+        <div style="flex:1;background:var(--work-c);border-radius:12px;padding:8px 10px"><div class="kl" style="font-size:28px;color:var(--work)">5</div><div style="font-size:12px;font-weight:800;color:var(--work)">工作中</div></div>
+        <div style="flex:1;background:var(--done-c);border-radius:12px;padding:8px 10px"><div class="kl" style="font-size:28px;color:var(--done)">7</div><div style="font-size:12px;font-weight:800;color:var(--done)">已完成</div></div>
+      </div>
+      <div class="chips" data-a="chips"><div class="chip on">全部</div><div class="chip">需要你</div><div class="chip">工作中</div><div class="chip">已完成</div><div class="chip">＋ 显示终端</div></div>
+      <div class="grp" data-a="group"><span class="on">●</span>MacBook Pro<span style="font-weight:600;color:var(--ghost)">· 在线 · 12</span></div>
+      <div class="row need" data-a="rowblocked"><div class="av c">C</div><div class="m"><b>新需求推送问题</b><span>博客平台 / 5 · blog-platform · 第 20 轮</span></div><div class="r">${STATUS("blocked", "需要你", true)}2 分钟</div></div>
+      <div class="row" data-a="rowworking"><div class="av o">O</div><div class="m"><b>API: 持续对接接口需求</b><span>博客平台 / 1 · blog-platform</span></div><div class="r">${STATUS("working", "工作中", true)}刚刚</div></div>
+      <div class="row"><div class="av c">C</div><div class="m"><b>桌宠动画改用 Rust 渲染</b><span>桌面宠物 / 1 · desk-pet · 第 40 轮</span></div><div class="r">${STATUS("working", "工作中", true)}1 分钟</div></div>
+      <div class="row"><div class="av o">O</div><div class="m"><b>清理临时文件</b><span>测试 / 1 · tmp · 第 4 轮</span></div><div class="r">${STATUS("done", "已完成")}12 分钟</div></div>
+      <div class="grp"><span class="off">●</span>云服务器<span style="font-weight:600;color:var(--ghost)">· 离线 · 3 小时前</span></div>
+      <div class="row" style="opacity:.55"><div class="av x">X</div><div class="m"><b>部署脚本整理</b><span>ops / 1 · deploy</span></div><div class="r">${STATUS("idle", "空闲")}</div></div>
+    </div>${NAV(0, 2)}${GEST}` },
+
+  { id: "s3", title: "③ Agent 详情 · 对话", x: 2300, y: 0, html: `${SB}${DETAIL_BAR}
+    <div class="seg" data-a="tabs"><div class="on">对话</div><div>终端</div><div>信息</div></div>
+    <div class="scroll" style="gap:8px">
+      <div class="bub me">新需求入池后要通知程耀宇，你看下推送逻辑</div>
+      <div class="think" data-a="think">💭 想了 12 秒 ›</div>
+      <div class="tool" data-a="tool"><div class="h">🛠 运行命令 <span>pnpm test notify</span><em>›</em></div><pre>✓ 42 passed  · 3.1s</pre></div>
+      <div class="tool err"><div class="h">✗ 修改文件 <span>src/notify.ts</span><em>›</em></div><pre>old_string not found</pre></div>
+      <div class="bub ai" data-a="md">改好了，一共<b>两处</b>：<br/>1. 入池时写一条通知任务<br/>2. 推送失败会重试 3 次<br/><span style="color:var(--faint)">要不要直接推到测试环境？</span></div>
+    </div>
+    <div class="ask" data-a="ask"><p>🙋 它在等你：要推到测试环境吗？</p><div class="bs"><div class="y">是（y）</div><div class="n">否（n）</div><div class="v">看终端</div></div></div>
+    ${KEYS}${COMPOSER}${GEST}` },
+
+  { id: "s4", title: "④ Agent 详情 · 终端", x: 3600, y: 0, html: `${SB}${DETAIL_BAR}
+    <div class="seg"><div>对话</div><div class="on">终端</div><div>信息</div></div>
+    <div class="tbar" data-a="refresh"><span class="pill st-working"><i class="dot breath"></i>自动刷新 · 2 秒</span><span style="margin-left:auto">⧉ 复制</span></div>
+    <div class="term" data-a="term"><span class="d">❯ pnpm test notify</span>
+<span class="g">✓</span> notify/queue.test.ts (18)
+<span class="g">✓</span> notify/retry.test.ts (24)
+
+ Test Files  <span class="g">2 passed</span> (2)
+      Tests  <span class="g">42 passed</span> (42)
+   Duration  3.1s
+
+<span class="y">●</span> 改好了，一共两处：
+  1. 入池时写一条通知任务
+  2. 推送失败会重试 3 次
+
+  要不要直接推到测试环境？
+  <span class="y">❯ 1. 是</span>
+    2. 否
+<div class="jump" data-a="jump">↓ 跳到最新</div></div>
+    ${KEYS}${COMPOSER}${GEST}` },
+
+  { id: "s5", title: "⑤ 设备", x: 0, y: 1750, html: `${SB}
+    <div class="appbar" style="padding-left:14px"><div class="t"><b class="kl" style="font-size:24px;font-weight:400">我的设备</b></div><div class="ib">⌕</div></div>
+    <div class="scroll">
+      <div class="h2">电脑</div>
+      <div class="row" data-a="host"><div class="av o">💻</div><div class="m"><b>MacBook Pro</b><span>macOS · hc · herdr · Uniflo</span></div><div class="r"><span class="pill st-working"><i class="dot"></i>在线</span>15 个 agent</div></div>
+      <div class="row"><div class="av o">🖥</div><div class="m"><b>云服务器</b><span>Linux · hc</span></div><div class="r"><span class="pill st-idle"><i class="dot"></i>离线</span>3 小时前</div></div>
+      <div class="h2">手机和其他客户端</div>
+      <div class="row"><div class="av x">📱</div><div class="m"><b>我的 Pixel（这台）</b><span>Android</span></div><div class="r"><span class="pill st-working"><i class="dot"></i>在线</span></div></div>
+      <div class="row" data-a="menu"><div class="av x">📱</div><div class="m"><b>旧手机</b><span>Android · 3 天前</span></div><div class="ib" style="width:40px;height:40px">⋮</div></div>
+      <div class="card" style="font-size:13px;color:var(--muted)" data-a="revoke"><b style="color:var(--ink)">移除「旧手机」？</b><br/>它会立刻断开，之后要重新配对才能用。<div style="display:flex;justify-content:flex-end;gap:16px;margin-top:10px;font-weight:800"><span style="color:var(--accent)">取消</span><span style="color:#a54743">移除并断开</span></div></div>
+    </div>
+    <div class="fab" data-a="fab">＋ 配对新设备</div>${NAV(1, 2)}${GEST}` },
+
+  { id: "s6", title: "⑥ 配对新设备（底部弹窗）", x: 1000, y: 1750, html: `${SB}
+    <div class="scroll" style="opacity:.6"><div class="row"><div class="av o">💻</div><div class="m"><b>MacBook Pro</b><span>macOS</span></div></div></div>
+    <div class="scrim"></div>
+    <div class="sheet" data-a="sheet">
+      <div class="handle"></div>
+      <div style="display:flex;width:100%;align-items:center"><b class="kl" style="font-size:22px;font-weight:400;flex:1">配对新设备</b><div class="ib">✕</div></div>
+      <div class="seg" style="width:100%;margin:0"><div class="on">📱 手机</div><div>💻 电脑</div></div>
+      <div class="qr" data-a="qr"></div>
+      <div class="code" data-a="code">MEOW<span>-</span>4821</div>
+      <div style="width:100%" data-a="countdown"><div class="bar"><i></i></div><div style="font-size:12.5px;color:var(--faint);text-align:center;margin-top:6px">7:12 后失效 · 只能用一次</div></div>
+      <div style="display:flex;gap:10px;width:100%;margin:4px 0 6px" data-a="copy"><div class="btn tonal" style="flex:1">复制配对码</div><div class="btn fill" style="flex:1">完成</div></div>
+      ${GEST}
+    </div>` },
+
+  { id: "s7", title: "⑦ 设置", x: 2000, y: 1750, html: `${SB}
+    <div class="appbar" style="padding-left:14px"><div class="t"><b class="kl" style="font-size:24px;font-weight:400">设置</b></div></div>
+    <div class="scroll">
+      <div class="card" data-a="srv" style="display:flex;gap:10px;align-items:center"><div class="av o" style="width:44px;height:44px">☁️</div><div style="flex:1"><b>云服务器</b><div style="font-size:12px;color:var(--faint)">pocket.example.com · 已连接 · 38ms</div></div><span style="color:var(--accent);font-weight:800;font-size:13px">更换</span></div>
+      <div class="h2">外观</div>
+      <div class="card" style="padding:2px 12px">
+        <div class="set"><b>主题</b><span>跟随系统 ›</span></div>
+        <div class="set" data-a="accent"><b>主色</b><i class="swatch on" style="background:#4b67b4"></i><i class="swatch" style="background:#236185"></i><i class="swatch" style="background:#c9708a"></i><i class="swatch" style="background:#2e9c78"></i></div>
+        <div class="set" data-a="scale"><b>对话字号</b><span style="flex:0 0 120px;height:4px;background:var(--accent);border-radius:4px;position:relative"><i style="position:absolute;left:45%;top:-8px;width:20px;height:20px;border-radius:50%;background:var(--accent)"></i></span></div>
+      </div>
+      <div class="h2">通用</div>
+      <div class="card" style="padding:2px 12px">
+        <div class="set"><b>列表里显示纯终端</b><i class="sw off"></i></div>
+        <div class="set"><b>有 agent 需要你时提醒</b><i class="sw"></i></div>
+      </div>
+      <div class="h2">关于</div>
+      <div class="card" style="padding:2px 12px"><div class="set"><b>版本</b><span>0.1.0 · 协议 v1</span></div></div>
+      <div style="text-align:center;color:#a54743;font-weight:800;padding:8px" data-a="logout">退出登录</div>
+    </div>${NAV(2, 2)}${GEST}` },
+];
+
+/* =====================================================================
+   Rationale cards: [screen, anchor, tags, title, why, alternative?]
+   ===================================================================== */
+const WHY = [
+  ["s1", "logo", ["emotion", "recog"], "Logo：一张用 >_ 组成的小羊脸",
+    "沿用 herdr 原版的公羊和终端提示符：> 是眨眼，_ 是嘴；云朵羊头、薰衣草卷角、粉蝴蝶结负责可爱。只用 5 个颜色、没有渐变和描边，24px 下仍能认出卷角和表情。安卓图标四边铺满底色，由系统套圆角或圆形遮罩。"],
+  ["s1", "server", ["control", "prevent"], "让你自己填服务器，不内置默认地址",
+    "数据走哪台服务器由你决定，一眼可见。输入时自动补 https://、去掉末尾斜杠；连不上会直接说「连不上这台服务器」，不进入下一步。",
+    "内置官方服务器：省一步，但你的对话会经过别人的机器。"],
+  ["s1", "scan", ["thumb", "fitts", "recog"], "主按钮「扫码配对」：全宽、56dp、在屏幕最下方",
+    "首次使用只需要做这一件事，所以它最大、最近。二维码里已经包含服务器地址和配对码，扫一下两项都填好，不用在手机上敲长网址。"],
+  ["s1", "manual", ["hick", "load"], "「手动输入」降为文字按钮",
+    "备用路径要能找到，但视觉上明显弱于主按钮。两个一样醒目的按钮会让人停下来比较。",
+    "两个并排的实心按钮：选择变成两选一，首屏犹豫更多。"],
+  ["s1", "demo", ["emotion", "judge"], "没有服务器也能先逛演示",
+    "先让人看到「装进口袋」是什么样，再决定要不要去部署服务器，降低第一次打开的门槛。演示数据会明确标出「演示」。"],
+
+  ["s2", "overview", ["status", "recog"], "三个数字回答「有没有要我处理的」",
+    "打开 App 的第一个问题通常是：有没有 agent 卡住等我？「需要你」放最左、用暖色。点任意数字等于直接筛选，不用再去找筛选器。"],
+  ["s2", "rowblocked", ["a11y", "status", "judge"], "排序按「需要你 → 工作中 → 已完成 → 空闲」",
+    "不按时间排，因为在手机上打开主要是为了处理卡住的 agent。状态同时用颜色、文字和底色区分，色弱用户也能分清；文字与底色对比度按 ≥ 4.5:1 选色。"],
+  ["s2", "rowworking", ["status", "emotion", "a11y"], "「呼吸」小圆点表示正在干活",
+    "2.4 秒一次的缓慢明暗，告诉你它还活着，又不像转圈那样让人焦虑。系统开了「移除动画」时改为静止圆点。"],
+  ["s2", "chips", ["hick", "load"], "默认隐藏纯终端（shell）",
+    "本机实测 23 个终端里有 8 个只是空 shell，混在列表里全是噪音。「＋显示终端」一直在筛选条上，想看时一点就出来，不用进设置。"],
+  ["s2", "group", ["status", "control"], "按电脑分组，离线电脑灰显不消失",
+    "电脑离线时它的组还在，标「离线 · 3 小时前」。如果直接消失，人会怀疑是 App 坏了还是电脑关了。"],
+  ["s2", "conn", ["thumb", "status"], "连接状态放右上角：只看不点",
+    "顶部是拇指最难够到的地方，正适合放「瞄一眼就够」的信息。真正断线时会在顶部变成整条提示，点它重连。"],
+  ["s2", "nav", ["platform", "thumb", "status"], "底部导航只有 3 个入口，Agents 上带红色数字",
+    "3 个入口都在拇指舒适区。在「设备」或「设置」页时，也能从红色数字知道有几个 agent 在等你。"],
+  ["s2", "search", ["thumb", "judge"], "搜索放顶部图标",
+    "agent 通常只有十几个，搜索是低频操作，放到较难够的位置，把底部空间留给高频操作。"],
+
+  ["s3", "back", ["platform", "control"], "系统返回手势同样有效",
+    "左上角的返回只是一个看得见的出口。安卓用户更常用侧滑返回，两种方式都回到总览，并保留原来的滚动位置。"],
+  ["s3", "tabs", ["load", "recog"], "对话 / 终端 / 信息 三个分段",
+    "默认显示排版好的对话，给人读；终端是原始画面，用来核对细节。同一个 agent 的两种视图在原地切换，不跳新页面。"],
+  ["s3", "ask", ["thumb", "fitts", "status"], "「它在等你」卡片贴在输入框上方",
+    "卡住时最常见的回答就是「是 / 否」。按钮做成 44dp 高、放在拇指最容易按的位置，单手一下就能回。顶部只显示状态，不放操作按钮。",
+    "放在页面顶部的横幅：最显眼，但单手够不到，得换手或另一只手去点。"],
+  ["s3", "think", ["load"], "思考过程默认折叠，只显示用时",
+    "推理内容往往很长，大部分时候不用看。保留一个可点开的小标签，需要时再展开。"],
+  ["s3", "tool", ["recog", "load"], "工具调用和结果合成一张卡",
+    "标题只写「做了什么」（运行命令 / 修改文件）和对象，输出只预览 1–3 行；失败的卡片整张标红。滑一眼就能看出哪步出了错。"],
+  ["s3", "md", ["emotion", "a11y"], "回答按 Markdown 排版，正文用圆体",
+    "列表、加粗、代码块都排好，比终端原文好读得多。正文用 Nunito 圆体，标题用站酷快乐体，可爱但不影响长时间阅读。字号可以在设置里放大。"],
+  ["s3", "keys", ["prevent", "thumb"], "快捷键一排横滑；Ctrl+C 要按住才发",
+    "Enter、Esc、↑↓、Tab 都是终端常用键。Ctrl+C 会打断 agent 正在做的事，所以放最右、红框，并且要按住 0.5 秒才发送，发出时震动一下。",
+    "Ctrl+C 和其他键一样一点就发：口袋误触一次，agent 就停了。"],
+  ["s3", "composer", ["thumb", "fitts", "platform", "status"], "输入框固定在底部，发送键在右下",
+    "右手拇指最舒服的位置给发送键，直径 48dp。键盘弹起时输入框跟着上移；发送成功轻震一下，失败就把文字留在框里，不会丢。"],
+
+  ["s4", "term", ["recog", "judge"], "终端固定暗底，用等宽字体",
+    "终端程序的配色本来就是按暗底设计的，跟随浅色主题反而看不清。等宽字体计划用 Maple Mono：圆润、中英文对齐。"],
+  ["s4", "refresh", ["status", "judge"], "只在需要时自动刷新，并写明正在刷新",
+    "页面可见、agent 在干活时每 2 秒拉一次，空闲时停止，省电也省流量。「自动刷新」标签让你知道画面是实时的。"],
+  ["s4", "jump", ["control"], "往上翻历史时不强行拉回底部",
+    "你在看旧输出时，新内容不会把画面拽走，右下角出现「跳到最新」，想回来时点一下。"],
+
+  ["s5", "host", ["recog", "status"], "电脑行写出它接了哪些数据源",
+    "hc、herdr、Uniflo 三个标签说明这台电脑能看到什么。比如没有 Uniflo，就只能看终端，看不到排版好的对话。点电脑会回到总览，并只显示这台电脑的 agent。"],
+  ["s5", "menu", ["prevent", "load"], "「移除设备」收在 ⋮ 菜单里",
+    "低频、有破坏性的操作，不放在列表上随手可点的位置。"],
+  ["s5", "revoke", ["prevent", "platform"], "确认框写清后果，按钮用动词",
+    "「移除并断开」而不是「确定」：用户读按钮就知道会发生什么。取消在左、危险操作红字，符合 Material 对话框规范。"],
+  ["s5", "fab", ["thumb", "platform", "fitts"], "「配对新设备」是右下角的大按钮",
+    "这是这一页唯一的主要操作，放在右手拇指的舒适区，带文字标签，不会让人猜一个＋号是什么意思。"],
+
+  ["s6", "sheet", ["platform", "control"], "用底部弹窗，不跳新页面",
+    "配对是一两分钟的小任务。弹窗保留了背后的设备列表，下滑或点 ✕ 就关掉，不会迷路。"],
+  ["s6", "code", ["chunk", "emotion"], "配对码 = 动物叫声词 + 4 位数字",
+    "MEOW-4821 分成两块，好念、好记，电话里也说得清。大字号用站酷快乐体，配对这一步也带点可爱。"],
+  ["s6", "qr", ["recog", "fitts"], "二维码优先，码作为备用",
+    "手机对手机、电脑对手机都是扫一下就好。二维码里包含服务器地址，对方不用手动填。"],
+  ["s6", "countdown", ["status", "prevent"], "倒计时和「只能用一次」写在码旁边",
+    "安全限制提前讲清楚，而不是等用户撞上「配对码无效」才知道。进度条直观显示还剩多少时间。"],
+  ["s6", "copy", ["thumb", "platform"], "两个按钮并排在弹窗底部",
+    "「复制配对码」方便发给另一台电脑；「完成」是实心主按钮，放在右边，右手拇指最顺手。"],
+
+  ["s7", "srv", ["status", "prevent"], "服务器卡片放在最上面",
+    "这是最重要的设置，也是排查问题时第一个要看的。点「更换」会先说明：换服务器需要重新配对。"],
+  ["s7", "accent", ["emotion", "judge"], "4 个低饱和主色可选",
+    "雾蓝、黛青、樱粉、薄荷，主色只占画面很小一部分（参考 dsh-Go 的「Mist Glass」：中性色约 70%、文字线条约 25%、强调色 ≤ 5%）。这是设计参考，不是研究结论。"],
+  ["s7", "scale", ["a11y"], "对话字号 0.85–1.3 倍",
+    "agent 的回复常常很长，看得清比塞得多更重要。同时也跟随系统的字体大小设置。"],
+  ["s7", "logout", ["prevent", "judge"], "退出登录放在列表最末尾",
+    "要滚到底才能看到，并且需要二次确认。它会让这台手机失去访问权限，属于低频、高代价的操作。"],
+];
+
+/* Navigation edges between screens: [fromScreen, anchor, toScreen, label] */
+const NAV_EDGES = [
+  ["s1", "scan", "s2", "配对成功"],
+  ["s2", "rowblocked", "s3", "点一行"],
+  ["s3", "tabs", "s4", "切到终端"],
+  ["s2", "nav", "s5", "底栏 · 设备"],
+  ["s5", "fab", "s6", "配对新设备"],
+  ["s5", "host", "s2", "只看这台"],
+  ["s2", "nav", "s7", "底栏 · 设置"],
+];
+
+/* Info nodes (overview, principles, tokens, architecture) */
+const legendRows = Object.values(P).map((p) =>
+  `<div style="margin-bottom:8px"><span class="tag" style="background:${p.c}">${p.t}</span> <span style="font-size:13px;color:var(--muted)">${p.src}</span></div>`).join("");
+const INFO = [
+  { id: "i-howto", title: "📖 怎么看这张画布", x: 0, y: -1450, w: 500, cls: "note", html: `
+    <p style="margin:0 0 8px">这是 <b>Herdr Pocket 安卓版</b>的设计稿。手机 App 正在实现，做完后会用真实截图对照这里。</p>
+    <ul style="margin:0 0 8px;padding-left:20px">
+      <li>拖空白处平移；滚轮或双指缩放；拖节点标题移动节点。</li>
+      <li>手机里每个<b>彩色数字</b>连到一张<b>依据卡</b>，写着为什么这么设计、依据什么。</li>
+      <li><b style="color:var(--accent)">蓝色虚线</b>是页面跳转；灰色实线是系统架构。</li>
+      <li>按 <b>H</b> 或底部按钮叠加<b>拇指热区</b>（右手 / 左手）。</li>
+      <li>鼠标停在依据卡上，会高亮它说的那个按钮。</li>
+    </ul>
+    <div class="legend-z"><span><i style="background:rgba(46,170,120,.6)"></i>单手舒适</span><span><i style="background:rgba(240,190,60,.6)"></i>要伸一下</span><span><i style="background:rgba(225,90,80,.55)"></i>难够到</span></div>
+    <div class="src">热区示意按 Hoober（2013）的单手握持图近似绘制，按 6.5 英寸左右的安卓手机估算，不是精确测量。</div>` },
+  { id: "i-principles", title: "🧭 依据从哪来", x: 560, y: -1450, w: 640, html: legendRows },
+  { id: "i-tokens", title: "🎨 视觉规范", x: 1260, y: -1450, w: 470, html: `
+    <table class="tk">
+      <tr><td>标题 / 品牌</td><td class="kl" style="font-size:20px">站酷快乐体 ZCOOL KuaiLe</td></tr>
+      <tr><td>正文</td><td style="font-weight:600">Nunito 圆体（中文回落到系统黑体）</td></tr>
+      <tr><td>终端 / 代码</td><td style="font-family:var(--mono)">Maple Mono（计划）</td></tr>
+      <tr><td>主色</td><td><i class="sq" style="background:#ff7ea8"></i>#FF7EA8 <i class="sq" style="background:#ffe3ec"></i>#FFE3EC <i class="sq" style="background:#c9b6f7"></i>#C9B6F7</td></tr>
+      <tr><td>页面底色</td><td><i class="sq" style="background:linear-gradient(#fff6f9,#f7f2ff)"></i>#FFF6F9 → #F7F2FF · 文字 #4A3B5C</td></tr>
+      <tr><td>状态</td><td>${STATUS("blocked", "需要你")} ${STATUS("working", "工作中")} ${STATUS("done", "已完成")} ${STATUS("idle", "空闲")}</td></tr>
+      <tr><td>圆角</td><td>6 · 10 · 14（卡片）· 20 · 28（输入框 / 弹窗）· 全圆</td></tr>
+      <tr><td>间距</td><td>4 · 8 · 12 · 16 · 24，页边距 14–16</td></tr>
+      <tr><td>触控</td><td>≥ 48dp（主要按钮 52–56dp）</td></tr>
+      <tr><td>动效</td><td>160 / 240ms，呼吸 2.4s，系统「移除动画」时关闭</td></tr>
+    </table>
+    <div class="src">甜美萌系：粉、薰衣草紫、奶油白，文字用深梅紫代替纯黑。装饰（✦、蝴蝶结）每屏最多 1–2 处，克制优先。代码字体在画布里用 JetBrains Mono 代替显示。</div>` },
+];
+
+INFO.push({ id: "i-brand", title: "🐑 Logo", x: 1260, y: -820, w: 470, html: `
+  <div style="display:flex;gap:16px;align-items:center">
+    <img src="../brand/logo.svg" style="width:150px;border-radius:34px">
+    <div style="display:flex;flex-direction:column;gap:8px;align-items:center"><img src="../brand/logo.svg" style="width:48px;border-radius:11px"><img src="../brand/logo.svg" style="width:24px;border-radius:6px"></div>
+    <div style="background:#1c1f28;border-radius:14px;padding:12px;display:flex;gap:10px;align-items:center"><img src="../brand/logo-mono.svg" style="width:56px"><img src="../brand/logo-mono.svg" style="width:24px"></div>
+  </div>
+  <p style="margin:10px 0 0">云朵羊头 + 薰衣草卷角 + 粉蝴蝶结；脸就是终端提示符：<code>&gt;</code> 是眨眼，<code>_</code> 是嘴。安卓图标四边铺满底色，由系统套遮罩。右侧是通知栏单色版。</p>
+  <div class="src">文件：docs/brand/logo.svg、logo-mono.svg</div>` });
+
+const ARCH = [
+  { id: "a-phone", title: "📱 手机 App", x: 1850, y: -1450, html: `Expo（React Native），<b>安卓优先</b>，组件库 react-native-paper（Material 3）。<br/>看状态、看对话、看终端、发消息和按键。服务器地址自己填。` },
+  { id: "a-relay", title: "☁️ 中转服务 relay", x: 2350, y: -1180, html: `部署在你的云服务器，前面加 Caddy 自动 HTTPS。<br/>一次性配对码注册设备；设备令牌只存哈希；在线状态实时推送；转发调用。` },
+  { id: "a-hostA", title: "💻 电脑 A · herdr-pocket run", x: 2850, y: -1450, html: `每台电脑跑一个守护进程，主动连上中转服务。<br/>上报 agent 列表，执行手机和其他电脑发来的调用。<br/><code>--read-only</code> / <code>--allow</code> 可以限权。` },
+  { id: "a-hostB", title: "💻 电脑 B", x: 2850, y: -1000, html: `同样注册到中转服务。<br/>电脑之间可以互相读终端、发消息，用来联调：<br/><code>herdr-pocket read A/t42</code>` },
+  { id: "a-src", title: "🐑 电脑本机的数据源", x: 3350, y: -1450, html: `<b>hc</b>：herdr GUI 版的核心，终端列表、读屏、发送、按键<br/><b>herdr</b>：终端版的本机 socket 接口<br/><b>Uniflo</b>：把终端对上对话记录，手机才能看排版好的对话` },
+  { id: "a-proof", title: "✅ 本机实测（11-08）", x: 1850, y: -1050, cls: "note", html: `本机起中转服务 + 这台 Mac 注册 + 模拟一部手机：<br/>识别 23 个终端，15 个是 agent，其中 14 个对上了对话记录；读对话 9ms，读终端 57ms；用别的设备地址请求被拒绝。<br/><span style="color:var(--faint);font-size:12.5px">只做了读取；发消息、按键目前只有自动化测试覆盖。</span>` },
+];
+const ARCH_EDGES = [
+  ["a-phone", "a-relay", "WSS · 实时推送 + 调用"],
+  ["a-hostA", "a-relay", "WSS · 主动连接"],
+  ["a-hostB", "a-relay", "WSS"],
+  ["a-hostA", "a-src", "本机读取"],
+];
+
+/* =====================================================================
+   Canvas engine
+   ===================================================================== */
+const vp = document.getElementById("viewport");
+const world = document.getElementById("world");
+const svg = document.getElementById("wires");
+const view = { x: 60, y: 60, s: 0.5 };
+const nodes = new Map(); // id -> { el, x, y, group }
+const wires = []; // { a: () => [x,y], b: () => [x,y], cls, color, label, card }
+
+function applyView() {
+  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.s})`;
+  document.getElementById("zoom").textContent = `${Math.round(view.s * 100)}%`;
+}
+
+function addNode({ id, title, kind = "", x, y, w, html, cls = "", group }) {
+  const el = document.createElement("div");
+  el.className = `node ${cls}`;
+  el.dataset.id = id;
+  if (w) el.style.width = `${w}px`;
+  el.innerHTML = `<div class="nh">${title}<span class="kind">${kind}</span></div><div class="nb">${html}</div>`;
+  world.appendChild(el);
+  const n = { el, x, y, group: group ?? id };
+  nodes.set(id, n);
+  place(n);
+  return n;
+}
+function place(n) { n.el.style.left = `${n.x}px`; n.el.style.top = `${n.y}px`; }
+
+/** Element position in world coordinates. */
+function rectOf(el) {
+  const r = el.getBoundingClientRect();
+  const w = world.getBoundingClientRect();
+  return { x: (r.left - w.left) / view.s, y: (r.top - w.top) / view.s, w: r.width / view.s, h: r.height / view.s };
+}
+
+function build() {
+  for (const n of INFO) addNode({ ...n, kind: "说明" });
+  for (const a of ARCH) addNode({ ...a, kind: "架构", cls: `arch ${a.cls ?? ""}`, group: "g-arch" });
+  for (const s of SCREENS) {
+    const n = addNode({ id: s.id, title: s.title, kind: "安卓 · 360×760dp", x: s.x, y: s.y, html: `<div class="phone">${s.html}<div class="thumb"></div></div>`, cls: "screen" });
+    n.screen = true;
+  }
+  // rationale cards, numbered per screen
+  const count = {};
+  for (const [sid, anchor, tags, title, why, alt] of WHY) {
+    const num = (count[sid] = (count[sid] ?? 0) + 1);
+    const color = P[tags[0]].c;
+    const target = nodes.get(sid).el.querySelector(`[data-a="${anchor}"]`);
+    if (!target) { console.warn("missing anchor", sid, anchor); continue; }
+    const b = document.createElement("span");
+    b.className = "bdg"; b.style.background = color; b.textContent = num;
+    target.appendChild(b);
+    const id = `${sid}-${anchor}`;
+    const tagHtml = tags.map((t) => `<span class="tag" style="background:${P[t].c}">${P[t].t}</span>`).join("");
+    const card = addNode({
+      id, kind: "依据", x: 0, y: 0, cls: "why", group: sid,
+      title: `<span class="num" style="background:${color}">${num}</span>${title}`,
+      html: `<div class="tags">${tagHtml}</div><p>${why}</p>${alt ? `<div class="alt">没选的方案：${alt}</div>` : ""}<div class="src">${tags.map((t) => P[t].src).join("<br/>")}</div>`,
+    });
+    card.anchor = target;
+    card.sid = sid;
+    wires.push({ cls: "why", color, card: id, target,
+      a: () => { const r = rectOf(target); return [r.x + r.w, r.y + r.h / 2]; },
+      b: () => { const n = nodes.get(id); return [n.x, n.y + 22]; } });
+    card.el.addEventListener("mouseenter", () => highlight(id, true));
+    card.el.addEventListener("mouseleave", () => highlight(id, false));
+  }
+  for (const [from, anchor, to, label] of NAV_EDGES) {
+    const target = nodes.get(from).el.querySelector(`[data-a="${anchor}"]`);
+    wires.push({ cls: "nav", label,
+      a: () => { const r = rectOf(target); return [r.x + r.w / 2, r.y + r.h]; },
+      b: () => { const n = nodes.get(to); return [n.x, n.y + 22]; } });
+  }
+  for (const [from, to, label] of ARCH_EDGES) {
+    wires.push({ cls: "arch", label,
+      a: () => { const n = nodes.get(from); return [n.x + n.el.offsetWidth, n.y + 40]; },
+      b: () => { const n = nodes.get(to); return [n.x, n.y + 40]; } });
+  }
+}
+
+/** Stack each screen's rationale cards in a column to its right. */
+function layoutCards() {
+  const cols = {};
+  for (const [id, n] of nodes) {
+    if (!n.sid) continue;
+    const s = nodes.get(n.sid);
+    const col = (cols[n.sid] ??= { x: s.x + s.el.offsetWidth + 70, y: s.y, x2: s.x + s.el.offsetWidth + 70 + 350, y2: s.y, n: 0 });
+    const twoCols = WHY.filter((w) => w[0] === n.sid).length > 5;
+    const useSecond = twoCols && col.n % 2 === 1;
+    n.x = useSecond ? col.x2 : col.x;
+    n.y = useSecond ? col.y2 : col.y;
+    if (useSecond) col.y2 += n.el.offsetHeight + 18; else col.y += n.el.offsetHeight + 18;
+    col.n++;
+    place(n);
+  }
+}
+
+function drawWires() {
+  let out = "";
+  for (const w of wires) {
+    const [x1, y1] = w.a();
+    const [x2, y2] = w.b();
+    const dx = Math.max(70, Math.abs(x2 - x1) * 0.45);
+    const d = w.cls === "nav"
+      ? `M${x1},${y1} C${x1},${y1 + 160} ${x2 - dx},${y2} ${x2},${y2}`
+      : `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
+    const stroke = w.color ? ` stroke="${w.color}"` : "";
+    out += `<path class="${w.cls}${w.hl ? " hl" : ""}" d="${d}"${stroke}/>`;
+    if (w.cls !== "why") out += `<circle cx="${x2}" cy="${y2}" r="6" fill="${w.cls === "nav" ? "#4b67b4" : "#7d8699"}" class="${w.cls}"/>`;
+    if (w.label) {
+      const mx = 0.125 * x1 + 0.375 * (w.cls === "nav" ? x1 : x1 + dx) + 0.375 * (x2 - dx) + 0.125 * x2;
+      const my = 0.125 * y1 + 0.375 * (w.cls === "nav" ? y1 + 160 : y1) + 0.375 * y2 + 0.125 * y2;
+      out += `<text class="${w.cls}" x="${mx}" y="${my - 8}" text-anchor="middle">${w.label}</text>`;
+    }
+  }
+  svg.innerHTML = out;
+}
+
+function highlight(id, on) {
+  const n = nodes.get(id);
+  n.anchor.classList.toggle("hl", on);
+  for (const w of wires) if (w.card === id) w.hl = on;
+  drawWires();
+}
+
+/* ---------- interaction ---------- */
+let drag = null;
+vp.addEventListener("pointerdown", (e) => {
+  const head = e.target.closest(".nh");
+  if (head) {
+    const n = nodes.get(head.parentElement.dataset.id);
+    // dragging a screen also drags its cards
+    const group = n.screen ? [...nodes.values()].filter((m) => m === n || m.sid === head.parentElement.dataset.id) : [n];
+    drag = { kind: "node", group, sx: e.clientX, sy: e.clientY, start: group.map((m) => [m.x, m.y]) };
+    document.querySelectorAll(".node.sel").forEach((x) => x.classList.remove("sel"));
+    n.el.classList.add("sel");
+  } else if (!e.target.closest(".node") || e.button === 1) {
+    drag = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: view.x, vy: view.y };
+    vp.classList.add("panning");
+  } else return;
+  vp.setPointerCapture(e.pointerId);
+});
+let raf = 0;
+vp.addEventListener("pointermove", (e) => {
+  if (!drag) return;
+  if (drag.kind === "pan") {
+    view.x = drag.vx + e.clientX - drag.sx; view.y = drag.vy + e.clientY - drag.sy; applyView();
+  } else {
+    const dx = (e.clientX - drag.sx) / view.s, dy = (e.clientY - drag.sy) / view.s;
+    drag.group.forEach((m, i) => { m.x = drag.start[i][0] + dx; m.y = drag.start[i][1] + dy; place(m); });
+    cancelAnimationFrame(raf); raf = requestAnimationFrame(drawWires);
+  }
+});
+vp.addEventListener("pointerup", () => { drag = null; vp.classList.remove("panning"); });
+
+function zoomAt(cx, cy, factor) {
+  const s = Math.min(2.5, Math.max(0.08, view.s * factor));
+  view.x = cx - ((cx - view.x) * s) / view.s;
+  view.y = cy - ((cy - view.y) * s) / view.s;
+  view.s = s; applyView();
+}
+vp.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const mouseWheel = e.deltaMode === 1 || (e.deltaX === 0 && Math.abs(e.deltaY) >= 50 && Number.isInteger(e.deltaY));
+  if (e.ctrlKey || e.metaKey || mouseWheel) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)));
+  else { view.x -= e.deltaX; view.y -= e.deltaY; applyView(); }
+}, { passive: false });
+
+function bbox(list) {
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  for (const n of list) { x1 = Math.min(x1, n.x); y1 = Math.min(y1, n.y); x2 = Math.max(x2, n.x + n.el.offsetWidth); y2 = Math.max(y2, n.y + n.el.offsetHeight); }
+  return { x1, y1, x2, y2 };
+}
+function fitTo(list, pad = 60) {
+  const b = bbox(list);
+  const vw = innerWidth, vh = innerHeight - 90;
+  view.s = Math.min(2, (vw - pad * 2) / (b.x2 - b.x1), (vh - pad * 2) / (b.y2 - b.y1));
+  view.x = (vw - (b.x2 - b.x1) * view.s) / 2 - b.x1 * view.s;
+  view.y = 20 + (vh - (b.y2 - b.y1) * view.s) / 2 - b.y1 * view.s;
+  applyView();
+}
+function focusGroup(g) {
+  const list = [...nodes.values()].filter((n) => n.group === g || (g === "g-arch" && n.group === "g-arch"));
+  fitTo(list, 40);
+}
+
+const thumbModes = ["off", "r", "l"], thumbLabel = { off: "拇指热区：关", r: "拇指热区：右手", l: "拇指热区：左手" };
+let thumbI = 0;
+function cycleThumb() {
+  thumbI = (thumbI + 1) % 3;
+  const m = thumbModes[thumbI];
+  document.body.classList.remove("thumb-off", "thumb-r", "thumb-l");
+  document.body.classList.add(`thumb-${m}`);
+  const btn = document.querySelector("[data-thumb]");
+  btn.textContent = thumbLabel[m]; btn.classList.toggle("on", m !== "off");
+}
+const wireModes = [["all", "连线：全部", ""], ["why", "连线：只看依据", "only-why"], ["nav", "连线：只看跳转", "only-nav"]];
+let wireI = 0;
+document.getElementById("bar").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.act === "fit") fitTo([...nodes.values()]);
+  if (b.dataset.go) focusGroup(b.dataset.go);
+  if (b.dataset.thumb) cycleThumb();
+  if (b.dataset.wires) {
+    wireI = (wireI + 1) % 3;
+    document.body.classList.remove("only-why", "only-nav");
+    if (wireModes[wireI][2]) document.body.classList.add(wireModes[wireI][2]);
+    b.textContent = wireModes[wireI][1]; b.classList.toggle("on", wireI !== 0);
+  }
+});
+addEventListener("keydown", (e) => {
+  if (e.key === "h" || e.key === "H") cycleThumb();
+  if (e.key === "f" || e.key === "F") fitTo([...nodes.values()]);
+});
+
+/* ---------- boot ---------- */
+build();
+applyView();
+const ready = document.fonts ? document.fonts.ready : Promise.resolve();
+ready.then(() => {
+  layoutCards();
+  drawWires();
+  const h = location.hash.slice(1);
+  const [go, thumb] = h.split(",");
+  if (thumb === "r") cycleThumb();
+  if (thumb === "l") { cycleThumb(); cycleThumb(); }
+  if (go && go !== "all") focusGroup(go); else fitTo([...nodes.values()]);
+});
+</script>
+</body>
+</html>

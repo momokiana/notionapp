@@ -1,0 +1,5 @@
+# Standalone: the intro video has its own install so the site build stays light.
+packages:
+  - "."
+allowBuilds:
+  esbuild: true

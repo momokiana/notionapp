@@ -1,0 +1,87 @@
+# Kubernetes (docs/deploy/platforms.md): one relay pod, its SQLite database on a volume.
+#   kubectl create namespace xiaoaixiaoai
+#   kubectl -n xiaoaixiaoai create secret generic xiaoaixiaoai-relay \
+#     --from-literal=POCKET_PUBLIC_URL=https://xiaoaixiaoai.example.com --from-literal=POCKET_ADMIN_TOKEN=$(openssl rand -hex 24)
+#   kubectl -n xiaoaixiaoai apply -f deploy/k8s/relay.yaml
+# Then expose the Service through your ingress (WebSockets on /v1/ws, /v1/notify and /v1/assistant/live must pass).
+# Exactly one replica: devices, agents and pending calls live in that one process.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: xiaoaixiaoai-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xiaoaixiaoai-relay
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: xiaoaixiaoai-relay
+  template:
+    metadata:
+      labels:
+        app: xiaoaixiaoai-relay
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+        - name: relay
+          # Required: set your own reviewed image; empty deliberately prevents deployment.
+          image: ""
+          ports:
+            - containerPort: 7420
+              name: http
+          env:
+            - name: POCKET_TRUST_PROXY
+              value: "1"
+          envFrom:
+            - secretRef:
+                name: xiaoaixiaoai-relay
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: xiaoaixiaoai-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: xiaoaixiaoai-relay
+spec:
+  selector:
+    app: xiaoaixiaoai-relay
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

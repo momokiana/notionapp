@@ -1,45 +1,26 @@
-# notionapp（开发中）
+# 小爱小爱
 
-面向个人自托管的轻量通知与交互 App：程序或 AI 助理发出事件，手机展示卡片，用户通过按钮或文字回应，来源的后续进展回到同一事件。
+> **主工程位于 [xiaoaixiaoai/](<xiaoaixiaoai/README.md>)**。爱弥斯是小爱小爱的助理。安卓端、自托管中转服务和可选电脑端均在 `xiaoaixiaoai/` 下开发与构建。
+>
+> `notionapp` 是历史仓库名，本项目与 Notion 没有集成或隶属关系。早期原型目录（`android/`、`web/`、`server/`、`pi-host/`、`pocket/`、`legacy/`）已于仓库整理时从 `main` 移除。
 
-`notionapp` 是仓库名，产品名尚未确定；本项目与 Notion 没有集成或隶属关系。
+## 项目概览
 
-## 范围与现状
+面向个人自托管的安卓端 AI 助理与电脑端项目会话（DSH / Codex）管理工具：
 
-- 安卓首发：Kotlin / Jetpack Compose；事件服务：Fastify / TypeScript / SQLite。
-- 可选独立 Pi SDK 宿主；可选自托管 ntfy / UnifiedPush 通知，不默认连接 AI、推送服务器或现有工作会话。
-- 安卓已增量公开 [android-002 缓存区间与后继隔离修复](docs/releases/android-002.md)，保留 [001草稿/快捷回复及其历史范围](docs/releases/android-001.md)；不是正式发行、生产可用声明或完整产品验收。不含未就绪的新对话/媒体/复杂卡片、T014或待最终结论的新后端绑定接口；连接器候选仅在独立分支，不在 main。
-- 本仓库不包含私人部署、账号、人格、原始聊天、设备/原生会话标识、运行数据库或原始验收证据。
+- **安卓端**（`xiaoaixiaoai/apps/mobile`）：Expo Android 应用，通过一次性邀请码配对自有中转服务，支持与爱弥斯文字对话、历史恢复、后台定时提醒、DSH 项目会话目录查看、任务发送与后台任务通知。
+- **自托管中转服务**（`xiaoaixiaoai/apps/relay`）：管理设备配对、爱弥斯助理对话、模型接入与私密通知投递。
+- **可选电脑端连接器**（`xiaoaixiaoai/apps/hostd`）：按需连接本机 DSH / Codex / Herdr 会话，支持只读目录、profile 级授权发送、本地代理隧道和任务事件上报。
+- **共享包**（`xiaoaixiaoai/packages/protocol`、`xiaoaixiaoai/packages/update`）：通信协议定义与本地更新逻辑。
 
-已读 ≠ 平台接受 ≠ 设备收到 ≠ 系统请求提醒 ≠ 来源收件 ≠ 已执行 ≠ 完成或独立验收。
+## 快速入口
 
-## 构建入口
+- [主工程说明与构建命令](<xiaoaixiaoai/README.md>)
+- [当前状态与进度](<docs/status.md>)
+- [修改记录（0.1.0 – 0.1.9）](<xiaoaixiaoai/MODIFICATIONS.md>)
+- [DSH / Codex 项目会话说明](<xiaoaixiaoai/docs/runtime-sessions.md>)
+- [首版交付与验收](<docs/migrations/2026-11-17-xiaoaixiaoai-first-use.md>) · [0.1.0 真机验收记录](<docs/xiaoaixiaoai-phone-check.md>)
 
-已按冻结白名单导入 [服务端](server/README.md)、[安卓](android/README.md) 和 [可选 Pi 宿主](pi-host/README.md) 源码、合成测试及依赖锁；各次导入与验证边界见 [公开状态](docs/status.md)，准确文件及前后哈希见 [首轮导出清单](docs/releases/initial-export.json)、[android-001 历史59项清单](docs/releases/android-001.json) 和 [android-002 当前63项清单](docs/releases/android-002.json)。
+## 版权与许可证
 
-```sh
-# 后端/Pi宿主仅记录 Node.js 22.23.2 的实际验证；npm 10+
-# 包内 engines 下限不是支持矩阵，勿据连接器22.13结果推导后端可用
-npm --prefix server ci
-npm --prefix server run check
-npm --prefix pi-host ci --ignore-scripts
-npm --prefix pi-host run check
-
-# JDK 17、Android SDK 35 / build-tools 35.0.0
-cd android
-./gradlew app:testDebugUnitTest app:assembleDebug app:lintDebug
-```
-
-**运行边界 N1：当前安装的后端 native 模块在 Node 22.13.0 下已有单独 open 即 SIGSEGV 的报告，原因未定；不支持该后端/同进程集成 runner 的22.13组合。** 连接器使用内置SQLite的22.13结果不能迁给后端；详见 [运行验证矩阵](docs/status.md)。依赖锁保持不变，不据构建配置猜根因或外推所有平台。
-
-后端本地开发：`cd server && npm run dev`，默认只监听 `127.0.0.1:3000`。`/health` 只检查存储健康；没有私有认证配置时受保护接口拒绝。没有默认凭据。不得把健康检查当作事件、回复、后台推送或生产验收。
-
-## 文档
-
-- [需求与边界](docs/requirements.md)
-- [架构与安全语义](docs/architecture.md)
-- [公开状态、验证与排除项](docs/status.md)
-
-## 许可证
-
-目标是开源、可自托管；产品许可证尚未选择，目前没有授予通用开源使用许可的 LICENSE。[第三方依赖](THIRD_PARTY_NOTICES.md) 仍遵守各自许可证，本项目不随依赖许可自动选择产品许可证。
+主工程基于修改后的 AGPL-3.0-only 源码构建，详见 [LICENSE](<xiaoaixiaoai/LICENSE>)、[NOTICE.md](<xiaoaixiaoai/NOTICE.md>) 与 [UPSTREAM.md](<xiaoaixiaoai/UPSTREAM.md>)。本仓库不包含任何私人部署配置、服务器地址、账号凭据、签名密钥、真实聊天数据或构建产物。

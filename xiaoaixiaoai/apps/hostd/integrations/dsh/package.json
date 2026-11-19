@@ -1,0 +1,8 @@
+{
+  "name": "xiaoaixiaoai-dsh-bridge",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "engines": { "dsh": "0.2.1-rc.3", "node": "^22.19.0 || >=24.0.0" }
+}

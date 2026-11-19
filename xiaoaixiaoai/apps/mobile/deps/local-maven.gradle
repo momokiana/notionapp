@@ -1,0 +1,9 @@
+// Artifacts Gradle could not download on the build Mac (Java's TLS handshake to
+// Maven Central is cut there) are kept in deps/maven. Use with:
+//   ./gradlew assembleRelease -I ../deps/local-maven.gradle
+def localMaven = new File(buildscript.sourceFile.parentFile, "maven").toURI()
+allprojects {
+  repositories {
+    maven { url = localMaven }
+  }
+}

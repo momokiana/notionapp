@@ -1,0 +1,8 @@
+#!/bin/sh
+# Resolve symlinks so `pnpm link`/`ln -s` installs work.
+self="$0"
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case "$target" in /*) self="$target" ;; *) self="$(dirname "$self")/$target" ;; esac
+done
+exec node --no-warnings "$(cd "$(dirname "$self")/.." && pwd)/src/cli.ts" "$@"

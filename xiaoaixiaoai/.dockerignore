@@ -1,0 +1,17 @@
+# The relay image needs package manifests, packages/ and apps/relay only.
+**/node_modules
+**/.DS_Store
+.git
+.github
+apps/hostd
+apps/mobile
+reference/
+docs
+dist
+deploy
+scripts
+**/data
+**/*.db
+**/*.db-*
+**/.env
+**/*.env

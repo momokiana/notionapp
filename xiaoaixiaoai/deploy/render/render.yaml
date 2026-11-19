@@ -1,0 +1,27 @@
+# Render Blueprint (docs/deploy/README.md): configure your own relay image and a persistent disk.
+# Disks need a paid instance type, and a service with a disk runs exactly one instance, which is
+# what the relay needs. In Render: New -> Blueprint -> this repository, Blueprint path
+# deploy/render/render.yaml; then set POCKET_PUBLIC_URL to the service's https address.
+services:
+  - type: web
+    name: xiaoaixiaoai-relay
+    runtime: image
+    image:
+      # Required: set your own reviewed image; there is no upstream fallback.
+      url: ""
+    plan: starter
+    healthCheckPath: /v1/health
+    envVars:
+      # Render routes to the port in PORT; the relay listens on POCKET_PORT.
+      - key: PORT
+        value: "7420"
+      - key: POCKET_TRUST_PROXY
+        value: "1"
+      - key: POCKET_PUBLIC_URL
+        sync: false
+      - key: POCKET_ADMIN_TOKEN
+        generateValue: true
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1

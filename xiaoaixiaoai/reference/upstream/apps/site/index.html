@@ -1,0 +1,537 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Herdr Pocket · 把所有电脑上的 coding agent 装进口袋</title>
+    <meta
+      name="description"
+      content="Herdr Pocket 把每台电脑上 herdr 里的 coding agent（Claude Code、Codex、Gemini、OpenCode……）装进 Android 手机：实时状态、排版好的对话、终端直连，小羊助理主动提醒，支持语音通话，中转服务自己部署。"
+    />
+    <meta name="theme-color" content="#FFF6F9" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1C1722" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Herdr Pocket" />
+    <meta property="og:description" content="Every coding agent on every computer, in your pocket. 开源、自托管的 Android agent 遥控器。" />
+    <meta property="og:image" content="og.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/png" sizes="64x64" href="favicon.png" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="preload" as="image" href="assets/mascot/idle-poster.webp" fetchpriority="high" />
+    <script>
+      // Apply theme and language before first paint to avoid a flash.
+      (function () {
+        try {
+          var t = localStorage.getItem("hp-theme");
+          if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          document.documentElement.dataset.theme = t;
+          var q = new URLSearchParams(location.search).get("lang");
+          var l = q || localStorage.getItem("hp-lang");
+          if (!l) l = /^zh\b/i.test(navigator.language || "") ? "zh" : "en";
+          document.documentElement.dataset.lang = l === "en" ? "en" : "zh";
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <a class="skip" href="#main" data-i18n="nav.skip">跳到正文</a>
+
+    <header class="nav" id="nav">
+      <div class="nav-inner">
+        <a class="brand" href="#top" aria-label="Herdr Pocket">
+          <img src="assets/brand/logo-64.webp" width="32" height="32" alt="" />
+          <span>Herdr Pocket</span>
+        </a>
+        <nav class="nav-links" aria-label="Sections">
+          <a href="#how" data-i18n="nav.how">工作原理</a>
+          <a href="#views" data-i18n="nav.views">功能</a>
+          <a href="#assistant" data-i18n="nav.assistant">小羊助理</a>
+          <a href="#deploy" data-i18n="nav.deploy">部署</a>
+          <a href="#faq" data-i18n="nav.faq">常见问题</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="icon-btn lang-btn" id="lang-toggle" type="button" aria-label="Switch language">
+            <span class="lang-zh">中</span><span class="lang-sep">/</span><span class="lang-en">EN</span>
+          </button>
+          <button class="icon-btn" id="theme-toggle" type="button" aria-label="Toggle dark mode">
+            <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" /><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6" /></svg>
+            <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.6A8.3 8.3 0 0 1 9.4 4a8.3 8.3 0 1 0 10.6 10.6Z" /></svg>
+          </button>
+          <a class="btn btn-ink btn-sm gh-link" href="#" data-href="githubUrl" target="_blank" rel="noopener">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.6 9.6 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2Z" /></svg>
+            <span>GitHub</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- ============================== HERO ============================== -->
+      <section class="hero" id="top">
+        <div class="hero-canvas" id="hero-canvas" aria-hidden="true"></div>
+        <div class="hero-grain" aria-hidden="true"></div>
+        <div class="hero-inner wrap">
+          <div class="hero-copy">
+            <p class="pill hero-pill"><span class="pulse-dot"></span><span data-i18n="hero.pill">开源 · 自托管 · Android</span></p>
+            <h1 class="hero-title" data-i18n="hero.title" data-split>所有电脑上的<br />coding agent，<br /><em>都装进你的口袋。</em></h1>
+            <p class="hero-sub" data-i18n="hero.sub">
+              Herdr Pocket 把 herdr 里跑着的 Claude Code、Codex、Gemini、OpenCode…… 接到你的 Android 手机：看状态、读对话、敲终端。小羊助理替你盯着，谁跑完了、谁卡住了，第一时间告诉你。
+            </p>
+            <div class="hero-ctas">
+              <a class="btn btn-accent" href="#" data-href="githubUrl" target="_blank" rel="noopener">
+                <span data-i18n="hero.cta1">在 GitHub 上查看</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+              </a>
+              <a class="btn btn-ghost" href="#video">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5-11-6.5Z" /></svg>
+                <span data-i18n="hero.cta2">看 90 秒介绍</span>
+              </a>
+            </div>
+            <div class="cmd hero-cmd" data-cmd="computerUp">
+              <span class="cmd-prompt">$</span><code class="cmd-text"></code>
+              <button class="cmd-copy" type="button" aria-label="Copy"><span data-i18n="ui.copy">复制</span></button>
+            </div>
+          </div>
+
+          <div class="stage" id="stage">
+            <div class="stage-glow" aria-hidden="true"></div>
+            <div class="orbit" id="orbit" aria-hidden="true"></div>
+            <button class="mascot-btn" id="mascot" type="button" aria-label="小羊 / Xiaoyang">
+              <img class="mascot-img" src="assets/mascot/idle-poster.webp" data-anim="assets/mascot/idle.webp" data-tap="assets/mascot/tap.webp" width="420" height="420" alt="" />
+            </button>
+            <div class="mascot-cloud" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="say" id="mascot-say" aria-live="polite"></div>
+            <div class="bubbles" id="bubbles" aria-hidden="true"></div>
+          </div>
+        </div>
+        <a class="scroll-hint" href="#vendors" aria-label="Scroll"><span></span></a>
+      </section>
+
+      <!-- ============================== VENDORS ============================== -->
+      <section class="vendors" id="vendors">
+        <p class="vendors-title" data-i18n="vendors.title">herdr 里能跑的，口袋里都能看</p>
+        <div class="marquee" id="marquee" aria-label="Supported agents"></div>
+      </section>
+
+      <!-- ============================== STATEMENT ============================== -->
+      <section class="statement wrap">
+        <p class="statement-text" data-i18n="statement" data-scrub>
+          你不必一直守在电脑前。agent 跑完、卡住、等你点确认的那一刻，口袋会先知道。看一眼，回一句，再按个回车，事情就继续往下走。
+        </p>
+      </section>
+
+      <!-- ============================== HOW IT WORKS ============================== -->
+      <section class="flow" id="how">
+        <div class="flow-pin">
+          <div class="wrap flow-head">
+            <p class="eyebrow" data-i18n="how.eyebrow">工作原理</p>
+            <h2 class="h2" data-i18n="how.title">电脑 → 中转 → 手机，一条线连起来</h2>
+          </div>
+          <div class="wrap flow-body">
+            <ol class="flow-steps" id="flow-steps">
+              <li class="flow-step is-active" data-step="0">
+                <span class="flow-num">01</span>
+                <h3 data-i18n="how.s1.t">每台电脑照常跑 agent</h3>
+                <p data-i18n="how.s1.d">在 herdr 里该怎么跑还怎么跑。每台电脑执行一次 <code>herdr-pocket up</code>，守护进程读取本机的 agent，把状态快照发布出去。</p>
+              </li>
+              <li class="flow-step" data-step="1">
+                <span class="flow-num">02</span>
+                <h3 data-i18n="how.s2.t">你自己的中转服务</h3>
+                <p data-i18n="how.s2.d">中转服务跑在你自己的服务器上：WebSocket 长连接、传输压缩；设备令牌只存哈希，agent 归属由服务端按连接身份改写，电脑不能冒充别人。</p>
+              </li>
+              <li class="flow-step" data-step="2">
+                <span class="flow-num">03</span>
+                <h3 data-i18n="how.s3.t">手机实时看到一切</h3>
+                <p data-i18n="how.s3.d">手机扫码配对一次，所有电脑上的 agent 就实时出现在列表里。对话和终端走实时流，断线时自动退回轮询补齐。</p>
+              </li>
+              <li class="flow-step" data-step="3">
+                <span class="flow-num">04</span>
+                <h3 data-i18n="how.s4.t">再从口袋里指挥回去</h3>
+                <p data-i18n="how.s4.d">回一句话、按 Esc、开一个新 agent，或者直接交给小羊去办，指令沿原路送回电脑。电脑之间也能用命令行互相调用；只读模式和设备白名单随时可开。</p>
+              </li>
+            </ol>
+            <div class="flow-diagram" id="flow-diagram" aria-hidden="true">
+              <svg class="flow-svg" id="flow-svg"></svg>
+              <div class="node computer" data-node="c0">
+                <div class="node-head"><span class="node-ico ico-laptop"></span><b>MacBook Pro</b></div>
+                <div class="node-agents"><img src="assets/vendors/claude-code.webp" alt="" /><img src="assets/vendors/codex.webp" alt="" /></div>
+                <div class="node-cmd">herdr-pocket up</div>
+              </div>
+              <div class="node computer" data-node="c1">
+                <div class="node-head"><span class="node-ico ico-desk"></span><b data-i18n="how.pc2">Linux 工作站</b></div>
+                <div class="node-agents"><img src="assets/vendors/gemini.webp" alt="" /><img src="assets/vendors/opencode.webp" alt="" /><img src="assets/vendors/kimi.webp" alt="" /></div>
+                <div class="node-cmd">herdr-pocket up</div>
+              </div>
+              <div class="node computer" data-node="c2">
+                <div class="node-head"><span class="node-ico ico-cloud"></span><b data-i18n="how.pc3">云主机</b></div>
+                <div class="node-agents"><img src="assets/vendors/qwen.webp" alt="" /><img src="assets/vendors/pi.webp" alt="" /></div>
+                <div class="node-cmd">herdr-pocket up</div>
+              </div>
+              <div class="node relay" data-node="relay">
+                <div class="relay-ring"></div>
+                <div class="relay-core">
+                  <svg viewBox="0 0 24 24"><path d="M12 3 4.5 6v5.6c0 4.5 3.1 8.3 7.5 9.4 4.4-1.1 7.5-4.9 7.5-9.4V6L12 3Z" /><path d="m8.8 12 2.2 2.2 4.3-4.4" /></svg>
+                </div>
+                <div class="relay-label"><b data-i18n="how.relay">中转服务</b><span>wss · {server}</span></div>
+              </div>
+              <div class="node phone-node" data-node="phone">
+                <div class="mini-phone">
+                  <div class="mini-notch"></div>
+                  <div class="mini-list" id="mini-list"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== VIEWS (sticky phone) ============================== -->
+      <section class="views" id="views">
+        <div class="wrap views-head">
+          <p class="eyebrow" data-i18n="views.eyebrow">手机上的四个视角</p>
+          <h2 class="h2" data-i18n="views.title">一眼看全，伸手就能接管</h2>
+        </div>
+        <div class="wrap views-body">
+          <div class="views-steps">
+            <article class="view-step" data-view="list">
+              <span class="chip chip-pink" data-i18n="views.list.k">Agent 列表</span>
+              <h3 data-i18n="views.list.t">所有电脑，按“要不要你管”排好</h3>
+              <p data-i18n="views.list.d">需要你、工作中、已完成、空闲，一屏分好。每个 agent 有自己的小头像，Claude Code 还是 Codex，看一眼就认出来；在哪台电脑、跑到第几轮也都写着。</p>
+            </article>
+            <article class="view-step" data-view="chat">
+              <span class="chip chip-lav" data-i18n="views.chat.k">对话</span>
+              <h3 data-i18n="views.chat.t">排版好的对话，不是一屏乱码</h3>
+              <p data-i18n="views.chat.d">工具调用收成卡片，失败的标出来，思考过程淡淡带过。想插一句，就像聊天一样回它。</p>
+            </article>
+            <article class="view-step" data-view="term">
+              <span class="chip chip-mint" data-i18n="views.term.k">终端</span>
+              <h3 data-i18n="views.term.t">真正的终端，直接敲</h3>
+              <p data-i18n="views.term.d">实时终端画面，打字直达 agent。App 自带紧凑键盘，Esc、Tab、方向键、回车、Ctrl+C 一按即达，系统输入法不会挡住画面；选菜单、打断都不用回到电脑前。</p>
+            </article>
+            <article class="view-step" data-view="pair">
+              <span class="chip chip-ink" data-i18n="views.pair.k">设备</span>
+              <h3 data-i18n="views.pair.t">扫一下，新电脑就加进来</h3>
+              <p data-i18n="views.pair.d">新电脑运行 <code>herdr-pocket up</code> 显示二维码，用已连上的手机扫一下、点“允许加入”。二维码就是一个 https 链接，手机相机也能直接打开；邀请码一次性、10 分钟过期，手机也能邀请别的手机。</p>
+            </article>
+          </div>
+          <div class="views-phone-col">
+            <div class="phone views-phone" id="views-phone" aria-hidden="true">
+              <div class="phone-screen" id="views-screen"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== ASSISTANT ============================== -->
+      <section class="assistant" id="assistant">
+        <div class="wrap assistant-head">
+          <p class="eyebrow" data-i18n="as.eyebrow">小羊助理</p>
+          <h2 class="h2" data-i18n="as.title">小羊替你盯着，<em>说一句就去办</em></h2>
+          <p class="lead" data-i18n="as.lead">App 的第一个页面就是小羊。说一句，她直接去做：给 agent 发消息、按键、新建空间，或在任意一台电脑上启动装好的 agent 并交给它任务，再把真实结果告诉你。agent 跑完或卡住时，她会主动来说一声。</p>
+        </div>
+        <div class="wrap assistant-body">
+          <div class="as-phone-col">
+            <img class="as-sticker as-sticker-a" src="assets/mascot/hello.webp" alt="" loading="lazy" width="150" height="150" />
+            <div class="phone as-phone" aria-hidden="true">
+              <div class="phone-screen" id="as-screen"></div>
+            </div>
+            <div class="notif-stack" id="notif-stack" aria-hidden="true"></div>
+          </div>
+          <ul class="as-points">
+            <li data-reveal>
+              <span class="as-ico"><svg viewBox="0 0 24 24"><path d="M4 5.5h16v10H9l-5 4v-14Z" /><path d="M8.5 10.5h.01M12 10.5h.01M15.5 10.5h.01" /></svg></span>
+              <div><h3 data-i18n="as.p1.t">问一句就知道</h3><p data-i18n="as.p1.d">“谁在等我？”“哪个跑完了？”“今天花了多少？”小羊会去每台电脑看一眼再回答，花费能按 agent、空间、电脑分开算。</p></div>
+            </li>
+            <li data-reveal>
+              <span class="as-ico"><svg viewBox="0 0 24 24"><path d="M6 9.5a6 6 0 1 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15.5 6 9.5Z" /><path d="M10 20a2.2 2.2 0 0 0 4 0" /></svg></span>
+              <div><h3 data-i18n="as.p2.t">主动来找你</h3><p data-i18n="as.p2.d">agent 跑完或卡住，小羊会发消息；让她盯着某个 agent，跑完就来叫你。App 关着也会推到通知栏，走的是手机上的常驻连接，不依赖 Google 推送。</p></div>
+            </li>
+            <li data-reveal>
+              <span class="as-ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7.5" /><path d="M12 9.5V13l2.5 2M9 2.5h6" /></svg></span>
+              <div><h3 data-i18n="as.p3.t">帮你记着，帮你查</h3><p data-i18n="as.p3.d">“半小时后提醒我看部署”，到点就提醒。出了问题就问她“卡在哪一步”，她会去翻中转服务和各端的日志。</p></div>
+            </li>
+            <li data-reveal>
+              <span class="as-ico"><svg viewBox="0 0 24 24"><path d="M13.5 3 5.5 13.5h6L10.5 21l8-10.5h-6l1-7.5Z" /></svg></span>
+              <div><h3 data-i18n="as.p4.t">说了就做，照实回报</h3><p data-i18n="as.p4.d">发消息、按键、新建空间、启动任意装好的 agent（Claude Code、Codex、Gemini、Kimi……），小羊直接去做，再照实告诉你结果，比如“发了，它还没回”“它正在忙，已排在输入框里”。想让她先问你，设置里打开就行，默认关闭。</p></div>
+            </li>
+            <li data-reveal>
+              <span class="as-ico"><svg viewBox="0 0 24 24"><path d="M12 3.5 20 8v8l-8 4.5L4 16V8l8-4.5Z" /><path d="M4 8l8 4.5L20 8M12 12.5v8" /></svg></span>
+              <div><h3 data-i18n="as.p5.t">模型随你选</h3><p data-i18n="as.p5.d">Anthropic，或任意 OpenAI 兼容服务：DeepSeek、Qwen、Kimi、GLM、OpenRouter，也可以是本地的 Ollama。</p></div>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- ============================== VOICE CALL ============================== -->
+      <section class="call" id="call">
+        <div class="call-bg" aria-hidden="true"></div>
+        <div class="wrap call-body">
+          <div class="call-copy">
+            <p class="eyebrow eyebrow-light" data-i18n="call.eyebrow">语音通话</p>
+            <h2 class="h2" data-i18n="call.title">懒得打字？<br />给小羊打个电话。</h2>
+            <p class="lead" data-i18n="call.lead">实时语音通话，默认接入 MOSS-Live，更多实时语音服务正在接入。边走路边问“谁跑完了”，她会去查，再用声音告诉你。语音经你自己的中转服务转发，key 只留在服务器上。</p>
+            <div class="call-states" id="call-states" role="tablist" aria-label="Call states"></div>
+            <p class="call-hint" data-i18n="call.hint">六种表情跟着通话状态切换，点一下试试。</p>
+          </div>
+          <div class="call-phone-col">
+            <div class="phone call-phone" aria-hidden="true">
+              <div class="phone-screen" id="call-screen"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================== FEATURES ============================== -->
+      <section class="features wrap" id="features">
+        <p class="eyebrow" data-i18n="ft.eyebrow">细节</p>
+        <h2 class="h2" data-i18n="ft.title">该想到的，都替你想好了</h2>
+        <div class="bento" id="bento">
+          <article class="card card-wide" data-tilt>
+            <div class="card-art art-machines" aria-hidden="true">
+              <span class="m">MacBook Pro<i class="ok"></i></span><span class="m">Linux<i class="ok"></i></span><span class="m" data-i18n="ft.cloud">云主机<i class="ok"></i></span><span class="m">Mac mini<i class="off"></i></span>
+            </div>
+            <h3 data-i18n="ft.1.t">多台电脑，一个列表</h3>
+            <p data-i18n="ft.1.d">家里、公司、云上的电脑各跑各的，手机上合成一张表。谁在线、谁掉线，一目了然。</p>
+          </article>
+          <article class="card" data-tilt>
+            <div class="card-art art-keys" aria-hidden="true"><kbd>Esc</kbd><kbd>Tab</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd class="hot">Ctrl+C</kbd></div>
+            <h3 data-i18n="ft.2.t">应用内键盘</h3>
+            <p data-i18n="ft.2.d">Esc、Tab、方向键、Ctrl+C 一按即达，系统输入法不再挡住终端。</p>
+          </article>
+          <article class="card" data-tilt>
+            <div class="card-art art-bell" aria-hidden="true"><span class="bell"></span><span class="ring"></span></div>
+            <h3 data-i18n="ft.3.t">不靠 Google 推送</h3>
+            <p data-i18n="ft.3.d">常驻连接直接收提醒，国产系统放开后台限制即可。</p>
+          </article>
+          <article class="card" data-tilt>
+            <div class="card-art art-hash" aria-hidden="true"><code>sha256(token)</code><span>9f2c…a71e</span></div>
+            <h3 data-i18n="ft.4.t">令牌只存哈希</h3>
+            <p data-i18n="ft.4.d">设备令牌只在配对时出现一次，服务器只留 SHA-256，吊销后立刻断线。</p>
+          </article>
+          <article class="card" data-tilt>
+            <div class="card-art art-qr" aria-hidden="true"><span class="qr"></span><b>10:00</b></div>
+            <h3 data-i18n="ft.5.t">一次性扫码配对</h3>
+            <p data-i18n="ft.5.d">二维码是 https 链接，相机一扫就开；邀请码只能用一次、10 分钟过期，失败太多次会锁定。</p>
+          </article>
+          <article class="card card-wide" data-tilt>
+            <div class="card-art art-cli" aria-hidden="true">
+              <code><b>$</b> herdr-pocket agents</code>
+              <code><b>$</b> herdr-pocket read macbook/t42</code>
+              <code><b>$</b> herdr-pocket send macbook/t42 <span data-i18n="ft.cli">跑一下测试</span></code>
+            </div>
+            <h3 data-i18n="ft.6.t">电脑之间互相调用</h3>
+            <p data-i18n="ft.6.d">在一台电脑的终端里查看、指挥另一台电脑的 agent。<code>--read-only</code> 只许看，<code>--allow</code> 只让指定设备动手。</p>
+          </article>
+          <article class="card" data-tilt>
+            <div class="card-art art-ship" aria-hidden="true"><span>docker compose</span><span>Cloudflare</span><span>systemd</span></div>
+            <h3 data-i18n="ft.7.t">部署随你</h3>
+            <p data-i18n="ft.7.d">Docker、Cloudflare 或一条安装命令，自己的服务器自己管。</p>
+          </article>
+          <article class="card" data-tilt>
+            <div class="card-art art-update" aria-hidden="true"><span class="bar"><i></i></span><b data-i18n="ft.new">新版本</b></div>
+            <h3 data-i18n="ft.8.t">应用内更新</h3>
+            <p data-i18n="ft.8.d">新版本从 GitHub Releases 推到 App 里，点一下就更新。</p>
+          </article>
+          <article class="card" data-tilt>
+            <div class="card-art art-theme" aria-hidden="true"><span class="sw sw-l"></span><span class="sw sw-d"></span></div>
+            <h3 data-i18n="ft.9.t">浅色、深色都好看</h3>
+            <p data-i18n="ft.9.d">粉色的界面，半夜看也不刺眼。</p>
+          </article>
+          <article class="card" data-tilt>
+            <div class="card-art art-deflate" aria-hidden="true"><span class="row"><em>raw</em><i></i></span><span class="row"><em>wss</em><i></i></span></div>
+            <h3 data-i18n="ft.10.t">传输压缩</h3>
+            <p data-i18n="ft.10.d">WebSocket 开了压缩，终端画面和对话在路上小好几倍。</p>
+          </article>
+          <article class="card" data-tilt>
+            <div class="card-art art-cost" aria-hidden="true">
+              <span><em>web-shop</em><i style="--w: 100%"></i><b>$1.90</b></span>
+              <span><em>api-gateway</em><i style="--w: 50%"></i><b>$0.95</b></span>
+              <span><em>docs-site</em><i style="--w: 29%"></i><b>$0.55</b></span>
+            </div>
+            <h3 data-i18n="ft.11.t">花了多少，一问便知</h3>
+            <p data-i18n="ft.11.d">小羊按 agent、空间、电脑帮你把花费算清楚。</p>
+          </article>
+          <article class="card card-wide" data-tilt>
+            <div class="card-art art-cli" aria-hidden="true">
+              <code><b>$</b> herdr-pocket logs --level warn</code>
+              <code><b>$</b> herdr-pocket logs --follow</code>
+              <code><b>&#8599;</b> https://{server}/admin</code>
+            </div>
+            <h3 data-i18n="ft.12.t">日志都在一处</h3>
+            <p data-i18n="ft.12.d">中转服务、电脑和手机的日志都收在你的中转服务上：命令行用 <code>herdr-pocket logs</code> 查，问小羊“卡在哪一步”，或者打开中转服务上的 <code>/admin</code> 网页面板。</p>
+          </article>
+          <article class="card" data-tilt>
+            <div class="card-art art-toggle" aria-hidden="true">
+              <span class="tg"><i></i></span><em data-i18n="ft.13.k">动手前先问我</em>
+            </div>
+            <h3 data-i18n="ft.13.t">想先确认也行</h3>
+            <p data-i18n="ft.13.d">默认说了就做；打开“动手前先问我”，她每次动手前先问你。语音通话里不会停下来等。</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- ============================== VIDEO ============================== -->
+      <section class="video-sec wrap" id="video">
+        <p class="eyebrow" data-i18n="video.eyebrow">介绍片</p>
+        <h2 class="h2" data-i18n="video.title">90 秒看懂 Herdr Pocket</h2>
+        <div class="video-frame" id="video-frame">
+          <video id="intro-video" controls playsinline preload="none" width="1920" height="1080"></video>
+          <button class="video-play" id="video-play" type="button" aria-label="Play">
+            <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5-11-6.5Z" /></svg></span>
+          </button>
+        </div>
+        <div class="video-q" id="video-q" role="group" aria-labelledby="video-q-label">
+          <span id="video-q-label" data-i18n="video.q">清晰度</span>
+          <button type="button" data-q="sd" aria-pressed="false">720p</button>
+          <button type="button" data-q="hd" aria-pressed="false">1080p</button>
+        </div>
+      </section>
+
+      <!-- ============================== DEPLOY ============================== -->
+      <section class="deploy wrap" id="deploy">
+        <p class="eyebrow" data-i18n="dp.eyebrow">开始使用</p>
+        <h2 class="h2" data-i18n="dp.title">三步，搭好你自己的口袋</h2>
+        <div class="deploy-grid">
+          <article class="dstep" data-reveal>
+            <span class="dstep-num">1</span>
+            <h3 data-i18n="dp.1.t">部署中转服务</h3>
+            <p data-i18n="dp.1.d">任选一种，跑在你自己的服务器上；生产环境请务必走 HTTPS。第一次启动会在日志里打印一次性的设置二维码或设置码，留给第一台手机用。</p>
+            <div class="tabs" role="tablist">
+              <button class="tab is-on" type="button" role="tab" data-tab="serverCompose">Docker Compose</button>
+              <button class="tab" type="button" role="tab" data-tab="serverScript" data-i18n="dp.tab.script">一键脚本</button>
+              <button class="tab" type="button" role="tab" data-tab="serverCloudflare">Cloudflare<span class="tab-x"> Tunnel</span></button>
+            </div>
+            <div class="cmd cmd-block" data-cmd="serverCompose" id="server-cmd">
+              <span class="cmd-prompt">$</span><code class="cmd-text"></code>
+              <button class="cmd-copy" type="button" aria-label="Copy"><span data-i18n="ui.copy">复制</span></button>
+            </div>
+            <p class="tab-note" id="server-note"></p>
+            <p class="fine" data-i18n="dp.1.fine">跑起来以后，打开 <code>https://{server}/admin</code> 能看日志面板。</p>
+          </article>
+          <article class="dstep" data-reveal>
+            <span class="dstep-num">2</span>
+            <h3 data-i18n="dp.3.t">手机装上 App</h3>
+            <p data-i18n="dp.3.d">用手机相机扫上一步的二维码，会打开一个连接页；从 GitHub Releases 装好 App，再点页面上的按钮就直接连上。只有设置码时，在 App 里填上服务器地址和设置码。以后有新版本，App 里点一下就更新。</p>
+            <a class="btn btn-accent btn-block" href="#" data-href="releasesUrl" target="_blank" rel="noopener">
+              <span data-i18n="dp.3.cta">下载 Android 安装包</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14" /></svg>
+            </a>
+          </article>
+          <article class="dstep" data-reveal>
+            <span class="dstep-num">3</span>
+            <h3 data-i18n="dp.2.t">每台电脑上线</h3>
+            <p data-i18n="dp.2.d">这条命令装好 <code>herdr-pocket</code>，把这台电脑登记到你的中转服务并保持在线。终端里出现二维码时，用已连上的手机扫一下、点“允许加入”。</p>
+            <div class="cmd cmd-block" data-cmd="computerInstall">
+              <span class="cmd-prompt">$</span><code class="cmd-text"></code>
+              <button class="cmd-copy" type="button" aria-label="Copy"><span data-i18n="ui.copy">复制</span></button>
+            </div>
+            <p class="fine" data-i18n="dp.2.win">Windows 在 PowerShell 里运行这条：</p>
+            <div class="cmd cmd-block" data-cmd="computerInstallWindows">
+              <span class="cmd-prompt">PS&gt;</span><code class="cmd-text"></code>
+              <button class="cmd-copy" type="button" aria-label="Copy"><span data-i18n="ui.copy">复制</span></button>
+            </div>
+            <div class="mini-term" aria-hidden="true">
+              <div class="qr-ascii" id="qr-ascii"></div>
+              <span data-i18n="dp.2.scan">用手机扫一下这个二维码</span>
+            </div>
+            <p class="fine" data-i18n="dp.3.fine">需要 herdr。macOS 和 Linux 上没有 Node.js 22.18 以上版本时，安装脚本会自带一份；Windows 上总是自带一份，不需要管理员权限。</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- ============================== FAQ ============================== -->
+      <section class="faq wrap" id="faq">
+        <p class="eyebrow" data-i18n="faq.eyebrow">常见问题</p>
+        <h2 class="h2" data-i18n="faq.title">你可能想问</h2>
+        <div class="faq-list">
+          <details>
+            <summary data-i18n="faq.1.q">支持 iPhone 吗？</summary>
+            <div class="faq-a"><p data-i18n="faq.1.a">目前只有 Android 版 App。电脑端支持 macOS、Linux 和 Windows，能跑 herdr 就行。</p></div>
+          </details>
+          <details>
+            <summary data-i18n="faq.2.q">能看哪些 agent？</summary>
+            <div class="faq-a"><p data-i18n="faq.2.a">herdr 里跑着的都能看：Claude Code、Codex、Gemini、OpenCode、Kimi、Qwen、Cursor Agent、Droid、CodeBuddy、Qoder、omp、pi 等，普通终端程序也可以，认得出的会显示专属头像。电脑上装好的 agent CLI，小羊也能直接帮你启动。</p></div>
+          </details>
+          <details>
+            <summary data-i18n="faq.3.q">一定要自己部署服务器吗？</summary>
+            <div class="faq-a"><p data-i18n="faq.3.a">是的，中转服务由你自己部署，数据只经过你的服务器。用 Docker Compose、一键脚本或 Cloudflare Tunnel 都可以。</p></div>
+          </details>
+          <details>
+            <summary data-i18n="faq.4.q">中转服务能看到我的内容吗？</summary>
+            <div class="faq-a"><p data-i18n="faq.4.a">能。当前版本没有做端到端加密，中转服务能看到明文，所以请部署在你信任的服务器上，并且务必走 HTTPS。设备令牌只存哈希，可以随时吊销。</p></div>
+          </details>
+          <details>
+            <summary data-i18n="faq.5.q">小羊会直接动手吗？</summary>
+            <div class="faq-a"><p data-i18n="faq.5.a">会，你说了她就去做：发消息、按键、新建空间、启动 agent，做完把真实结果告诉你，比如“发了，它还没回”或“它正在忙，已排在输入框里”。想每次先确认，就在设置里打开“动手前先问我”（默认关闭）；语音通话中她不会停下来等确认。只想让手机看、不让它动，见下一条。</p></div>
+          </details>
+          <details>
+            <summary data-i18n="faq.6.q">助理和语音用什么模型？</summary>
+            <div class="faq-a"><p data-i18n="faq.6.a">文字助理可以接 Anthropic，或任意 OpenAI 兼容服务（DeepSeek、Qwen、Kimi、GLM、OpenRouter、Ollama 等），在服务器上配置。语音通话默认用 MOSS-Live，更多实时语音服务正在接入。不配置就没有助理或语音，其他功能照常用。</p></div>
+          </details>
+          <details>
+            <summary data-i18n="faq.7.q">App 关着也能收到提醒吗？</summary>
+            <div class="faq-a"><p data-i18n="faq.7.a">能。提醒靠手机上的常驻服务连着你的中转服务，不经过 Google 推送。部分国产系统需要在设置里允许它在后台运行。</p></div>
+          </details>
+          <details>
+            <summary data-i18n="faq.8.q">能只让手机看、不让它操作吗？</summary>
+            <div class="faq-a"><p data-i18n="faq.8.a">可以。电脑端用 <code>herdr-pocket run --read-only</code> 只允许查看，或用 <code>--allow</code> 只让指定设备操作这台电脑。</p></div>
+          </details>
+          <details>
+            <summary data-i18n="faq.10.q">可以改了拿去用吗？</summary>
+            <div class="faq-a"><p data-i18n="faq.10.a">可以，个人和商用都行。Herdr Pocket 以 AGPL-3.0 开源：修改后拿去对外提供服务的，也要公开改动后的源码。</p></div>
+          </details>
+          <details>
+            <summary data-i18n="faq.9.q">出了问题去哪儿查？</summary>
+            <div class="faq-a"><p data-i18n="faq.9.a">中转服务、电脑和手机的日志都汇总在你的中转服务上。命令行用 <code>herdr-pocket logs</code> 按时间、设备、级别筛选；也可以直接问小羊“卡在哪一步”，或者打开中转服务上的 <code>/admin</code> 网页面板。</p></div>
+          </details>
+        </div>
+      </section>
+
+      <!-- ============================== FINAL CTA ============================== -->
+      <section class="final">
+        <div class="final-inner wrap">
+          <img class="final-mascot" src="assets/mascot/yay.webp" alt="" loading="lazy" width="220" height="220" />
+          <h2 class="final-title" data-i18n="final.title">今晚，让 agent 们安心跑。</h2>
+          <p class="lead" data-i18n="final.lead">开源、自托管，几分钟就能搭好。</p>
+          <div class="hero-ctas center">
+            <a class="btn btn-accent" href="#" data-href="githubUrl" target="_blank" rel="noopener"><span data-i18n="final.cta1">去 GitHub 点个星</span></a>
+            <a class="btn btn-ghost" href="#deploy"><span data-i18n="final.cta2">开始部署</span></a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="#top"><img src="assets/brand/logo-64.webp" width="32" height="32" alt="" /><span>Herdr Pocket</span></a>
+          <p data-i18n="footer.tag">把每台电脑上的 coding agent 装进口袋。</p>
+        </div>
+        <nav class="footer-links" aria-label="Footer">
+          <div>
+            <h4 data-i18n="footer.project">项目</h4>
+            <a href="#" data-href="githubUrl" target="_blank" rel="noopener">GitHub</a>
+            <a href="#" data-href="releasesUrl" target="_blank" rel="noopener" data-i18n="footer.releases">版本发布</a>
+            <a href="#" data-href="issuesUrl" target="_blank" rel="noopener" data-i18n="footer.issues">问题反馈</a>
+          </div>
+          <div>
+            <h4 data-i18n="footer.learn">了解</h4>
+            <a href="#how" data-i18n="nav.how">工作原理</a>
+            <a href="#assistant" data-i18n="nav.assistant">小羊助理</a>
+            <a href="#deploy" data-i18n="nav.deploy">部署</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base">
+        <div class="footer-meta">
+          <span data-i18n="footer.note">Herdr Pocket 是开源项目，需要配合 herdr 使用。</span>
+          <a class="footer-license" href="#" data-href="licenseUrl" target="_blank" rel="noopener">AGPL-3.0 · © 2026 Crosery</a>
+        </div>
+        <img src="assets/mascot/sleepy.webp" alt="" loading="lazy" width="64" height="64" />
+      </div>
+    </footer>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+/* Remotion renders frame by frame: CSS animations and transitions would run on
+   wall-clock time and jitter, so the film drives all motion from the frame. */
+*,
+*::before,
+*::after {
+  animation: none !important;
+  transition: none !important;
+}
+html,
+body {
+  margin: 0;
+  background: #fff6f9;
+}
+.phone-screen {
+  font-size: 13px;
+}

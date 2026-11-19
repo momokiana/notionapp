@@ -1,0 +1,4 @@
+# Caddy gets and renews the HTTPS certificate automatically.
+xiaoaixiaoai.example.com {
+	reverse_proxy 127.0.0.1:7420
+}

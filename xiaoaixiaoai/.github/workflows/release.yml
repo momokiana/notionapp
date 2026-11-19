@@ -1,0 +1,233 @@
+# A tag vX.Y.Z builds and publishes a release:
+#   xiaoaixiaoai-X.Y.Z.tar.gz               relay + host bundle (what installers and `update` use)
+#   xiaoaixiaoai-X.Y.Z-android-arm64.apk    the Android app (what the in-app updater uses)
+#   SHA256SUMS                              checksums of both
+#   ghcr.io/<owner>/xiaoaixiaoai-relay:X.Y.Z, :X.Y and :latest (multi-arch relay image)
+# The version is stamped from the tag (scripts/set-version.mjs) before anything is built.
+# APK signing: repository secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
+# ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD (docs/deploy/updates.md). Missing release
+# signing secrets fail the build; a public debug key is never a release fallback.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build again, e.g. v0.2.0
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - id: v
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$TAG is not a vX.Y.Z tag"
+            exit 1
+          fi
+          prerelease=false
+          [[ "$version" == *-* ]] && prerelease=true
+          {
+            echo "tag=$TAG"
+            echo "version=$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+  bundle:
+    needs: meta
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: node scripts/set-version.mjs "$VERSION"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm --filter @xiaoaixiaoai/relay --filter @xiaoaixiaoai/hostd --filter @xiaoaixiaoai/update test
+      - run: scripts/pack-release.sh dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bundle
+          path: dist/xiaoaixiaoai-${{ needs.meta.outputs.version }}.tar.gz
+          if-no-files-found: error
+
+  image:
+    needs: meta
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - run: node scripts/set-version.mjs "$VERSION"
+      - id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/xiaoaixiaoai-relay" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: tags
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.name.outputs.image }}
+          flavor: latest=auto
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.meta.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.meta.outputs.tag }}
+      # A path context, so the stamped version is in the image.
+      - uses: docker/build-push-action@v7
+        env:
+          # The job summary is enough; no build-record artifact.
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: ${{ steps.tags.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  android:
+    needs: meta
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.meta.outputs.tag }}
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/mobile/pnpm-lock.yaml
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v4
+      # Version name and versionCode go into app.json; prebuild carries them into android/.
+      - run: node scripts/set-version.mjs "$VERSION"
+      - name: Generate android/
+        working-directory: apps/mobile
+        run: |
+          pnpm install --frozen-lockfile --ignore-workspace
+          pnpm exec expo prebuild --platform android --no-install
+      - name: Build the APK
+        working-directory: apps/mobile/android
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
+            echo "::error::小爱小爱 release signing is not configured; refusing to publish an APK signed with the public debug key."
+            exit 1
+          fi
+          umask 077
+          trap 'rm -f "$RUNNER_TEMP/release.jks"' EXIT
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          signing=(
+            "-Pandroid.injected.signing.store.file=$RUNNER_TEMP/release.jks"
+            "-Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD"
+            "-Pandroid.injected.signing.key.alias=$KEY_ALIAS"
+            "-Pandroid.injected.signing.key.password=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+          )
+          ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=arm64-v8a -Pexpo.webp.animated=true "${signing[@]}"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          apk="$GITHUB_WORKSPACE/dist/xiaoaixiaoai-$VERSION-android-arm64.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$apk"
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          # Fails the job when the APK does not verify. The summary only shows who signed it;
+          # its wording differs between build-tools ("Signer #1 certificate DN" before 37,
+          # "V2 Signer: certificate DN" since), so it never fails the job itself.
+          certs=$("$apksigner" verify --print-certs "$apk")
+          {
+            echo "### APK signer"
+            echo '```'
+            grep -E "certificate (DN|SHA-256 digest):" <<<"$certs" | sed -E 's/^.*certificate /certificate /' | sort -u || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f "$RUNNER_TEMP/release.jks"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: apk
+          path: dist/xiaoaixiaoai-${{ needs.meta.outputs.version }}-android-arm64.apk
+          if-no-files-found: error
+
+  release:
+    needs: [meta, bundle, image, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.meta.outputs.tag }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+      IMAGE: ${{ needs.image.outputs.image }}
+    steps:
+      # Only what the release ships: other jobs' artifacts (e.g. a Docker build
+      # record) must not end up in the release or in SHA256SUMS.
+      - uses: actions/download-artifact@v8
+        with:
+          name: bundle
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: apk
+          path: dist
+      - run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish
+        run: |
+          cat > notes.md <<EOF
+          Relay image: \`$IMAGE:$VERSION\` (also \`:latest\` for releases)
+
+          - Review the attached bundle, then use its saved installers with --source (shell) or -From (PowerShell). Remote bootstrap is not supported.
+          - Automatic remote updates and pairing-page downloads remain disabled until an owned release source is configured. Use the explicitly supplied 小爱小爱 APK; never substitute the upstream app.
+          EOF
+          flags=()
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "小爱小爱 $VERSION" --notes-file notes.md --generate-notes "${flags[@]}"
+          fi

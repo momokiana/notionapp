@@ -1,0 +1,25 @@
+{
+  "name": "@xiaoaixiaoai/hostd",
+  "version": "0.1.9",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "bin": { "xiaoaixiaoai": "./bin/xiaoaixiaoai" },
+  "scripts": {
+    "start": "node src/cli.ts run",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@xiaoaixiaoai/protocol": "workspace:*",
+    "@xiaoaixiaoai/update": "workspace:*",
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.5.12",
+    "typescript": "^5.9.0"
+  }
+}

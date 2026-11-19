@@ -1,0 +1,21 @@
+[Unit]
+Description=小爱小爱 relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xiaoaixiaoai
+WorkingDirectory=/opt/xiaoaixiaoai
+EnvironmentFile=/etc/xiaoaixiaoai/relay.env
+ExecStart=/usr/bin/node --no-warnings apps/relay/src/main.ts
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/xiaoaixiaoai
+
+[Install]
+WantedBy=multi-user.target

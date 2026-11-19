@@ -1,0 +1,14 @@
+{
+  "name": "xiaoaixiaoai",
+  "version": "0.1.9",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "packageManager": "pnpm@12.15.0",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "relay": "pnpm --filter @xiaoaixiaoai/relay start",
+    "hostd": "pnpm --filter @xiaoaixiaoai/hostd start"
+  },
+  "engines": { "node": ">=22.19" }
+}

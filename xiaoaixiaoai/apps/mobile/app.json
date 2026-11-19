@@ -1,0 +1,88 @@
+{
+  "expo": {
+    "name": "小爱小爱",
+    "slug": "xiaoaixiaoai",
+    "scheme": "xiaoaixiaoai",
+    "version": "0.1.9",
+    "orientation": "portrait",
+    "icon": "./assets/brand/starlight-launcher.png",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#E5F5FF",
+    "android": {
+      "package": "dev.notifier.xiaoaixiaoai",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/brand/starlight-launcher-fg.png",
+        "backgroundImage": "./assets/brand/starlight-launcher-bg.png",
+        "backgroundColor": "#E5F5FF"
+      },
+      "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.REQUEST_INSTALL_PACKAGES"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "xiaoaixiaoai"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      "expo-secure-store",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/MapleMono-Regular.ttf",
+            "./assets/fonts/MapleMono-Bold.ttf",
+            "./assets/fonts/XiaoaiStarlightHand.ttf"
+          ]
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "扫描电脑或服务器上显示的配对二维码",
+          "recordAudioAndroid": false,
+          "microphonePermission": "和助理语音通话时使用麦克风"
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/brand/aimisi-avatar.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#E5F5FF",
+          "dark": {
+            "image": "./assets/brand/aimisi-avatar.png",
+            "backgroundColor": "#111F33"
+          }
+        }
+      ],
+      "./plugins/withLegalNotices",
+      "./plugins/withCleartext",
+      "./plugins/withAndroidBuild",
+      "./plugins/withOwnSigning"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "platforms": [
+      "android"
+    ]
+  }
+}

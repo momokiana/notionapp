@@ -1,0 +1,7 @@
+# Build the relay image from this checkout instead of pulling the published one:
+#   docker compose -f deploy/docker/compose.yml -f deploy/docker/compose.build.yml up -d --build
+services:
+  relay:
+    image: xiaoaixiaoai-relay:local
+    build:
+      context: ../..

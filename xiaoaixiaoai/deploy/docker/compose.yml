@@ -1,0 +1,65 @@
+# 小爱小爱 relay with Docker Compose. Put this file, relay.env and .env in one folder
+# (scripts/install-relay.sh does that), then `docker compose up -d`.
+#
+# How phones reach it is picked by COMPOSE_PROFILES in .env:
+#   (empty)      plain port RELAY_BIND:RELAY_PORT: a LAN, or your own reverse proxy in front
+#   caddy        Caddy with automatic HTTPS for POCKET_DOMAIN (needs ports 80 and 443 open)
+#   tunnel       Cloudflare Tunnel with TUNNEL_TOKEN: no open ports, no certificates
+#   quicktunnel  a temporary *.trycloudflare.com address for trying it out (changes on restart)
+#
+# No owned release source is configured. Preload a reviewed own image before starting;
+# remote product updates/pulls are not an installer default (the data volume is kept).
+name: xiaoaixiaoai
+
+services:
+  relay:
+    image: ${POCKET_IMAGE:?Explicit own/local relay image required; preload it first}
+    pull_policy: never
+    restart: unless-stopped
+    env_file:
+      - path: relay.env
+        required: false
+    environment:
+      POCKET_HOST: 0.0.0.0
+      POCKET_PORT: "7420"
+      POCKET_DB: /data/relay.db
+    volumes:
+      - data:/data
+    ports:
+      # With Caddy or a tunnel in front, bind to 127.0.0.1 so only they (and you) reach it.
+      - "${RELAY_BIND:-0.0.0.0}:${RELAY_PORT:-7420}:7420"
+
+  caddy:
+    profiles: [caddy]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    command: caddy reverse-proxy --from ${POCKET_DOMAIN:-} --to relay:7420
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [relay]
+
+  cloudflared:
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on: [relay]
+
+  quicktunnel:
+    profiles: [quicktunnel]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://relay:7420
+    depends_on: [relay]
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:

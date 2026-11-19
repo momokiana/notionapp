@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Relay and host
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The pnpm version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm --filter @xiaoaixiaoai/relay test
+      - run: pnpm --filter @xiaoaixiaoai/hostd test
+      - run: pnpm --filter @xiaoaixiaoai/update test
+      - name: Shell scripts
+        run: shellcheck -S warning scripts/*.sh
+      - name: Release bundle
+        run: |
+          scripts/pack-release.sh dist
+          ls -l dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bundle
+          path: dist/xiaoaixiaoai-*.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+
+  windows:
+    name: Windows computer
+    needs: server
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @xiaoaixiaoai/hostd test
+      - run: pnpm --filter @xiaoaixiaoai/update test
+      - name: Installer script lint
+        shell: powershell
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Install-Module PSScriptAnalyzer -Scope CurrentUser -Force }
+          $found = Invoke-ScriptAnalyzer -Path scripts\install-host.ps1 -Severity Error, Warning -ExcludeRule PSAvoidUsingWriteHost, PSUseShouldProcessForStateChangingFunctions, PSUseApprovedVerbs, PSUseSingularNouns
+          $found | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
+          if ($found | Where-Object Severity -eq Error) { exit 1 }
+      - uses: actions/download-artifact@v8
+        with:
+          name: bundle
+          path: dist
+      # The real thing in Windows PowerShell 5.1: install from the bundle, run as the logon
+      # service, update in place (junction swap + service hand-over), roll back, remove.
+      - name: Install, service, update
+        shell: powershell
+        run: .github\windows-install-test.ps1 -Bundle (Get-ChildItem dist\xiaoaixiaoai-*.tar.gz).FullName
+
+  # A Windows computer with herdr, as the phone sees it: list, read, type, keys, pictures,
+  # starting agents (no desktop app on Windows: hc run), through a relay on the runner.
+  windows-agents:
+    name: Windows agents
+    needs: server
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: bundle
+          path: dist
+      - name: Install herdr (hc)
+        shell: powershell
+        run: |
+          irm https://releases.herdr.dev/core/install.ps1 | iex
+          Join-Path $env:LOCALAPPDATA "Programs\herdr-core" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      # Conversations on the phone come from Uniflo, a separate program.
+      - name: Install Uniflo
+        shell: powershell
+        run: |
+          $env:UNIFLO_NO_SETUP = "1"
+          $env:UNIFLO_INSTALL_DIR = Join-Path $env:LOCALAPPDATA "Programs\uniflo"
+          irm https://github.com/Crosery/uniflo/releases/latest/download/install.ps1 | iex
+          $env:UNIFLO_INSTALL_DIR | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Agents through the relay
+        shell: powershell
+        run: node --no-warnings .github/windows-agents/e2e.ts (Get-ChildItem dist\xiaoaixiaoai-*.tar.gz).FullName
+
+  mobile:
+    name: Android app
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/mobile/pnpm-lock.yaml
+      # The app is its own project, outside the root workspace.
+      - run: pnpm install --frozen-lockfile --ignore-workspace
+      - run: pnpm typecheck
+
+  image:
+    name: Relay image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
