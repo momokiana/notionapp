@@ -316,14 +316,18 @@ export class CodexLocalRuntime {
     if (!dbPath) return [];
     const rows = queryThreads(dbPath, THREAD_LIST_LIMIT).filter((r) => isRuntimeId(r.id));
     const grouped = new Map<string, RuntimeProject>();
+    let sessionCount = 0;
     for (const row of rows) {
+      if (sessionCount >= 100) break;
       const entry = this.toEntry(row);
       let project = grouped.get(entry.project.id);
       if (!project) {
+        if (grouped.size >= 20) continue;
         project = { runtime: "codex", id: entry.project.id, title: entry.project.title, sessions: [] };
         grouped.set(entry.project.id, project);
       }
       project.sessions.push(entry.session);
+      sessionCount++;
     }
     return [...grouped.values()];
   }
@@ -540,14 +544,15 @@ export class CodexLocalRuntime {
 
       let resumed: Record<string, unknown> | undefined;
       try {
-        resumed = await rpc("thread/resume", { threadId: sessionId, cwd: row.cwd }, 20_000);
+        resumed = await rpc("thread/resume", { threadId: sessionId, cwd: row.cwd, excludeTurns: true }, 20_000);
       } catch {
         throw new RuntimeError("not_found", "该 Codex 会话正被桌面窗口占用或暂时无法续跑。");
       }
       const resumedThread = resumed?.thread && typeof resumed.thread === "object" ? resumed.thread as Record<string, unknown> : undefined;
       const resumedCwd = typeof resumed?.cwd === "string" ? resumed.cwd : "";
       const norm = (p: string) => {
-        try { return realpathSync(p).toLowerCase(); } catch { return resolve(p).toLowerCase(); }
+        const raw = p.replace(/^\\\\\?\\/, "");
+        try { return realpathSync(raw).toLowerCase(); } catch { return resolve(raw).toLowerCase(); }
       };
       if (resumedThread?.id !== sessionId || !resumedCwd || norm(resumedCwd) !== norm(row.cwd)) {
         throw new RuntimeError("not_found", "Codex 会话工作目录或身份不一致，未发送。");

@@ -9,6 +9,7 @@ import {
   type Device, type RuntimeProject, type RuntimeSession, type RuntimeSessionReceipt, type SessionRuntime,
 } from "@xiaoaixiaoai/protocol";
 import { call, RelayError } from "../lib/relay";
+import { relTime } from "../lib/format";
 import { useLive, useSettings } from "../lib/store";
 import { fonts, radius, space } from "../theme/tokens";
 import { usePalette } from "../theme/theme";
@@ -189,7 +190,7 @@ export function RuntimeSessionsPanel({ host, onBack, focusSessionId }: { host: D
                   return (
                     <View key={session.id} style={{ paddingVertical: space.xs, borderTopWidth: 1, borderColor: p.divider, gap: space.xs }}>
                       <Text style={{ color: p.ink, fontFamily: fonts.bodySemi }}>{session.title}</Text>
-                      <Text style={{ color: p.muted }}>{STATE[session.state] ?? "状态未知"} · {session.canSend ? "可发送" : "只读"} · {session.id.slice(-8)}</Text>
+                      <Text style={{ color: p.muted }}>{STATE[session.state] ?? "状态未知"} · {session.canSend ? "可发送" : "只读"}{session.updatedAt ? ` · ${relTime(session.updatedAt)}` : ""} · {session.id.slice(-8)}</Text>
                       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
                         <Button
                           compact

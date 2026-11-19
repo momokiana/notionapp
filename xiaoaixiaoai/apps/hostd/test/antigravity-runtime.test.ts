@@ -146,3 +146,84 @@ test("AntigravityRuntime discovers workspaces, classifies attention/idle/running
     (err: unknown) => err instanceof RuntimeError && err.code === "forbidden",
   );
 });
+
+test("AntigravityRuntime reads conversation_summaries.db workspaces/titles, skips subagents & <CONTEXT_SUMMARY>, and caps >20 projects", async (t) => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { RuntimeSessions } = await import("../src/runtime-sessions.ts");
+  const root = mkdtempSync(join(tmpdir(), "xa-ag-db-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const brainDir = join(root, "brain");
+  mkdirSync(brainDir, { recursive: true });
+  const dbPath = join(root, "conversation_summaries.db");
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE conversation_summaries (
+      conversation_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT "",
+      workspace_uris TEXT NOT NULL DEFAULT "[]",
+      status TEXT NOT NULL DEFAULT "",
+      parent_conversation_id TEXT NOT NULL DEFAULT "",
+      nesting_depth INTEGER NOT NULL DEFAULT 0,
+      killed NUMERIC NOT NULL DEFAULT false,
+      last_modified_time DATETIME NOT NULL DEFAULT ""
+    );
+  `);
+  const ins = db.prepare(`
+    INSERT INTO conversation_summaries (conversation_id, title, workspace_uris, status, parent_conversation_id, nesting_depth, killed, last_modified_time)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const writeAg = (id: string, steps: unknown[], ageMs = 0) => {
+    const logs = join(brainDir, id, ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    const tp = join(logs, "transcript.jsonl");
+    writeFileSync(tp, `${steps.map((s) => JSON.stringify(s)).join("\n")}\n`);
+    if (ageMs) {
+      const d = new Date(Date.now() - ageMs);
+      utimesSync(tp, d, d);
+    }
+  };
+
+  // Primary session with encoded Windows file URI, running DB status, and <CONTEXT_SUMMARY> synthetic input.
+  writeAg("ag-main-db-1", [
+    { type: "USER_INPUT", content: "<CONTEXT_SUMMARY>\nSynthetic compacted summary\n</CONTEXT_SUMMARY>" },
+    { type: "USER_INPUT", content: "<USER_REQUEST>\n真正的用户输入\n</USER_REQUEST>" },
+    { type: "PLANNER_RESPONSE", status: "DONE", content: "处理完成。" },
+  ], 1000);
+  ins.run("ag-main-db-1", "真实摘要标题", '["file:///d%3A/Work/MyProject/notionapp-public"]', "CASCADE_RUN_STATUS_RUNNING", "", 0, 0, "2026-11-20T01:00:00Z");
+
+  // Subagents & killed sessions that must be skipped.
+  writeAg("ag-sub-depth-1", [{ type: "USER_INPUT", content: "<USER_REQUEST>sub1</USER_REQUEST>" }], 500);
+  ins.run("ag-sub-depth-1", "", '["file:///d%3A/Work/MyProject/notionapp-public"]', "CASCADE_RUN_STATUS_IDLE", "", 1, 0, "2026-11-20T01:01:00Z");
+
+  writeAg("ag-sub-parent-2", [{ type: "USER_INPUT", content: "<USER_REQUEST>sub2</USER_REQUEST>" }], 600);
+  ins.run("ag-sub-parent-2", "", '["file:///d%3A/Work/MyProject/notionapp-public"]', "CASCADE_RUN_STATUS_IDLE", "ag-main-db-1", 0, 0, "2026-11-20T01:01:00Z");
+
+  writeAg("ag-killed-3", [{ type: "USER_INPUT", content: "<USER_REQUEST>killed</USER_REQUEST>" }], 700);
+  ins.run("ag-killed-3", "Killed Conv", '["file:///d%3A/Work/MyProject/notionapp-public"]', "CASCADE_RUN_STATUS_IDLE", "", 0, 1, "2026-11-20T01:01:00Z");
+
+  // 22 extra distinct workspaces so list() must cap at 20 projects cleanly.
+  for (let i = 1; i <= 22; i++) {
+    const id = `ag-extra-${i}`;
+    writeAg(id, [{ type: "USER_INPUT", content: `<USER_REQUEST>task ${i}</USER_REQUEST>` }], 10_000 + i * 100);
+    ins.run(id, `工程任务 ${i}`, JSON.stringify([`file:///work/proj-${i}`]), "CASCADE_RUN_STATUS_IDLE", "", 0, 0, "2026-11-20T00:00:00Z");
+  }
+  db.close();
+
+  const rt = new AntigravityRuntime({ brainDir });
+  const rs = new RuntimeSessions("viewer", { antigravity: rt }, join(root, "ledger"));
+  const catalog = await rs.list();
+  assert.equal(catalog.projects.length, 20);
+
+  const mainProj = catalog.projects.find((p) => p.title === "notionapp-public");
+  assert.ok(mainProj);
+  assert.equal(mainProj.sessions.length, 1);
+  assert.equal(mainProj.sessions[0]!.id, "ag-main-db-1");
+  assert.equal(mainProj.sessions[0]!.title, "真实摘要标题");
+  assert.equal(mainProj.sessions[0]!.state, "running");
+
+  const detail = await rt.detail(mainProj.id, "ag-main-db-1", 20);
+  assert.equal(detail.session.state, "running");
+  assert.deepEqual(detail.messages.map((m) => m.text), ["真正的用户输入", "处理完成。"]);
+});

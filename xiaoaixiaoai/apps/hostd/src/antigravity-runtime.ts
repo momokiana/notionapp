@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   DSH_DIRECTORY_PAGE_SIZE,
   DSH_DIRECTORY_SEARCH_LIMIT,
@@ -33,6 +34,17 @@ const READ_ONLY_REASON = "Antigravity 桌面会话暂不支持外部注入消息
 
 export interface AntigravityRuntimeOptions {
   brainDir: string;
+  summaryDbPath?: string;
+}
+
+interface SummaryRow {
+  conversation_id: string;
+  title: string;
+  workspace_uris: string;
+  status: string;
+  parent_conversation_id: string;
+  nesting_depth: number;
+  killed: number;
 }
 
 interface ParsedStep {
@@ -49,6 +61,7 @@ interface BrainMeta {
   transcriptPath: string;
   hasLock: boolean;
   mtimeMs: number;
+  dbStatus?: string;
   project: { id: string; title: string };
   title: string;
   state: RuntimeSessionState;
@@ -109,8 +122,38 @@ function parseStep(line: string): ParsedStep | null {
 function extractUserRequest(content: unknown): string {
   if (typeof content !== "string") return "";
   const match = /<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/i.exec(content);
-  const body = match ? match[1]! : content.replace(/<[^>]+>/g, " ");
-  return cleanText(body, MAX_MESSAGE_TEXT);
+  if (match) return cleanText(match[1]!, MAX_MESSAGE_TEXT);
+  if (/<CONTEXT_SUMMARY>|<SYSTEM_MESSAGE>/i.test(content)) return "";
+  return cleanText(content.replace(/<[^>]+>/g, " "), MAX_MESSAGE_TEXT);
+}
+
+function projectFromPath(rawPath: string): { id: string; title: string } | undefined {
+  const cleaned = rawPath.trim().replace(/[\\/]+$/, "");
+  if (!cleaned || /^none$/i.test(cleaned)) return undefined;
+  const canonical = cleaned.replace(/\\/g, "/").toLowerCase();
+  const hash = createHash("sha256").update(canonical).digest("hex").slice(0, 12);
+  const leaf = cleaned.split(/[\\/]+/).filter(Boolean).pop() ?? "";
+  return { id: `agp_${hash}`, title: cleanLabel(leaf, "Antigravity") };
+}
+
+function workspaceFromUris(rawUris: unknown): { id: string; title: string } | undefined {
+  let uris: unknown = rawUris;
+  if (typeof rawUris === "string") {
+    const trimmed = rawUris.trim();
+    if (!trimmed) return undefined;
+    try { uris = JSON.parse(trimmed); } catch { return undefined; }
+  }
+  if (!Array.isArray(uris)) return undefined;
+  for (const item of uris) {
+    if (typeof item !== "string" || !item.trim()) continue;
+    let decoded = item.trim();
+    try { decoded = decodeURIComponent(decoded); } catch { /* keep raw if malformed escape */ }
+    if (!/^file:\/\//i.test(decoded)) continue;
+    const fsPath = decoded.replace(/^file:\/\//i, "").replace(/^\/([A-Za-z]:)/, "$1");
+    const proj = projectFromPath(fsPath);
+    if (proj) return proj;
+  }
+  return undefined;
 }
 
 function workspaceFromSystem(content: string): { id: string; title: string } | undefined {
@@ -119,13 +162,35 @@ function workspaceFromSystem(content: string): { id: string; title: string } | u
   for (const line of block[1]!.split(/\r?\n/)) {
     const m = /^\s*-\s+(.+?)\s*$/.exec(line);
     if (!m) continue;
-    const raw = m[1]!.trim().replace(/[\\/]+$/, "");
-    if (!raw || /^none$/i.test(raw)) continue;
-    const hash = createHash("sha256").update(raw.toLowerCase()).digest("hex").slice(0, 12);
-    const leaf = basename(raw).replace(/[:/\\]/g, "").trim();
-    return { id: `agp_${hash}`, title: cleanLabel(leaf, "Antigravity") };
+    const proj = projectFromPath(m[1]!);
+    if (proj) return proj;
   }
   return undefined;
+}
+
+function readSummaryIndex(brainDir: string, summaryDbPath?: string): Map<string, SummaryRow> | undefined {
+  const dbPath = summaryDbPath ?? join(dirname(brainDir), "conversation_summaries.db");
+  if (!existsSync(dbPath)) return undefined;
+  try {
+    const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
+    try {
+      const rows = db.prepare(`
+        SELECT conversation_id, title, workspace_uris, status, parent_conversation_id, nesting_depth, killed
+        FROM conversation_summaries
+      `).all() as unknown as SummaryRow[];
+      const map = new Map<string, SummaryRow>();
+      for (const row of rows) {
+        if (row && typeof row.conversation_id === "string" && row.conversation_id) {
+          map.set(row.conversation_id, row);
+        }
+      }
+      return map;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return undefined;
+  }
 }
 
 function parseAskQuestionTool(calls: ParsedStep["tool_calls"], prefixId: string): RuntimePendingQuestion | undefined {
@@ -197,19 +262,37 @@ const searchKey = (text: string) => text.normalize("NFKC").toLowerCase().replace
 
 export class AntigravityRuntime {
   private readonly brainDir: string;
+  private readonly summaryDbPath?: string;
 
   constructor(options: AntigravityRuntimeOptions) {
     if (!options || typeof options.brainDir !== "string" || !options.brainDir.trim()) {
       throw new RuntimeError("bad_request", "Antigravity 目录配置无效。");
     }
     this.brainDir = options.brainDir;
+    this.summaryDbPath = options.summaryDbPath;
+  }
+
+  private resolveState(tailState: RuntimeSessionState, hasPendingQuestion: boolean, hasLock: boolean, dbStatus?: string): RuntimeSessionState {
+    if (hasPendingQuestion) return "attention";
+    if (dbStatus === "CASCADE_RUN_STATUS_RUNNING" || hasLock) return "running";
+    if (dbStatus === "CASCADE_RUN_STATUS_IDLE") return "idle";
+    return tailState;
   }
 
   private scanBrains(): BrainMeta[] {
     if (!existsSync(this.brainDir)) return [];
-    const candidates: Array<{ sessionId: string; transcriptPath: string; hasLock: boolean; mtimeMs: number }> = [];
+    const summaryMap = readSummaryIndex(this.brainDir, this.summaryDbPath);
+    const candidates: Array<{ sessionId: string; transcriptPath: string; hasLock: boolean; mtimeMs: number; summary?: SummaryRow }> = [];
     for (const ent of readdirSync(this.brainDir, { withFileTypes: true })) {
       if (!ent.isDirectory() || !isRuntimeId(ent.name)) continue;
+      const summary = summaryMap?.get(ent.name);
+      if (summary && (
+        (typeof summary.nesting_depth === "number" && summary.nesting_depth > 0) ||
+        (typeof summary.parent_conversation_id === "string" && summary.parent_conversation_id.trim() !== "") ||
+        Number(summary.killed) === 1
+      )) {
+        continue;
+      }
       const base = join(this.brainDir, ent.name);
       const transcriptPath = join(base, ".system_generated", "logs", "transcript.jsonl");
       if (!existsSync(transcriptPath)) continue;
@@ -221,6 +304,7 @@ export class AntigravityRuntime {
           transcriptPath,
           hasLock: existsSync(join(base, ".lock")),
           mtimeMs: st.mtimeMs,
+          summary,
         });
       } catch { /* skip unreadable directory */ }
     }
@@ -229,25 +313,33 @@ export class AntigravityRuntime {
     for (const item of candidates.slice(0, SCAN_SESSION_LIMIT)) {
       try {
         const headSteps = readWindowLines(item.transcriptPath, 0, HEAD_BYTES, true).map(parseStep).filter((s): s is ParsedStep => s !== null);
-        let project: { id: string; title: string } = { id: "agp_default", title: "Antigravity" };
-        let title = "";
+        let systemWorkspace: { id: string; title: string } | undefined;
+        let transcriptTitle = "";
         for (const step of headSteps) {
           if (step.type === "SYSTEM_MESSAGE" && typeof step.content === "string") {
-            project = workspaceFromSystem(step.content) ?? project;
-          } else if (!title && step.type === "USER_INPUT") {
-            title = extractUserRequest(step.content);
+            systemWorkspace = workspaceFromSystem(step.content) ?? systemWorkspace;
+          } else if (!transcriptTitle && step.type === "USER_INPUT") {
+            transcriptTitle = extractUserRequest(step.content);
           }
         }
         const tailSteps = readWindowLines(item.transcriptPath, 0, SUMMARY_TAIL_BYTES, false).map(parseStep).filter((s): s is ParsedStep => s !== null);
-        if (!title) {
+        if (!transcriptTitle) {
           const fallbackUser = tailSteps.find((s) => s.type === "USER_INPUT");
-          title = fallbackUser ? extractUserRequest(fallbackUser.content) : "";
+          transcriptTitle = fallbackUser ? extractUserRequest(fallbackUser.content) : "";
         }
-        const { state } = summarizeTail(tailSteps, item.hasLock, item.mtimeMs);
+        const project = workspaceFromUris(item.summary?.workspace_uris) ?? systemWorkspace ?? { id: "agp_default", title: "Antigravity" };
+        const summaryTitle = cleanLabel(item.summary?.title, "");
+        const title = summaryTitle || cleanLabel(transcriptTitle, `Antigravity ${item.sessionId.slice(0, 8)}`);
+        const tail = summarizeTail(tailSteps, item.hasLock, item.mtimeMs);
+        const state = this.resolveState(tail.state, tail.pendingQuestions.length > 0, item.hasLock, item.summary?.status);
         out.push({
-          ...item,
+          sessionId: item.sessionId,
+          transcriptPath: item.transcriptPath,
+          hasLock: item.hasLock,
+          mtimeMs: item.mtimeMs,
+          dbStatus: item.summary?.status,
           project,
-          title: cleanLabel(title, `Antigravity ${item.sessionId.slice(0, 8)}`),
+          title,
           state,
         });
       } catch { /* ignore unreadable transcript */ }
@@ -268,13 +360,17 @@ export class AntigravityRuntime {
   async list(): Promise<RuntimeProject[]> {
     const metas = this.scanBrains();
     const grouped = new Map<string, RuntimeProject>();
+    let sessionCount = 0;
     for (const meta of metas) {
+      if (sessionCount >= 100) break;
       let project = grouped.get(meta.project.id);
       if (!project) {
+        if (grouped.size >= 20) continue;
         project = { runtime: "antigravity", id: meta.project.id, title: meta.project.title, sessions: [] };
         grouped.set(meta.project.id, project);
       }
       project.sessions.push(this.toSession(meta));
+      sessionCount++;
     }
     return [...grouped.values()];
   }
@@ -342,7 +438,10 @@ export class AntigravityRuntime {
       }
     }
     const tailSummary = summarizeTail(steps, meta.hasLock, meta.mtimeMs);
-    const session: RuntimeSession = { ...this.toSession(meta), state: tailSummary.state };
+    const session: RuntimeSession = {
+      ...this.toSession(meta),
+      state: this.resolveState(tailSummary.state, tailSummary.pendingQuestions.length > 0, meta.hasLock, meta.dbStatus),
+    };
     const reply: RuntimeSessionDetail = {
       runtime: "antigravity",
       project: meta.project,

@@ -78,6 +78,10 @@ rl.on("line", (line) => {
     return;
   }
   if (msg.method === "thread/resume") {
+    if (msg.params.excludeTurns !== true) {
+      process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "missing excludeTurns" } }) + "\\n");
+      return;
+    }
     if (mode === "mismatch") {
       process.stdout.write(JSON.stringify({ id: msg.id, result: { thread: { id: msg.params.threadId }, cwd: ${JSON.stringify(dir)} } }) + "\\n");
       return;
@@ -86,7 +90,8 @@ rl.on("line", (line) => {
       process.stdout.write(JSON.stringify({ id: "srv-req-1", method: "item/commandExecution/requestApproval", params: {} }) + "\\n");
       return;
     }
-    process.stdout.write(JSON.stringify({ id: msg.id, result: { thread: { id: msg.params.threadId }, cwd: msg.params.cwd } }) + "\\n");
+    const cwdOut = mode === "verbatim-cwd" ? ${JSON.stringify("\\\\?\\")} + msg.params.cwd : msg.params.cwd;
+    process.stdout.write(JSON.stringify({ id: msg.id, result: { thread: { id: msg.params.threadId }, cwd: cwdOut } }) + "\\n");
     return;
   }
   if (msg.method === "turn/start") {
@@ -201,4 +206,41 @@ test("CodexLocalRuntime enforces send authorization, cwd verification, and inter
   }
   const kinds = rt.taskEvents().filter((e) => e.requestId === reqId).map((e) => e.kind);
   assert.deepEqual(kinds, ["attention", "stopped"]);
+});
+
+test("CodexLocalRuntime accepts verbatim \\\\?\\ cwd on thread/resume and caps >20 projects for RuntimeSessions", async (t) => {
+  const { RuntimeSessions } = await import("../src/runtime-sessions.ts");
+  const fx = setupCodexFixture(t);
+  fx.setMode("verbatim-cwd");
+  const rt = new CodexLocalRuntime({ codexHome: fx.codexHome, codexBin: fx.fakeCodex, enableSend: true });
+  t.after(() => rt.close());
+
+  const [proj] = await rt.list();
+  const reqId = randomUUID();
+  const receipt = await rt.send({ runtime: "codex", projectId: proj!.id, sessionId: "thread-codex-idle-1", requestId: reqId, text: "verbatim path check" });
+  assert.equal(receipt.accepted, true);
+
+  // Add 23 distinct project directories into a fresh sqlite DB and verify list() caps cleanly at 20.
+  const capDir = mkdtempSync(join(tmpdir(), "xa-codex-cap-"));
+  t.after(() => rmSync(capDir, { recursive: true, force: true }));
+  const capHome = join(capDir, "codex-home");
+  mkdirSync(capHome, { recursive: true });
+  const rollout = join(capHome, "rollout-cap.jsonl");
+  writeFileSync(rollout, `${JSON.stringify({ type: "event_msg", payload: { type: "task_complete" } })}\n`);
+  const db = new DatabaseSync(join(capHome, "state_5.sqlite"));
+  db.exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, cwd TEXT, title TEXT, name TEXT, first_user_message TEXT, archived INTEGER DEFAULT 0, updated_at INTEGER, updated_at_ms INTEGER, thread_source TEXT);`);
+  const ins = db.prepare(`INSERT INTO threads (id, rollout_path, cwd, title, name, first_user_message, archived, updated_at, updated_at_ms, thread_source) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 'user')`);
+  const baseSec = Math.trunc(Date.now() / 1000);
+  for (let i = 1; i <= 23; i++) {
+    const p = join(capDir, `proj-${i}`);
+    mkdirSync(p, { recursive: true });
+    ins.run(`thread-cap-${i}`, rollout, p, `Project ${i}`, null, `msg ${i}`, baseSec - i, (baseSec - i) * 1000);
+  }
+  db.close();
+
+  const capRt = new CodexLocalRuntime({ codexHome: capHome, enableSend: false });
+  t.after(() => capRt.close());
+  const rs = new RuntimeSessions("viewer", { codex: capRt }, join(capDir, "ledger"));
+  const list = await rs.list();
+  assert.equal(list.projects.length, 20);
 });
