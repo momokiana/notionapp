@@ -4,7 +4,7 @@
  * local stand-in answers instead.
  */
 import { create } from "zustand";
-import type { AssistantConfirm, AssistantItem, AssistantState, Reminder, ServerFrame } from "@xiaoaixiaoai/protocol";
+import type { AssistantConfirm, AssistantItem, AssistantReplyMode, AssistantState, Reminder, ServerFrame } from "@xiaoaixiaoai/protocol";
 import { useSettings } from "./store";
 import { loadToken } from "./auth";
 import { isMockServer, mockAssistant } from "./mock";
@@ -18,10 +18,14 @@ interface AssistantStore {
   busyLabel: string | null;
   ready: boolean;
   voice: boolean;
+  /** Whether the relay exposes normal-chat dual-track voice + push-to-talk (local provider). */
+  chatVoice: boolean;
   model: string | null;
   reminders: Reminder[];
   /** "always": the assistant asks before acting in typed chats. Unknown (older relay): null. Calls never wait. */
   confirm: AssistantConfirm | null;
+  /** "voice": normal chat uses voice + text dual-track; "text": silent text bubbles only. */
+  replyMode: AssistantReplyMode;
   loaded: boolean;
   error: string | null;
   /** Things the assistant brought up on its own while its screen was not in view. */
@@ -35,9 +39,11 @@ export const useAssistant = create<AssistantStore>()(() => ({
   busyLabel: null,
   ready: false,
   voice: false,
+  chatVoice: false,
   model: null,
   reminders: [],
   confirm: null,
+  replyMode: "text",
   loaded: false,
   error: null,
   unread: 0,
@@ -70,9 +76,11 @@ export function applyAssistantState(s: AssistantState): void {
     busy: s.busy,
     ready: s.ready,
     voice: s.voice,
+    chatVoice: s.settings?.replyMode !== undefined,
     model: s.model ?? null,
     reminders: s.reminders,
     confirm: s.settings?.confirm ?? null,
+    replyMode: s.settings?.replyMode ?? "text",
     loaded: true,
     error: null,
   });
@@ -111,12 +119,12 @@ export function onAssistantFrame(f: ServerFrame): boolean {
   }
 }
 
-async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+async function api<T>(path: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<T> {
   const server = useSettings.getState().server;
   if (!server) throw new Error("还没连上服务器");
   const token = await loadToken();
   const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), 15_000);
+  const timer = setTimeout(() => abort.abort(), init.timeoutMs ?? 15_000);
   let res: Response;
   try {
     res = await fetch(`${server}${path}`, {
@@ -201,4 +209,52 @@ export async function setAssistantConfirm(confirm: AssistantConfirm): Promise<vo
     useAssistant.setState({ confirm: before });
     throw e;
   }
+}
+
+export async function setAssistantReplyMode(replyMode: AssistantReplyMode): Promise<void> {
+  const before = useAssistant.getState().replyMode;
+  useAssistant.setState({ replyMode });
+  try {
+    if (isMockServer(useSettings.getState().server)) {
+      mockAssistant.setReplyMode(replyMode);
+      return;
+    }
+    const r = await api<{ replyMode?: AssistantReplyMode }>("/v1/assistant/settings", { body: { replyMode } });
+    useAssistant.setState({ replyMode: r.replyMode ?? replyMode });
+  } catch (e) {
+    useAssistant.setState({ replyMode: before });
+    throw e;
+  }
+}
+
+export async function warmupAssistantVoice(): Promise<void> {
+  if (isMockServer(useSettings.getState().server)) return;
+  await api("/v1/assistant/voice/warmup", { body: {}, timeoutMs: 10_000 }).catch(() => {});
+}
+
+export async function sendVoiceToAssistant(audioBase64: string, sampleRate: number): Promise<string> {
+  if (isMockServer(useSettings.getState().server)) {
+    mockAssistant.say("帮我看看现在哪个在等你", "voice");
+    return "帮我看看现在哪个在等你";
+  }
+  const r = await api<{ text: string; item: AssistantItem | null }>("/v1/assistant/voice", {
+    body: { audioBase64, sampleRate },
+    timeoutMs: 90_000,
+  });
+  if (r.item) upsertItem(r.item);
+  return r.text;
+}
+
+export async function requestAssistantSpeak(itemId: string, text?: string): Promise<string | null> {
+  if (isMockServer(useSettings.getState().server)) return null;
+  const r = await api<{ ok: boolean; utteranceId: string }>("/v1/assistant/speak", {
+    body: { itemId, ...(text ? { text } : {}) },
+    timeoutMs: 20_000,
+  });
+  return r.utteranceId ?? null;
+}
+
+export async function stopAssistantSpeakRemote(): Promise<void> {
+  if (isMockServer(useSettings.getState().server)) return;
+  await api("/v1/assistant/speak/stop", { body: {}, timeoutMs: 10_000 }).catch(() => {});
 }

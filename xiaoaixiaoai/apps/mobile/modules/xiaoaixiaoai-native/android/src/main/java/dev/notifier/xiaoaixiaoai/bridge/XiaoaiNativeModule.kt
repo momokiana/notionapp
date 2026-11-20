@@ -18,7 +18,7 @@ class XiaoaiNativeModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("XiaoaiNative")
 
-    Events("onCall", "onCallEvent", "onLevel", "onNotice", "onNotifier", "onUpdateProgress")
+    Events("onCall", "onCallEvent", "onLevel", "onNotice", "onNotifier", "onUpdateProgress", "onSpeech", "onPttLevel")
 
     OnCreate {
       XiaoaiBus.listener = { name, body -> sendEvent(name, body) }
@@ -30,7 +30,51 @@ class XiaoaiNativeModule : Module() {
 
     /** Starts a voice call (needs RECORD_AUDIO granted first). */
     Function("startCall") { server: String, token: String ->
+      ChatVoice.cancelRecording()
+      ChatVoice.stopSpeech(null)
       XiaoaiService.startCall(context, server, token)
+    }
+
+    AsyncFunction("startVoiceNote") { promise: Promise ->
+      val ctx = context
+      Thread {
+        try {
+          ChatVoice.startRecording(ctx)
+          promise.resolve(true)
+        } catch (e: Throwable) {
+          promise.reject("E_VOICE_NOTE", e.message ?: "无法开始录音", e)
+        }
+      }.start()
+    }
+
+    AsyncFunction("stopVoiceNote") { promise: Promise ->
+      Thread {
+        try {
+          promise.resolve(ChatVoice.stopRecording())
+        } catch (e: Throwable) {
+          promise.reject("E_VOICE_NOTE", e.message ?: "停止录音失败", e)
+        }
+      }.start()
+    }
+
+    Function("cancelVoiceNote") {
+      ChatVoice.cancelRecording()
+    }
+
+    Function("startSpeech") { utteranceId: String, sampleRate: Int ->
+      ChatVoice.startSpeech(context, utteranceId, sampleRate)
+    }
+
+    Function("feedSpeech") { utteranceId: String, pcmBase64: String ->
+      ChatVoice.feedSpeech(context, utteranceId, pcmBase64)
+    }
+
+    Function("finishSpeech") { utteranceId: String ->
+      ChatVoice.finishSpeech(utteranceId)
+    }
+
+    Function("stopSpeech") { utteranceId: String? ->
+      ChatVoice.stopSpeech(utteranceId)
     }
 
     Function("hangup") {

@@ -697,8 +697,12 @@ export interface RpcError {
  */
 export type AssistantConfirm = "never" | "always";
 
+export type AssistantReplyMode = "text" | "voice";
+
 export interface AssistantSettings {
   confirm: AssistantConfirm;
+  /** Normal chat reply mode: "voice" = dual-track voice + text, "text" = text only. */
+  replyMode?: AssistantReplyMode;
   /** Relay-provided display name, not client-editable; older relays omit it (default: 爱弥斯). */
   readonly name?: string;
 }
@@ -785,8 +789,10 @@ export interface AssistantItem {
   ts: number;
   role: "user" | "assistant" | "notice";
   text: string;
-  /** How it was said; voice items come from the live call transcript. */
+  /** How it was said; voice items come from the live call transcript or voice note. */
   via?: "text" | "voice";
+  /** True when this chat answer was also spoken aloud in dual-track mode. */
+  spoken?: boolean;
   /** What the assistant looked at or did for this answer, one short label each. */
   steps?: string[];
   action?: AssistantAction;
@@ -1027,7 +1033,17 @@ export type ServerFrame =
   /** The assistant started or stopped working; `label` says on what. */
   | { type: "assistant_busy"; busy: boolean; label?: string }
   /** The thread was cleared or reminders changed: refetch GET /v1/assistant. */
-  | { type: "assistant_reset" };
+  | { type: "assistant_reset" }
+  /** Normal-chat local TTS stream for an assistant or notice item. */
+  | {
+      type: "assistant_speech";
+      itemId: string;
+      utteranceId: string;
+      phase: "start" | "chunk" | "done" | "stop";
+      sampleRate?: number;
+      pcmBase64?: string;
+      error?: string;
+    };
 
 /**
  * GET /v1/notify?token=...&since=<ms> (WebSocket, viewers only): a light push

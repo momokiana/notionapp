@@ -709,6 +709,7 @@ function remindersNow(): Reminder[] {
   return assistantReminders;
 }
 let assistantConfirm: AssistantConfirm = "never";
+let assistantReplyMode: "text" | "voice" = "text";
 let assistantSink: AssistantSink | null = null;
 
 function aid(prefix: string) {
@@ -723,7 +724,15 @@ function aput(item: AssistantItem) {
 }
 
 function demoState(): AssistantState {
-  return { items: assistantItems.slice(), busy: false, ready: true, voice: false, model: "演示", reminders: remindersNow().slice(), settings: { confirm: assistantConfirm } };
+  return {
+    items: assistantItems.slice(),
+    busy: false,
+    ready: true,
+    voice: false,
+    model: "演示",
+    reminders: remindersNow().slice(),
+    settings: { confirm: assistantConfirm, replyMode: assistantReplyMode },
+  };
 }
 
 export const mockAssistant = {
@@ -731,8 +740,8 @@ export const mockAssistant = {
     assistantSink = sink;
   },
   state: demoState,
-  say(text: string) {
-    aput({ id: aid("u"), ts: now(), role: "user", text, via: "text" });
+  say(text: string, via: "text" | "voice" = "text") {
+    aput({ id: aid("u"), ts: now(), role: "user", text, via });
     assistantSink?.busy(true, "在想");
     // Once per demo: a little later the assistant speaks up on its own.
     if (!assistantItems.some((x) => x.role === "notice")) setTimeout(() => mockAssistant.notice("done"), 5000);
@@ -740,7 +749,15 @@ export const mockAssistant = {
       const blocked = agents.filter((a) => a.status === "blocked" && !a.isShell);
       const working = agents.filter((a) => a.status === "working" && !a.isShell);
       const done = agents.filter((a) => a.status === "done" && !a.isShell);
-      if (/提醒|叫我/.test(text)) {
+      if (/用语音|开口说/.test(text) && !/agent|codex/i.test(text)) {
+        assistantReplyMode = "voice";
+        aput({ id: aid("a"), ts: now(), role: "assistant", text: "好呀，接下来我会一边发文字气泡一边用语音回你。", via: "text", spoken: true });
+        assistantSink?.reset(demoState());
+      } else if (/用文字|别出声|不用语音|改打字/.test(text) && !/agent|codex/i.test(text)) {
+        assistantReplyMode = "text";
+        aput({ id: aid("a"), ts: now(), role: "assistant", text: "好的，接下来只发文字气泡。", via: "text" });
+        assistantSink?.reset(demoState());
+      } else if (/提醒|叫我/.test(text)) {
         const r: Reminder = { id: aid("r"), text: text.replace(/^(帮我|请)?/, "").slice(0, 40), createdAt: now(), dueAt: now() + 10 * MIN };
         assistantReminders = [...remindersNow(), r];
         aput({ id: aid("a"), ts: now(), role: "assistant", text: "好，10 分钟后提醒你。", steps: ["设了一个提醒"], via: "text" });
@@ -830,5 +847,8 @@ export const mockAssistant = {
   },
   setConfirm(confirm: AssistantConfirm) {
     assistantConfirm = confirm;
+  },
+  setReplyMode(mode: "text" | "voice") {
+    assistantReplyMode = mode;
   },
 };

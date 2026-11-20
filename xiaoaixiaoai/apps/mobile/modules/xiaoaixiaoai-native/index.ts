@@ -11,12 +11,27 @@ export interface PickedImage {
   bytes: number;
 }
 
-/** Android-only native side: voice call audio, the background alert service, notifications, in-app updates, picking pictures. */
+/** Result of a recorded push-to-talk voice note (16 kHz mono PCM16LE base64). */
+export interface RecordedVoiceNote {
+  audioBase64: string;
+  sampleRate: number;
+  durationMs: number;
+}
+
+/** Android-only native side: voice call audio, normal-chat voice note & TTS playback, background alert service, notifications, in-app updates, picking pictures. */
 interface XiaoaiNativeModule {
   startCall(server: string, token: string): void;
   hangup(): void;
   setMuted(muted: boolean): void;
   callState(): { active: boolean; muted: boolean };
+  /** Normal-chat push-to-talk + streaming TTS (absent in pre-0.3.1 APKs). */
+  startVoiceNote?(): Promise<boolean>;
+  stopVoiceNote?(): Promise<RecordedVoiceNote>;
+  cancelVoiceNote?(): void;
+  startSpeech?(utteranceId: string, sampleRate: number): void;
+  feedSpeech?(utteranceId: string, pcmBase64: string): void;
+  finishSpeech?(utteranceId: string): void;
+  stopSpeech?(utteranceId: string | null): void;
   configureNotifier(server: string | null, token: string | null, enabled: boolean, kinds: string[], name: string | null): void;
   notifierState(): { enabled: boolean; connected: boolean; notificationsAllowed: boolean; batteryUnrestricted: boolean };
   requestBatteryExemption(): void;
@@ -40,6 +55,8 @@ interface XiaoaiNativeModule {
   addListener(event: "onNotice", fn: (e: { json: string }) => void): EventSubscription;
   addListener(event: "onNotifier", fn: (e: { connected: boolean }) => void): EventSubscription;
   addListener(event: "onUpdateProgress", fn: (e: { received: number; total: number }) => void): EventSubscription;
+  addListener(event: "onSpeech", fn: (e: { utteranceId: string; state: "playing" | "ended" | "stopped" }) => void): EventSubscription;
+  addListener(event: "onPttLevel", fn: (e: { level: number }) => void): EventSubscription;
 }
 
 /** A matching native APK is required; Expo Go and pre-0.1.5 APKs have no XiaoaiNative bridge. */

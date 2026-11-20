@@ -14,7 +14,8 @@ import { CallBar, CallScreen } from "../../components/CallScreen";
 import { AgentLink, NoticeBubble } from "../../components/notice";
 import { RemindersSheet } from "../../components/reminders";
 import { router, useFocusEffect } from "expo-router";
-import { clearAssistant, decideAction, loadAssistant, sendToAssistant, setAssistantWatching, useAssistant } from "../../lib/assistant";
+import { clearAssistant, decideAction, loadAssistant, sendToAssistant, setAssistantReplyMode, setAssistantWatching, useAssistant } from "../../lib/assistant";
+import { abortVoiceNote, beginVoiceNote, finishVoiceNote, playAssistantItem, stopAssistantSpeech, useChatVoice } from "../../lib/chat-voice";
 import { dismissCallMessage, startCall, useVoice } from "../../lib/voice";
 import { findAgent, useLive, useSettings } from "../../lib/store";
 import { fixCjkEmphasis, hasList } from "../../lib/markdown";
@@ -40,20 +41,28 @@ export default function AssistantScreen() {
   const busyLabel = useAssistant((s) => s.busyLabel);
   const ready = useAssistant((s) => s.ready);
   const voice = useAssistant((s) => s.voice);
+  const chatVoice = useAssistant((s) => s.chatVoice);
+  const replyMode = useAssistant((s) => s.replyMode);
   const loaded = useAssistant((s) => s.loaded);
   const error = useAssistant((s) => s.error);
   const reminders = useAssistant((s) => s.reminders);
+  const speakingItemId = useChatVoice((s) => s.speakingItemId);
+  const pttState = useChatVoice((s) => s.pttState);
+  const pttLevel = useChatVoice((s) => s.pttLevel);
   const link = useLive((s) => s.link);
   const server = useSettings((s) => s.server);
   const call = useVoice((s) => s.status);
   const callMessage = useVoice((s) => s.message);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [pttMode, setPttMode] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [showReminders, setShowReminders] = useState(false);
   const list = useRef<FlatList<AssistantItem>>(null);
   const inCall = call === "connecting" || call === "ready";
+  const callCapable = voice || isMockServer(server);
+  const chatVoiceCapable = chatVoice || isMockServer(server);
   // During a call the chat stays reachable: the call folds into a bar above the composer.
   const [callOpen, setCallOpen] = useState(true);
   const foldCall = useCallback(() => setCallOpen(false), []);
@@ -103,36 +112,64 @@ export default function AssistantScreen() {
   );
 
   async function call_() {
+    stopAssistantSpeech();
     setCallOpen(true);
     const err = await startCall();
     if (err) setToast(err);
   }
 
+  async function toggleReplyMode() {
+    const next = replyMode === "voice" ? "text" : "voice";
+    if (next === "text") stopAssistantSpeech();
+    try {
+      await setAssistantReplyMode(next);
+      setToast(next === "voice" ? "已打开语音 + 文字双轨回复" : "已切为纯文字回复");
+    } catch (e) {
+      setToast((e as Error).message);
+    }
+  }
+
   const status = inCall
     ? "通话中"
-    : busy
-      ? `${busyLabel && busyLabel !== "在想" ? busyLabel : "在想"}…`
-      : link === "online" || isMockServer(server)
-        ? ready
-          ? "在线 · 有事会叫你"
-          : loaded
-            ? "还没接上模型"
-            : "连接中…"
-        : "等网络恢复";
+    : speakingItemId
+      ? "正在说话…"
+      : busy
+        ? `${busyLabel && busyLabel !== "在想" ? busyLabel : "在想"}…`
+        : link === "online" || isMockServer(server)
+          ? ready
+            ? chatVoiceCapable
+              ? replyMode === "voice"
+                ? "在线 · 语音双轨"
+                : "在线 · 纯文字"
+              : "在线 · 有事会叫你"
+            : loaded
+              ? "还没接上模型"
+              : "连接中…"
+          : "等网络恢复";
 
   return (
     <PageBackground>
       <View style={{ paddingTop: insets.top + space.md, paddingHorizontal: space.lg, paddingBottom: space.sm, flexDirection: "row", alignItems: "center", gap: space.md }}>
         <View style={{ padding: 2, borderWidth: 1, borderRadius: radius.pill, borderColor: p.sky, backgroundColor: p.surface }}>
-          <Mascot mood={busy || inCall ? "hello" : "default"} size={44} />
+          <Mascot mood={busy || inCall || speakingItemId ? "hello" : "default"} size={44} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={{ fontFamily: fonts.cute, fontSize: 24, lineHeight: 32, color: p.ink }}>{NAME}</Text>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <BreathingDot color={busy || inCall ? p.primary : link === "online" || isMockServer(server) ? "#3FB68B" : p.faint} active={busy || inCall} size={7} />
+            <BreathingDot color={busy || inCall || speakingItemId ? p.primary : link === "online" || isMockServer(server) ? "#3FB68B" : p.faint} active={!!(busy || inCall || speakingItemId)} size={7} />
             <Text style={{ color: p.muted, fontSize: 13 }}>{status}</Text>
           </View>
         </View>
+        {chatVoiceCapable ? (
+          <IconTile
+            icon={replyMode === "voice" ? "volume" : "volumeOff"}
+            active={replyMode === "voice"}
+            tone="plain"
+            size={40}
+            onPress={() => void toggleReplyMode()}
+            a11y={replyMode === "voice" ? "切换为纯文字回复" : "切换为语音加文字双轨回复"}
+          />
+        ) : null}
         <View>
           <IconTile icon="bell" tone="plain" size={40} onPress={() => setShowReminders(true)} a11y={`提醒，${reminders.length} 个`} />
           {reminders.length ? (
@@ -157,7 +194,7 @@ export default function AssistantScreen() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         {/* The welcome sits outside the inverted list: inverted lists flip their empty view differently per platform. */}
         {loaded && !data.length && !busy ? (
-          <Welcome onPick={(s) => void send(s)} voice={voice || isMockServer(server)} />
+          <Welcome onPick={(s) => void send(s)} voice={chatVoiceCapable} callVoice={callCapable} />
         ) : (
           <FlatList
             ref={list}
@@ -166,7 +203,7 @@ export default function AssistantScreen() {
             keyExtractor={(it) => it.id}
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={{ paddingHorizontal: space.lg, paddingVertical: space.md, gap: space.md, flexGrow: 1 }}
-            renderItem={({ item }) => <Bubble item={item} onError={setToast} />}
+            renderItem={({ item }) => <Bubble item={item} voice={chatVoiceCapable} speakingId={speakingItemId} onError={setToast} />}
             ListHeaderComponent={busy ? <Thinking label={busyLabel} /> : undefined}
           />
         )}
@@ -178,8 +215,14 @@ export default function AssistantScreen() {
           onSend={() => void send()}
           onCall={() => void call_()}
           sending={sending}
-          voice={voice || isMockServer(server)}
+          voice={callCapable}
+          chatVoice={chatVoiceCapable}
           inCall={inCall}
+          pttMode={pttMode}
+          onTogglePtt={() => setPttMode((v) => !v)}
+          pttState={pttState}
+          pttLevel={pttLevel}
+          onToast={setToast}
         />
       </KeyboardAvoidingView>
 
@@ -220,7 +263,7 @@ export default function AssistantScreen() {
   );
 }
 
-function Welcome({ onPick, voice }: { onPick: (s: string) => void; voice: boolean }) {
+function Welcome({ onPick, voice, callVoice }: { onPick: (s: string) => void; voice: boolean; callVoice: boolean }) {
   const NAME = useAssistant((s) => s.name);
   const p = usePalette();
   return (
@@ -232,7 +275,15 @@ function Welcome({ onPick, voice }: { onPick: (s: string) => void; voice: boolea
       <StarlightPortrait size={104} />
       <Text style={{ fontFamily: fonts.cute, fontSize: 22, color: p.ink }}>我是{NAME}</Text>
       <Text style={{ color: p.muted, textAlign: "center", lineHeight: 21, paddingHorizontal: space.lg }}>
-        你所有电脑上的 agent 我都盯着。问我谁在等你、谁跑完了，或者让我替你回一句{voice ? "；按麦克风可以直接说话" : ""}。
+        你所有电脑上的 agent 我都盯着。问我谁在等你、谁跑完了，或者让我替你回一句
+        {voice && callVoice
+          ? "；点左下方话筒可以按住说话，点右侧电话可以语音通话"
+          : voice
+            ? "；点左下方话筒可以按住说话"
+            : callVoice
+              ? "；点右侧电话可以语音通话"
+              : ""}
+        。
       </Text>
       <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: space.sm, paddingTop: space.sm }}>
         {SUGGESTIONS.map((s, i) => (
@@ -282,14 +333,36 @@ function Thinking({ label }: { label: string | null }) {
   );
 }
 
-const Bubble = memo(function Bubble({ item, onError }: { item: AssistantItem; onError: (m: string) => void }) {
+const Bubble = memo(function Bubble({
+  item,
+  voice,
+  speakingId,
+  onError,
+}: {
+  item: AssistantItem;
+  voice: boolean;
+  speakingId: string | null;
+  onError: (m: string) => void;
+}) {
   const p = usePalette();
   const scale = useSettings((s) => s.textScale);
   const styles = useMemo(() => mdStyles(p, scale), [p, scale]);
+  const speaking = speakingId === item.id;
+  const toggleSpeak = useCallback(async () => {
+    if (speaking) {
+      stopAssistantSpeech();
+      return;
+    }
+    const text = item.role === "notice" ? item.notice?.body || item.text : item.text;
+    const err = await playAssistantItem(item.id, text);
+    if (err) onError(err);
+  }, [speaking, item, onError]);
 
   if (item.action) return <ActionCard item={item} onError={onError} />;
 
-  if (item.role === "notice" && item.notice) return <NoticeBubble item={item} />;
+  if (item.role === "notice" && item.notice) {
+    return <NoticeBubble item={item} speaking={speaking} onToggleSpeak={voice && (item.notice.body || item.text) ? () => void toggleSpeak() : undefined} />;
+  }
 
   if (item.role === "user") {
     return (
@@ -302,10 +375,12 @@ const Bubble = memo(function Bubble({ item, onError }: { item: AssistantItem; on
     );
   }
 
+  const callCaption = item.id.startsWith("v-") && item.via === "voice";
+  const canSpeak = voice && !item.error && !!item.text.trim();
   return (
-    <View style={[{ alignSelf: "flex-start", gap: 4 }, item.via !== "voice" && hasList(item.text) ? { width: "92%" } : { maxWidth: "92%" }]}>
+    <View style={[{ alignSelf: "flex-start", gap: 4 }, !callCaption && hasList(item.text) ? { width: "92%" } : { maxWidth: "92%" }]}>
       <View style={{ backgroundColor: item.error ? p.errorContainer : p.reply, borderWidth: 1, borderColor: p.divider, borderRadius: radius.card, borderBottomLeftRadius: 6, paddingHorizontal: space.md, paddingVertical: 4 }}>
-        {item.via === "voice" ? (
+        {callCaption ? (
           <Text style={{ color: p.ink, fontSize: 15.5 * scale, lineHeight: 22 * scale, paddingVertical: 5 }}>{item.text}</Text>
         ) : (
           <Markdown style={styles}>{fixCjkEmphasis(item.text || "…")}</Markdown>
@@ -316,17 +391,37 @@ const Bubble = memo(function Bubble({ item, onError }: { item: AssistantItem; on
           {item.steps.join(" · ")}
         </Text>
       ) : null}
-      <Meta item={item} />
+      <Meta item={item} speaking={speaking} onToggleSpeak={canSpeak ? () => void toggleSpeak() : undefined} />
     </View>
   );
 });
 
-function Meta({ item }: { item: AssistantItem }) {
+function Meta({ item, speaking, onToggleSpeak }: { item: AssistantItem; speaking?: boolean; onToggleSpeak?: () => void }) {
   const p = usePalette();
   return (
-    <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 4 }}>
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 4 }}>
       {item.via === "voice" ? <CuteIcon name="mic" size={12} color={p.faint} strokeWidth={2.4} /> : null}
       <Text style={{ color: p.faint, fontSize: 11 }}>{clock(item.ts)}</Text>
+      {onToggleSpeak ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={speaking ? "停止语音播报" : "语音播报这条消息"}
+          onPress={onToggleSpeak}
+          hitSlop={8}
+          style={({ pressed }) => ({
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 3,
+            paddingHorizontal: 8,
+            paddingVertical: 2,
+            borderRadius: radius.pill,
+            backgroundColor: speaking || pressed ? p.skyContainer : p.surface2,
+          })}
+        >
+          <CuteIcon name={speaking ? "volumeOff" : "volume"} size={12} color={speaking ? p.skyText : p.muted} strokeWidth={2.3} />
+          <Text style={{ color: speaking ? p.skyText : p.muted, fontSize: 11, fontFamily: fonts.bodySemi }}>{speaking ? "停止" : "播报"}</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -447,7 +542,13 @@ function Composer({
   onCall,
   sending,
   voice,
+  chatVoice,
   inCall,
+  pttMode,
+  onTogglePtt,
+  pttState,
+  pttLevel,
+  onToast,
 }: {
   text: string;
   onText: (t: string) => void;
@@ -455,49 +556,166 @@ function Composer({
   onCall: () => void;
   sending: boolean;
   voice: boolean;
+  chatVoice: boolean;
   inCall: boolean;
+  pttMode: boolean;
+  onTogglePtt: () => void;
+  pttState: "idle" | "recording" | "transcribing";
+  pttLevel: number;
+  onToast: (m: string) => void;
 }) {
   const NAME = useAssistant((s) => s.name);
   const p = usePalette();
   const empty = !text.trim();
+  const [cancelling, setCancelling] = useState(false);
+  const pressY = useRef<number | null>(null);
+  const cancellingRef = useRef(false);
+
+  async function onHoldStart(pageY: number) {
+    if (pttState === "transcribing") return;
+    pressY.current = pageY;
+    cancellingRef.current = false;
+    setCancelling(false);
+    const err = await beginVoiceNote();
+    if (err) onToast(err);
+  }
+
+  function onHoldMove(pageY: number) {
+    if (pressY.current === null || pttState !== "recording") return;
+    const cancel = pressY.current - pageY > 55;
+    if (cancel !== cancellingRef.current) {
+      cancellingRef.current = cancel;
+      setCancelling(cancel);
+    }
+  }
+
+  async function onHoldEnd() {
+    if (pressY.current === null) return;
+    const shouldCancel = cancellingRef.current;
+    pressY.current = null;
+    cancellingRef.current = false;
+    setCancelling(false);
+    if (shouldCancel) {
+      abortVoiceNote();
+      return;
+    }
+    const err = await finishVoiceNote();
+    if (err) onToast(err);
+  }
+
+  const bars = Math.max(1, Math.min(5, Math.round(pttLevel * 5)));
+
   return (
-    <View
-      style={{
-        flexDirection: "row",
-        alignItems: "flex-end",
-        gap: space.sm,
-        marginHorizontal: space.lg,
-        marginBottom: space.sm,
-        backgroundColor: p.glass,
-        borderRadius: radius.xl,
-        borderWidth: 1,
-        borderColor: p.divider,
-        paddingLeft: space.lg,
-        paddingRight: 5,
-        paddingVertical: 5,
-        shadowColor: p.shadow,
-        shadowOpacity: p.dark ? 0 : 0.12,
-        shadowRadius: 12,
-        shadowOffset: { width: 0, height: 4 },
-        elevation: p.dark ? 0 : 2,
-      }}
-    >
-      <TextInput
-        value={text}
-        onChangeText={onText}
-        placeholder={`和${NAME}说点什么…`}
-        placeholderTextColor={p.faint}
-        cursorColor={p.skyText}
-        selectionColor={p.skyContainer}
-        multiline
-        style={{ flex: 1, fontFamily: fonts.body, fontSize: 15.5, color: p.ink, maxHeight: 120, paddingVertical: 9 }}
-        accessibilityLabel={`发给${NAME}的消息`}
-      />
-      {empty && voice && !inCall ? (
-        <IconTile icon="mic" tone="primary" size={42} onPress={onCall} a11y={`和${NAME}语音通话`} />
-      ) : (
-        <SendPill disabled={empty || sending} onPress={onSend} />
-      )}
+    <View style={{ marginHorizontal: space.lg, marginBottom: space.sm, gap: 6 }}>
+      {pttState !== "idle" ? (
+        <View
+          style={{
+            alignSelf: "center",
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 8,
+            paddingHorizontal: space.md,
+            paddingVertical: 6,
+            borderRadius: radius.pill,
+            backgroundColor: cancelling ? p.errorContainer : p.surface,
+            borderWidth: 1,
+            borderColor: cancelling ? p.error : p.divider,
+          }}
+        >
+          <CuteIcon name={cancelling ? "close" : "mic"} size={14} color={cancelling ? p.error : p.primary} strokeWidth={2.4} />
+          <Text style={{ color: cancelling ? p.error : p.ink, fontSize: 12.5, fontFamily: fonts.bodySemi }}>
+            {pttState === "transcribing" ? "正在识别语音…" : cancelling ? "松开手指，取消发送" : "正在听，松开发送 · 上滑取消"}
+          </Text>
+          {pttState === "recording" && !cancelling ? (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 2 }}>
+              {[1, 2, 3, 4, 5].map((i) => (
+                <View key={i} style={{ width: 3, height: 6 + i * 2, borderRadius: 2, backgroundColor: i <= bars ? p.primary : p.divider }} />
+              ))}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "flex-end",
+          gap: space.sm,
+          backgroundColor: p.glass,
+          borderRadius: radius.xl,
+          borderWidth: 1,
+          borderColor: p.divider,
+          paddingLeft: chatVoice && !inCall ? 5 : space.lg,
+          paddingRight: 5,
+          paddingVertical: 5,
+          shadowColor: p.shadow,
+          shadowOpacity: p.dark ? 0 : 0.12,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: p.dark ? 0 : 2,
+        }}
+      >
+        {chatVoice && !inCall ? (
+          <IconTile
+            icon={pttMode ? "keyboard" : "mic"}
+            tone="soft"
+            size={40}
+            disabled={pttState !== "idle"}
+            onPress={onTogglePtt}
+            a11y={pttMode ? "切回键盘输入" : "切换为按住说话"}
+          />
+        ) : null}
+
+        {pttMode && chatVoice && !inCall ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`按住给${NAME}发语音消息`}
+            disabled={pttState === "transcribing"}
+            onPressIn={(e) => void onHoldStart(e.nativeEvent.pageY)}
+            onTouchMove={(e) => onHoldMove(e.nativeEvent.pageY)}
+            onPressOut={() => void onHoldEnd()}
+            style={({ pressed }) => ({
+              flex: 1,
+              minHeight: 42,
+              borderRadius: radius.card,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor:
+                pttState === "transcribing"
+                  ? p.surface3
+                  : cancelling
+                    ? p.errorContainer
+                    : pttState === "recording" || pressed
+                      ? p.skyContainer
+                      : p.surface2,
+              borderWidth: 1,
+              borderColor: cancelling ? p.error : pttState === "recording" ? p.skyText : p.divider,
+            })}
+          >
+            <Text style={{ color: cancelling ? p.error : p.ink, fontFamily: fonts.bodyBold, fontSize: 15 }}>
+              {pttState === "transcribing" ? "正在识别…" : pttState === "recording" ? (cancelling ? "松开取消" : "松开 发送") : "按住 说话"}
+            </Text>
+          </Pressable>
+        ) : (
+          <TextInput
+            value={text}
+            onChangeText={onText}
+            placeholder={`和${NAME}说点什么…`}
+            placeholderTextColor={p.faint}
+            cursorColor={p.skyText}
+            selectionColor={p.skyContainer}
+            multiline
+            style={{ flex: 1, fontFamily: fonts.body, fontSize: 15.5, color: p.ink, maxHeight: 120, paddingVertical: 9 }}
+            accessibilityLabel={`发给${NAME}的消息`}
+          />
+        )}
+
+        {((pttMode && chatVoice) || empty) && voice && !inCall ? (
+          <IconTile icon="phoneCall" tone="primary" size={42} disabled={pttState !== "idle"} onPress={onCall} a11y={`和${NAME}实时语音通话`} />
+        ) : (
+          <SendPill disabled={(pttMode && chatVoice) || empty || sending} onPress={onSend} />
+        )}
+      </View>
     </View>
   );
 }

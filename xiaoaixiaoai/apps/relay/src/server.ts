@@ -190,6 +190,7 @@ export class Relay {
       name: a?.name,
       persona: a?.persona,
       voice: hasVoice,
+      chatVoice: opts.live?.provider === "local",
       confirm: opts.assistantConfirm,
       ...opts.assistantTiming,
       host: {
@@ -551,6 +552,7 @@ export class Relay {
   }
 
   private async handleAssistant(req: IncomingMessage, res: ServerResponse, path: string, auth: Device | "admin"): Promise<void> {
+    const asker = auth === "admin" ? { id: "admin", name: "admin" } : { id: auth.id, name: auth.name };
     if (req.method === "GET" && path === "/v1/assistant") {
       sendJson(res, 200, this.assistant.state());
       return;
@@ -561,7 +563,54 @@ export class Relay {
         sendError(res, 400, "bad_request", "消息是空的");
         return;
       }
-      sendJson(res, 200, { item: this.assistant.say(text, auth === "admin" ? { id: "admin", name: "admin" } : { id: auth.id, name: auth.name }) });
+      sendJson(res, 200, { item: this.assistant.say(text, asker) });
+      return;
+    }
+    if (req.method === "POST" && path === "/v1/assistant/voice/warmup") {
+      this.assistant.warmupVoice();
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+    if (req.method === "POST" && path === "/v1/assistant/voice") {
+      const body = await readJson(req, 4 * 1024 * 1024);
+      const audioBase64 = typeof body?.audioBase64 === "string" ? body.audioBase64.trim() : "";
+      if (!audioBase64 || audioBase64.length > 3_600_000) {
+        sendError(res, 400, "bad_request", "音频数据无效或超过 60 秒限制");
+        return;
+      }
+      const rawRate = body?.sampleRate;
+      const sampleRate = typeof rawRate === "number" && Number.isFinite(rawRate) ? Math.round(rawRate) : 16_000;
+      if (sampleRate < 8_000 || sampleRate > 48_000) {
+        sendError(res, 400, "bad_request", "sampleRate 超出范围");
+        return;
+      }
+      try {
+        sendJson(res, 200, await this.assistant.sayVoice(audioBase64, sampleRate, asker));
+      } catch (e) {
+        const msg = (e as Error).message || "语音识别失败";
+        sendError(res, /不在线|未开启/.test(msg) ? 503 : 500, /不在线|未开启/.test(msg) ? "offline" : "internal", msg);
+      }
+      return;
+    }
+    if (req.method === "POST" && path === "/v1/assistant/speak") {
+      const body = await readJson(req);
+      const itemId = str(body?.itemId, 120)?.trim();
+      const text = str(body?.text, 4000)?.trim();
+      if (!itemId && !text) {
+        sendError(res, 400, "bad_request", "需要 itemId 或 text");
+        return;
+      }
+      const started = this.assistant.speakItem(itemId || "manual", text);
+      if (!started) {
+        sendError(res, 503, "offline", "电脑未在线或未开启本地语音服务");
+        return;
+      }
+      sendJson(res, 200, { ok: true, utteranceId: started.utteranceId });
+      return;
+    }
+    if (req.method === "POST" && path === "/v1/assistant/speak/stop") {
+      this.assistant.stopChatSpeech(false);
+      sendJson(res, 200, { ok: true });
       return;
     }
     if (path === "/v1/assistant/settings") {
@@ -570,12 +619,26 @@ export class Relay {
         return;
       }
       if (req.method === "POST") {
-        const confirm = (await readJson(req))?.confirm;
-        if (confirm !== "never" && confirm !== "always") {
+        const body = await readJson(req);
+        const hasConfirm = body != null && Object.hasOwn(body, "confirm");
+        const hasReplyMode = body != null && Object.hasOwn(body, "replyMode");
+        if (!hasConfirm && !hasReplyMode) {
+          sendError(res, 400, "bad_request", "需要提供 confirm 或 replyMode");
+          return;
+        }
+        if (hasConfirm && body!.confirm !== "never" && body!.confirm !== "always") {
           sendError(res, 400, "bad_request", "confirm 需要是 never 或 always");
           return;
         }
-        sendJson(res, 200, this.assistant.setConfirm(confirm, auth === "admin" ? "admin" : auth.name));
+        if (hasReplyMode && body!.replyMode !== "text" && body!.replyMode !== "voice") {
+          sendError(res, 400, "bad_request", "replyMode 需要是 text 或 voice");
+          return;
+        }
+        const by = auth === "admin" ? "admin" : auth.name;
+        let settings = this.assistant.settings();
+        if (hasConfirm) settings = this.assistant.setConfirm(body!.confirm as "never" | "always", by);
+        if (hasReplyMode) settings = this.assistant.setReplyMode(body!.replyMode as "text" | "voice", by);
+        sendJson(res, 200, settings);
         return;
       }
     }

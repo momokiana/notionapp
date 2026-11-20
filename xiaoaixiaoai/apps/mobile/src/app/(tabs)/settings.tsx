@@ -13,7 +13,7 @@ import { StarTrail } from "../../components/Starlight";
 import { useLive, useSettings, type ThemeMode } from "../../lib/store";
 import { signOut } from "../../lib/session";
 import { isMockServer } from "../../lib/mock";
-import { loadAssistant, setAssistantConfirm, useAssistant } from "../../lib/assistant";
+import { loadAssistant, setAssistantConfirm, setAssistantReplyMode, useAssistant } from "../../lib/assistant";
 import { alertsSupported, askNotificationPermission, refreshAlertState, useAlerts } from "../../lib/alerts";
 import { checkForUpdate, currentVersion, downloadUpdate, installUpdate, resumeInstallIfAllowed, useNewRelease, useUpdate } from "../../lib/update";
 import { XiaoaiNative } from "../../../modules/xiaoaixiaoai-native";
@@ -45,8 +45,11 @@ export default function SettingsScreen() {
   const [confirm, setConfirm] = useState(false);
   const alerts = useAlerts();
   const askFirst = useAssistant((x) => x.confirm);
+  const replyMode = useAssistant((x) => x.replyMode);
+  const assistantChatVoice = useAssistant((x) => x.chatVoice);
   const assistantLoaded = useAssistant((x) => x.loaded);
   const [askError, setAskError] = useState<string | null>(null);
+  const [replyModeError, setReplyModeError] = useState<string | null>(null);
   useEffect(() => {
     if (!useAssistant.getState().loaded) void loadAssistant();
   }, []);
@@ -237,6 +240,36 @@ export default function SettingsScreen() {
 
         <SectionHeader title="爱弥斯办事" />
         <Card style={{ paddingVertical: space.xs }}>
+          <Row
+            icon="volume-high"
+            title="平时聊天用语音回复"
+            sub={
+              replyModeError
+                ? `没改成：${replyModeError}`
+                : !assistantChatVoice && !demo
+                  ? "未开启本地语音服务，可用文字模式聊天"
+                  : replyMode === "voice"
+                    ? "打开：爱弥斯一边出文字一边用语音读出来（聊天里说“接下来用文字”也能切换）"
+                    : "关着：只发文字气泡（聊天里说“接下来用语音”或点单条播报也能听）"
+            }
+            dim={!assistantChatVoice && !demo}
+            right={
+              <Toggle
+                label="平时聊天用语音回复"
+                value={replyMode === "voice"}
+                disabled={!assistantChatVoice && !demo}
+                onChange={async (v) => {
+                  setReplyModeError(null);
+                  try {
+                    await setAssistantReplyMode(v ? "voice" : "text");
+                  } catch (e) {
+                    setReplyModeError((e as Error).message);
+                  }
+                }}
+              />
+            }
+          />
+          <Divider />
           <Row
             icon="comment-question-outline"
             title="爱弥斯动手前先问我"

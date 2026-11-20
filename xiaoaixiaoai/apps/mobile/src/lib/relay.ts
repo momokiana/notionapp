@@ -16,6 +16,7 @@ import {
 import { useLive } from "./store";
 import { isMockServer, mockLink, mockApi } from "./mock";
 import { loadAssistant, onAssistantFrame } from "./assistant";
+import { onAssistantSpeechFrame } from "./chat-voice";
 import { applog } from "./applog";
 
 export class RelayError extends Error {
@@ -285,7 +286,7 @@ class SocketLink implements Link {
         break;
       default:
         // Viewers never execute rpc; unknown frames are ignored (forward compatible).
-        onAssistantFrame(f);
+        if (!onAssistantFrame(f)) onAssistantSpeechFrame(f);
         break;
     }
   }

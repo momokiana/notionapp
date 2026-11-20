@@ -18,6 +18,7 @@ import {
   type AssistantAction,
   type AssistantConfirm,
   type AssistantItem,
+  type AssistantReplyMode,
   type AssistantSettings,
   type AssistantState,
   type LogEntry,
@@ -41,7 +42,8 @@ import { claimsDelivery, guardClaims, newFacts, type RunFacts } from "./guard.ts
 import { MATCH_MIN, agentNames, foldName, pickOne, rank } from "./lookup.ts";
 import type { ContentBlock, Llm, Msg, ToolDef } from "./llm.ts";
 import { PROMPT_EPOCH, delegateAsk, herdrCommandList, systemPrompt, wakeBatch, wakeBlocked, wakeFinished, type Occasion } from "./prompts.ts";
-import { clip, clockTime, cnNumber, filterTalk, noEmoji, normName, oneLine, parseWake, splitScript, spokenFor, spokenTime, stripMd } from "./speech.ts";
+import { clip, clockTime, cnNumber, cutAtSentence, filterTalk, noEmoji, normName, oneLine, parseWake, splitScript, spokenFor, spokenTime, stripMd } from "./speech.ts";
+import { splitSpeakableSentences } from "./local-call.ts";
 import { timeZone, utcOffset, zoneLabel, zoneName } from "./timezone.ts";
 import { DEFAULT_ASSISTANT_NAME } from "./persona.ts";
 
@@ -68,7 +70,10 @@ export interface AssistantOptions {
   name?: string;
   /** Optional style material; cannot replace the fixed tool/permission/fact rules. */
   persona?: string;
+  /** Live calls configured on the relay (`MOSS-Live` / `openai-realtime` / `local`). */
   voice?: boolean;
+  /** Local host GPU ASR/TTS available for normal chat dual-track & push-to-talk (`provider === "local"`). */
+  chatVoice?: boolean;
   /** Ask before acting, until the app changes it (POCKET_ASSISTANT_CONFIRM). Default `never`. */
   confirm?: AssistantConfirm;
   /** Times are tunable for tests. */
@@ -124,6 +129,17 @@ interface Turn {
 }
 
 const SETTING_CONFIRM = "assistant.confirm";
+const SETTING_REPLY_MODE = "assistant.replyMode";
+
+/** Extracts clean, concise speakable clauses for normal-chat dual-track TTS. */
+export function chatSpeechSentences(raw: string): string[] {
+  const withoutCode = raw.replace(/```[\s\S]*?```/g, "，代码写在消息里了，").replace(/https?:\/\/\S+/g, "链接");
+  const stripped = noEmoji(stripMd(withoutCode).replace(/^\s*(?:[-*•·]|\d+[.)、])\s+/gm, ""));
+  const collapsed = oneLine(stripped);
+  if (!collapsed) return [];
+  const [bounded] = cutAtSentence(collapsed, 420);
+  return splitSpeakableSentences(bounded);
+}
 
 const MAX_ITEMS = 400;
 const CONTEXT_ITEMS = 30;
@@ -178,6 +194,7 @@ export class Assistant {
   private reminderTimer: NodeJS.Timeout;
   private sinks = new Set<NoticeSink>();
   private voices = new Set<VoiceSink>();
+  private activeChatSpeech: { utteranceId: string; itemId: string; hostId: string; reqId?: string; ac: AbortController } | null = null;
   private closed = false;
   readonly name: string;
   readonly persona?: string;
@@ -203,6 +220,7 @@ export class Assistant {
 
   close(): void {
     this.closed = true;
+    this.stopChatSpeech(false);
     clearInterval(this.reminderTimer);
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
@@ -234,8 +252,18 @@ export class Assistant {
     return saved === "always" || saved === "never" ? saved : (this.opts.confirm ?? "never");
   }
 
+  /** Normal chat reply mode: voice (dual-track) by default when local chatVoice is enabled on the relay. */
+  replyMode(): AssistantReplyMode {
+    const saved = this.store.getSetting<AssistantReplyMode>(SETTING_REPLY_MODE);
+    return saved === "voice" || saved === "text" ? saved : (this.opts.chatVoice ? "voice" : "text");
+  }
+
   settings(): AssistantSettings {
-    return { name: this.name, confirm: this.confirmMode() };
+    const saved = this.store.getSetting<AssistantReplyMode>(SETTING_REPLY_MODE);
+    const includeReply = !!this.opts.chatVoice || saved === "voice" || saved === "text";
+    return includeReply
+      ? { name: this.name, confirm: this.confirmMode(), replyMode: this.replyMode() }
+      : { name: this.name, confirm: this.confirmMode() };
   }
 
   /** What the relay starts with when the app has not chosen. */
@@ -248,6 +276,17 @@ export class Assistant {
     this.store.putSetting(SETTING_CONFIRM, confirm);
     if (before !== confirm) {
       this.event({ kind: "settings", msg: `ask before acting: ${before} -> ${confirm} (by ${by})` });
+      this.host.toViewers({ type: "assistant_reset" });
+    }
+    return this.settings();
+  }
+
+  setReplyMode(mode: AssistantReplyMode, by: string): AssistantSettings {
+    const before = this.replyMode();
+    this.store.putSetting(SETTING_REPLY_MODE, mode);
+    if (mode === "text") this.stopChatSpeech(true);
+    if (before !== mode) {
+      this.event({ kind: "settings", msg: `reply mode: ${before} -> ${mode} (by ${by})` });
       this.host.toViewers({ type: "assistant_reset" });
     }
     return this.settings();
@@ -279,6 +318,7 @@ export class Assistant {
   }
 
   attachVoice(v: VoiceSink): () => void {
+    this.stopChatSpeech(false);
     this.voices.add(v);
     return () => this.voices.delete(v);
   }
@@ -334,12 +374,30 @@ export class Assistant {
   /** Who typed the messages the next answer is for, for the log. */
   private askers: string[] = [];
 
-  /** A typed message: stored at once, answered in the background. */
-  say(text: string, from?: Asker): AssistantItem {
-    const item = this.put({ id: newId("u"), ts: this.now(), role: "user", text: text.slice(0, 4000), via: "text" });
+  /** A typed (or voice-note transcribed) message: stored at once, answered in the background. */
+  say(text: string, from?: Asker, via: "text" | "voice" = "text"): AssistantItem {
+    this.stopChatSpeech(false);
+    const item = this.put({ id: newId("u"), ts: this.now(), role: "user", text: text.slice(0, 4000), via });
     if (from) this.askers.push(from.name);
     this.schedule();
     return item;
+  }
+
+  /** Transcribes a push-to-talk audio clip via local FunASR and feeds it into the normal chat thread. */
+  async sayVoice(audioBase64: string, sampleRate: number, from?: Asker): Promise<{ text: string; item: AssistantItem | null }> {
+    this.stopChatSpeech(false);
+    const host = this.findVoiceHost();
+    if (!host) throw new Error("电脑未在线或未开启本地语音服务");
+    const reqId = randomUUID().toLowerCase();
+    const res = await this.callVoiceHost(
+      host.id,
+      "voice.transcribe",
+      { requestId: reqId, audioBase64, sampleRate },
+      75_000,
+    );
+    const clean = (res.cancelled ? "" : res.text).trim();
+    if (!clean) return { text: "", item: null };
+    return { text: clean, item: this.say(clean, from, "voice") };
   }
 
   /** Transcript lines from a voice call join the same thread. */
@@ -396,6 +454,9 @@ export class Assistant {
       });
       return;
     }
+    if (this.replyMode() === "voice" && this.voices.size === 0) {
+      this.warmupVoice();
+    }
     this.setBusy(true, "在想");
     const t0 = Date.now();
     const who = [...new Set(this.askers.splice(0))].join(",") || "app";
@@ -405,8 +466,22 @@ export class Assistant {
         occasion: "text",
         onDraft: (text, steps) => this.put({ id: draftId, ts: this.now(), role: "assistant", text, steps, via: "text" }),
       });
+      const cleanAsked = asked.trim();
+      if (
+        !run.tools.includes("set_reply_mode") &&
+        !run.tools.some((t) => t.includes("agent") || t.includes("session")) &&
+        !/agent|codex|claude|dsh|antigravity|反重力|发给|发送|新建|停掉/i.test(cleanAsked)
+      ) {
+        if (/^(?:小爱|爱弥斯)?[，,\s]*(?:(?:接下来|以后|从现在起|现在开始)[，,\s]*)?(?:(?:换成|改成|切到|切换成|改用|使用|用)(?:语音(?:加文字|双轨)?|声音|说话)|(?:用)?语音(?:加文字|双轨))(?:来?回(?:我|消息|复)?|回复|模式|聊|说)?[吧啦呀哦了。！!？?]*$/.test(cleanAsked)) {
+          this.setReplyMode("voice", "assistant");
+        } else if (/^(?:小爱|爱弥斯)?[，,\s]*(?:(?:接下来|以后|从现在起|现在开始)[，,\s]*)?(?:(?:换成|改成|切到|切换成|改用|使用|用|只用)(?:纯?文字|打字|静音)(?:来?回(?:我|消息|复)?|回复|模式|聊)?|别出声|不要出声|不用语音|关掉语音)[吧啦呀哦了。！!？?]*$/.test(cleanAsked)) {
+          this.setReplyMode("text", "assistant");
+        }
+      }
       const said = filterTalk(run.text) || "这句我没接住，你再说一遍？";
-      this.put({ id: draftId, ts: this.now(), role: "assistant", text: said, steps: run.steps, via: "text" });
+      const willSpeak = this.replyMode() === "voice" && this.voices.size === 0 && !!this.findVoiceHost();
+      this.put({ id: draftId, ts: this.now(), role: "assistant", text: said, steps: run.steps, via: "text", ...(willSpeak ? { spoken: true } : {}) });
+      if (willSpeak) this.speakItem(draftId, said);
       this.event({
         kind: "assistant.turn",
         msg: `text from ${who} ${Date.now() - t0}ms: "${clip(oneLine(asked), 120)}" -> "${clip(oneLine(said), 120)}"`,
@@ -419,6 +494,89 @@ export class Assistant {
     } finally {
       this.setBusy(false);
     }
+  }
+
+  /** Pre-warms local ASR/TTS on the online voice host while no live call is running. */
+  warmupVoice(): void {
+    if (this.closed || this.voices.size > 0) return;
+    const host = this.findVoiceHost();
+    if (!host) return;
+    void this.callVoiceHost(host.id, "voice.warmup", {}, 90_000).catch(() => {});
+  }
+
+  /** Stops any in-flight normal-chat dual-track TTS stream, optionally releasing GPU VRAM. */
+  stopChatSpeech(release = false): void {
+    const active = this.activeChatSpeech;
+    this.activeChatSpeech = null;
+    if (active) {
+      active.ac.abort();
+      this.host.toViewers({ type: "assistant_speech", itemId: active.itemId, utteranceId: active.utteranceId, phase: "stop" });
+      void this.callVoiceHost(active.hostId, "voice.cancel", active.reqId ? { requestId: active.reqId } : {}, 5_000).catch(() => {});
+    }
+    if (release && this.voices.size === 0) {
+      const hostId = active?.hostId ?? this.findVoiceHost()?.id;
+      if (hostId) {
+        void this.callVoiceHost(hostId, "voice.release", {}, 10_000).catch(() => {});
+      }
+    }
+  }
+
+  /** Streams local Aemeath TTS for an assistant or notice item over /v1/ws. */
+  speakItem(itemId: string, rawText?: string): { utteranceId: string } | null {
+    if (this.closed || this.voices.size > 0) return null;
+    const sourceText = typeof rawText === "string" ? rawText : (this.items.find((x) => x.id === itemId)?.text ?? "");
+    const sentences = chatSpeechSentences(sourceText);
+    if (!sentences.length) return null;
+    const host = this.findVoiceHost();
+    if (!host) return null;
+
+    this.stopChatSpeech(false);
+    const utteranceId = newId("sp");
+    const ac = new AbortController();
+    const cur: { utteranceId: string; itemId: string; hostId: string; reqId?: string; ac: AbortController } = {
+      utteranceId,
+      itemId,
+      hostId: host.id,
+      ac,
+    };
+    this.activeChatSpeech = cur;
+    this.host.toViewers({ type: "assistant_speech", itemId, utteranceId, phase: "start", sampleRate: 48_000 });
+
+    void (async () => {
+      try {
+        for (const sentence of sentences) {
+          if (this.closed || cur.ac.signal.aborted || this.activeChatSpeech?.utteranceId !== utteranceId || this.voices.size > 0) {
+            return;
+          }
+          const reqId = randomUUID().toLowerCase();
+          cur.reqId = reqId;
+          const res = await this.callVoiceHost(host.id, "voice.synthesize", { requestId: reqId, text: sentence }, 90_000);
+          if (this.closed || cur.ac.signal.aborted || this.activeChatSpeech?.utteranceId !== utteranceId || res.cancelled || this.voices.size > 0) {
+            return;
+          }
+          const sampleRate = res.sampleRate || 48_000;
+          for (const pcmBase64 of res.chunksBase64) {
+            if (this.closed || cur.ac.signal.aborted || this.activeChatSpeech?.utteranceId !== utteranceId || this.voices.size > 0) {
+              return;
+            }
+            this.host.toViewers({ type: "assistant_speech", itemId, utteranceId, phase: "chunk", sampleRate, pcmBase64 });
+          }
+        }
+        if (this.activeChatSpeech?.utteranceId === utteranceId && !cur.ac.signal.aborted) {
+          this.activeChatSpeech = null;
+          this.host.toViewers({ type: "assistant_speech", itemId, utteranceId, phase: "done" });
+        }
+      } catch (e) {
+        if (this.activeChatSpeech?.utteranceId === utteranceId && !cur.ac.signal.aborted) {
+          const msg = clip((e as Error).message, 80);
+          this.activeChatSpeech = null;
+          this.event({ kind: "voice", level: "warn", msg: `chat speak failed: ${msg}` });
+          this.host.toViewers({ type: "assistant_speech", itemId, utteranceId, phase: "stop", error: msg });
+        }
+      }
+    })();
+
+    return { utteranceId };
   }
 
   /**
@@ -571,7 +729,11 @@ export class Assistant {
     const steps: string[] = [];
     const used: string[] = [];
     const turn: Turn = { occasion: opts.occasion, facts: newFacts() };
-    const system = systemPrompt(this.name, opts.occasion, this.backendBoard(), { confirm: !this.direct(turn), persona: this.persona });
+    const system = systemPrompt(this.name, opts.occasion, this.backendBoard(), {
+      confirm: !this.direct(turn),
+      persona: this.persona,
+      replyMode: this.replyMode(),
+    });
     const tools = opts.allow ? TOOLS.filter((t) => opts.allow!.has(t.name)) : TOOLS;
     const rounds = opts.maxRounds ?? MAX_TOOL_ROUNDS;
     /** What is said must match what was done in this run (the guard), and the log says when it did not. */
@@ -1186,6 +1348,16 @@ export class Assistant {
           step: "改了动手前要不要先问",
         };
       }
+      case "set_reply_mode": {
+        if (input.mode !== "voice" && input.mode !== "text") throw new Error("mode 需要是 voice 或 text");
+        const s = this.setReplyMode(input.mode, "assistant");
+        return {
+          out: s.replyMode === "voice"
+            ? "已切换为语音加文字双轨模式：从现在这条回复开始都会一边出文字一边用语音说。"
+            : "已切换为纯文字模式：从现在开始只发文字气泡，不再语音播报。",
+          step: s.replyMode === "voice" ? "切到了语音回复" : "切到了纯文字回复",
+        };
+      }
       case "set_reminder": {
         const text = typeof input.text === "string" ? noEmoji(input.text).slice(0, 500) : "";
         if (!text) throw new Error("提醒内容是空的");
@@ -1681,9 +1853,20 @@ export class Assistant {
   private async emit(n: Omit<Notice, "id" | "ts">): Promise<void> {
     const notice: Notice = { ...n, id: newId("n"), ts: this.now() };
     this.store.putNotice(notice.id, notice.ts, notice);
-    this.put({ id: `item-${notice.id}`, ts: notice.ts, role: "notice", text: [notice.body, notice.details].filter(Boolean).join("\n"), notice });
+    const itemId = `item-${notice.id}`;
+    this.put({ id: itemId, ts: notice.ts, role: "notice", text: [notice.body, notice.details].filter(Boolean).join("\n"), notice });
     for (const s of this.sinks) s(notice);
     for (const v of this.voices) v.notice(notice);
+    if (
+      !this.closed &&
+      this.replyMode() === "voice" &&
+      this.voices.size === 0 &&
+      !this.busy &&
+      !this.activeChatSpeech &&
+      this.host.devices().some((d) => d.kind === "viewer" && d.online)
+    ) {
+      this.speakItem(itemId, notice.body);
+    }
     this.event({ kind: "notice", msg: `${notice.kind}${notice.verdict ? `/${notice.verdict}` : ""}: ${notice.title} — ${clip(notice.body, 120)}`, data: { agent: notice.agent, phones: this.sinks.size, calls: this.voices.size } });
     this.boardChanged();
   }
@@ -2063,6 +2246,17 @@ const TOOLS: ToolDef[] = [
     name: "set_ask_first",
     description: "我说“以后动手前先问我”或“不用问我、直接做”时用：改动手之前要不要先问。只影响打字聊天；通话里总是直接做。",
     input_schema: { type: "object", properties: { ask: { type: "boolean", description: "true：先问；false：直接做" } }, required: ["ask"] },
+  },
+  {
+    name: "set_reply_mode",
+    description: "切换平时聊天回消息的方式：我说“接下来用语音”“开口说话”“用语音加文字”时传 voice（语音加文字双轨）；说“接下来用文字”“别出声了”“改打字”时传 text（只发文字不出声）。",
+    input_schema: {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["voice", "text"], description: "voice：语音加文字双轨；text：纯文字不出声" },
+      },
+      required: ["mode"],
+    },
   },
   {
     name: "confirm_action",

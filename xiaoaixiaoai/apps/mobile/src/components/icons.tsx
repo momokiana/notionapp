@@ -11,6 +11,9 @@ export type CuteIconName =
   | "send"
   | "mic"
   | "micOff"
+  | "volume"
+  | "volumeOff"
+  | "phoneCall"
   | "keyboard"
   | "keyboardDown"
   | "tune"
@@ -91,6 +94,28 @@ function shape(name: CuteIconName, ink: string, fill: string, w: number) {
           <Path d="M12 18 V20.5" {...line} />
           <Path d="M4.5 4.5 L19.5 19.5" {...line} />
         </G>
+      );
+    case "volume":
+      return (
+        <G>
+          <Path d="M4.5 9.5 H8 L13 5.5 V18.5 L8 14.5 H4.5 C3.7 14.5 3.5 14 3.5 13.5 V10.5 C3.5 10 3.7 9.5 4.5 9.5 Z" {...body} />
+          <Path d="M16.2 9.2 C17.5 10.6 17.5 13.4 16.2 14.8" {...line} />
+          <Path d="M18.8 6.8 C21.2 9.5 21.2 14.5 18.8 17.2" {...line} />
+        </G>
+      );
+    case "volumeOff":
+      return (
+        <G>
+          <Path d="M4.5 9.5 H8 L13 5.5 V18.5 L8 14.5 H4.5 C3.7 14.5 3.5 14 3.5 13.5 V10.5 C3.5 10 3.7 9.5 4.5 9.5 Z" {...body} />
+          <Path d="M16.5 9.5 L20.5 14.5 M20.5 9.5 L16.5 14.5" {...line} />
+        </G>
+      );
+    case "phoneCall":
+      return (
+        <Path
+          d="M6.6 4.5 L9.3 4.5 C9.9 4.5 10.4 4.9 10.6 5.5 L11.4 8.2 C11.5 8.8 11.3 9.4 10.8 9.8 L9.4 10.9 C10.4 12.8 11.8 14.2 13.7 15.2 L14.8 13.8 C15.2 13.3 15.8 13.1 16.4 13.2 L19.1 14 C19.7 14.2 20.1 14.7 20.1 15.3 V18 C20.1 19 19.3 19.8 18.3 19.7 C10.8 19 4.8 13 4.1 5.5 C4 4.9 4.8 4.5 6.6 4.5 Z"
+          {...body}
+        />
       );
     case "keyboard":
       return (

@@ -60,7 +60,15 @@ function clock(ts: number): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-export const NoticeBubble = memo(function NoticeBubble({ item }: { item: AssistantItem }) {
+export const NoticeBubble = memo(function NoticeBubble({
+  item,
+  speaking,
+  onToggleSpeak,
+}: {
+  item: AssistantItem;
+  speaking?: boolean;
+  onToggleSpeak?: () => void;
+}) {
   const p = usePalette();
   const scale = useSettings((s) => s.textScale);
   const styles = useMemo(() => {
@@ -92,9 +100,29 @@ export const NoticeBubble = memo(function NoticeBubble({ item }: { item: Assista
         {details ? <Markdown style={styles}>{fixCjkEmphasis(details)}</Markdown> : null}
         {agent ? <AgentLink agentKey={agent.key} /> : null}
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 4 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 4 }}>
         <CuteIcon name="bell" size={12} color={p.faint} strokeWidth={2.4} />
         <Text style={{ color: p.faint, fontSize: 11 }}>{clock(item.ts)} · 主动告诉你</Text>
+        {onToggleSpeak ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={speaking ? "停止语音播报" : "语音播报这条通知"}
+            onPress={onToggleSpeak}
+            hitSlop={8}
+            style={({ pressed }) => ({
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 3,
+              paddingHorizontal: 8,
+              paddingVertical: 2,
+              borderRadius: radius.pill,
+              backgroundColor: speaking || pressed ? p.skyContainer : p.surface2,
+            })}
+          >
+            <CuteIcon name={speaking ? "volumeOff" : "volume"} size={12} color={speaking ? p.skyText : p.muted} strokeWidth={2.3} />
+            <Text style={{ color: speaking ? p.skyText : p.muted, fontSize: 11, fontFamily: fonts.bodySemi }}>{speaking ? "停止" : "播报"}</Text>
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );
