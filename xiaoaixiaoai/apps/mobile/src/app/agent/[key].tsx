@@ -87,7 +87,9 @@ function MainDetail({ agent, initialTab }: { agent: Agent; initialTab?: Tab }) {
   const p = usePalette();
   const insets = useSafeAreaInsets();
   const headerHeight = useHeaderHeight();
-  const [tab, setTab] = useState<Tab>(() => initialTab ?? (agent.sessionKey ? "chat" : "terminal"));
+  const hasTerminal = agent.source !== "runtime";
+  const requestedTab = !hasTerminal && initialTab === "terminal" ? "chat" : initialTab;
+  const [tab, setTab] = useState<Tab>(() => requestedTab ?? (hasTerminal ? (agent.sessionKey ? "chat" : "terminal") : "chat"));
   const [resolvedKey, setResolvedKey] = useState(agent.key);
   const subs = agent.subagents ?? 0;
 
@@ -95,8 +97,10 @@ function MainDetail({ agent, initialTab }: { agent: Agent; initialTab?: Tab }) {
   // A guarded render adjustment preserves the person's selected tab without a post-render effect.
   if (resolvedKey !== agent.key) {
     setResolvedKey(agent.key);
-    if (!agent.sessionKey && tab === "chat" && !initialTab) setTab("terminal");
+    if (!hasTerminal && tab === "terminal") setTab("chat");
+    else if (hasTerminal && !agent.sessionKey && tab === "chat" && !initialTab) setTab("terminal");
   }
+  if (!hasTerminal && tab === "terminal") setTab("chat");
 
   // Opening a finished agent is looking at it: herdr stops counting it as "已完成", on the desktop too.
   useEffect(() => {
@@ -112,7 +116,7 @@ function MainDetail({ agent, initialTab }: { agent: Agent; initialTab?: Tab }) {
   const meta = [agent.where, money(agent.costUsd)].filter(Boolean).join(" · ");
   const buttons = [
     { value: "chat", label: "对话" },
-    { value: "terminal", label: "终端" },
+    ...(hasTerminal ? [{ value: "terminal", label: "终端" }] : []),
     ...(subs > 0 ? [{ value: "subs", label: "子 agent" }] : []),
     { value: "info", label: "信息" },
   ];
@@ -144,8 +148,8 @@ function MainDetail({ agent, initialTab }: { agent: Agent; initialTab?: Tab }) {
           />
         </View>
         <View style={{ flex: 1 }}>
-          {tab === "chat" ? <ChatView agent={agent} active bottomInset={0} onNoSession={() => setTab("terminal")} childCount={subs} /> : null}
-          {tab === "terminal" ? <TerminalView agent={agent} active /> : null}
+          {tab === "chat" ? <ChatView agent={agent} active bottomInset={0} onNoSession={() => { if (hasTerminal) setTab("terminal"); }} childCount={subs} /> : null}
+          {tab === "terminal" && hasTerminal ? <TerminalView agent={agent} active /> : null}
           {tab === "subs" ? <SubagentList agent={agent} trail={[]} active bottomInset={insets.bottom} /> : null}
           {tab === "info" ? <InfoView agent={agent} bottomInset={0} /> : null}
         </View>

@@ -1,13 +1,17 @@
+import { randomUUID } from "node:crypto";
 import { homedir, hostname, platform } from "node:os";
 import type { Agent as HttpsAgent } from "node:https";
 import { WebSocket } from "ws";
 import {
   HARNESS_ICON_MAX,
   PROTOCOL_VERSION,
+  RUNTIME_SESSION_TEXT_LIMIT,
   agentKey,
   parseAgentKey,
   rowsChange,
   type Agent,
+  type AgentStatus,
+  type ConvEvent,
   type HostSource,
   type LayoutSpace,
   type Device,
@@ -15,7 +19,11 @@ import {
   type RpcError,
   type RpcMethod,
   type RpcMethods,
+  type RuntimeSessionDetail,
   type ServerFrame,
+  type SessionHit,
+  type SessionInfo,
+  type SessionRuntime,
   type TerminalRowsEvent,
 } from "@xiaoaixiaoai/protocol";
 import { HcAdapter, type AppNames } from "./hc.ts";
@@ -30,7 +38,18 @@ import { typeFirstTask, type TypeTaskOptions } from "./firsttask.ts";
 import { FILES_DIR, checkFiles, putLocal, putThrough, type CheckedFile } from "./put.ts";
 import { LogBuffer, clipChars, levelOf } from "./logbuf.ts";
 import type { HostConfig } from "./config.ts";
-import { RuntimeError, type RuntimeSessions } from "./runtime-sessions.ts";
+import { RuntimeError, encodeRuntimeLocalId, encodeRuntimeSessionKey, parseRuntimeTarget, type RuntimeSessions } from "./runtime-sessions.ts";
+import {
+  RuntimeEventSeqTracker,
+  entryMatchesFilter,
+  entrySearchPriority,
+  extractSearchHit,
+  formatRuntimeTerminalText,
+  matchQuestionAnswer,
+  nextRuntimeState,
+  parseRuntimeSearchQuery,
+  type RuntimeAgentState,
+} from "./runtime-bridge.ts";
 import { RuntimeTaskReporter } from "./runtime-task-reporter.ts";
 import { VERSION } from "@xiaoaixiaoai/update";
 
@@ -144,6 +163,11 @@ export class Host {
   firstTaskOptions: TypeTaskOptions = {};
   /** Where pictures for agents of the herdr terminal app are kept (tests point it elsewhere). */
   filesDir = FILES_DIR;
+  private runtimeAgents: Agent[] = [];
+  private runtimeTimer: NodeJS.Timeout | null = null;
+  private runtimeState = new Map<string, RuntimeAgentState>();
+  private runtimeEventSeq = new RuntimeEventSeqTracker();
+  private runtimeRefreshLock: Promise<void> | null = null;
 
   constructor(opts: HostOptions) {
     this.opts = opts;
@@ -193,6 +217,11 @@ export class Host {
     if (this.opts.runtimeSessions) {
       this.sources.push("runtime-sessions", "runtime-detail");
       if (this.opts.runtimeSessions.hasDirectory) this.sources.push("dsh-directory");
+      if (this.opts.runtimeSessions.publishAgents) {
+        await this.refreshRuntimeAgents();
+        this.runtimeTimer = setInterval(() => void this.refreshRuntimeAgents(), 4000);
+        this.runtimeTimer.unref?.();
+      }
     }
     if (!hc && !herdr && !this.opts.runtimeSessions) this.log("no herdr runtime found: start the herdr app (hc) or `herdr` first. Waiting anyway.");
     this.logTimer = setInterval(() => this.flushLogs(), this.logEveryMs);
@@ -203,6 +232,7 @@ export class Host {
   stop(): void {
     this.stopped = true;
     if (this.namesTimer) clearInterval(this.namesTimer);
+    if (this.runtimeTimer) clearInterval(this.runtimeTimer);
     if (this.logTimer) clearInterval(this.logTimer);
     if (this.waitTimer) clearInterval(this.waitTimer);
     this.flushLogs();
@@ -218,6 +248,61 @@ export class Host {
   }
 
   // -------------------------------------------------------------------------
+
+  async refreshRuntimeAgents(): Promise<void> {
+    const view = this.opts.runtimeSessions;
+    if (!view?.publishAgents || this.stopped) return;
+    if (this.runtimeRefreshLock) return this.runtimeRefreshLock;
+    this.runtimeRefreshLock = (async () => {
+      try {
+        const entries = await view.unifiedEntries();
+        const now = Date.now();
+        const seen = new Set<string>();
+        const next: Agent[] = [];
+        for (const entry of entries) {
+          const localId = encodeRuntimeLocalId(entry.runtime, entry.projectId, entry.session.id);
+          seen.add(localId);
+          const state = nextRuntimeState(this.runtimeState.get(localId), entry.session.state, now, entry.session.updatedAt);
+          this.runtimeState.set(localId, state);
+          const canSend = !this.opts.readOnly && entry.runtime !== "antigravity" && entry.sendConfigured;
+          const readOnlyReason = this.opts.readOnly
+            ? "这台电脑当前为只读模式。"
+            : entry.runtime === "antigravity"
+              ? "Antigravity 会话当前仅支持查看，不支持从手机发送消息。"
+              : !canSend
+                ? "当前会话处于只读状态，仅支持查看消息记录。"
+                : undefined;
+          next.push({
+            key: agentKey(this.deviceId, "runtime", localId),
+            deviceId: this.deviceId,
+            source: "runtime",
+            localId,
+            harness: entry.runtime,
+            title: entry.session.title,
+            where: entry.projectTitle,
+            status: state.status,
+            statusSince: state.since,
+            ...(state.turn > 0 ? { turn: state.turn } : {}),
+            isShell: false,
+            sessionKey: encodeRuntimeSessionKey(entry.runtime, entry.projectId, entry.session.id),
+            canSend,
+            ...(readOnlyReason ? { readOnlyReason } : {}),
+            updatedAt: entry.session.updatedAt ?? state.since,
+          });
+        }
+        for (const localId of [...this.runtimeState.keys()]) {
+          if (!seen.has(localId)) this.runtimeState.delete(localId);
+        }
+        this.runtimeAgents = next;
+        this.publish();
+      } catch {
+        /* keep last published snapshot while one runtime poll is busy */
+      } finally {
+        this.runtimeRefreshLock = null;
+      }
+    })();
+    return this.runtimeRefreshLock;
+  }
 
   /** Re-reads the desktop app's space and tab names (a rename there does not always reach hc). */
   private async refreshNames(): Promise<void> {
@@ -251,6 +336,9 @@ export class Host {
     }
     this.sessionHints.prune(live);
     for (const info of this.herdr.agents) agents.push(HerdrAdapter.toAgent(info, id));
+    for (const a of this.runtimeAgents) {
+      agents.push({ ...a, deviceId: id, key: agentKey(id, "runtime", a.localId) });
+    }
     return this.waits.decorate(this.uniflo.enrich(agents, pids, hints));
   }
 
@@ -415,12 +503,70 @@ export class Host {
 
   // -------------------------------------------------------------------------
 
+  private isAllowedCaller(from: string): boolean {
+    const allow = this.opts.allow ?? [];
+    if (!allow.length || allow.includes(from)) return true;
+    if (from === "relay" && (allow.includes("assistant") || allow.includes("relay") || this.opts.runtimeSessions?.allowAssistant === true)) {
+      return true;
+    }
+    return false;
+  }
+
+  private runtimeTargetOf(a: Agent): { runtime: SessionRuntime; projectId: string; sessionId: string } {
+    const parsed = parseRuntimeTarget(a.localId);
+    if (!parsed) throw new RpcFailure("not_found", "找不到对应的项目会话。");
+    return parsed;
+  }
+
+  private async runtimeDetailForTarget(
+    from: string,
+    target: { runtime: SessionRuntime; projectId: string; sessionId: string },
+    limit: number,
+  ): Promise<{
+    sessionKey: string;
+    detail: RuntimeSessionDetail;
+    events: ConvEvent[];
+    canSend: boolean;
+    readOnlyReason?: string;
+  }> {
+    const view = this.runtimeAccess(from);
+    const detail = await view.detail({
+      runtime: target.runtime,
+      projectId: target.projectId,
+      sessionId: target.sessionId,
+      limit: Math.min(Math.max(limit || 60, 1), 100),
+    });
+    if (this.opts.readOnly) {
+      detail.session.canSend = false;
+      detail.pendingQuestions = detail.pendingQuestions.map((q) => ({ ...q, state: "readonly" as const }));
+      detail.readOnlyReason ??= "这台电脑当前为只读模式。";
+    }
+    const sessionKey = encodeRuntimeSessionKey(target.runtime, target.projectId, target.sessionId);
+    const events = this.runtimeEventSeq.toConvEvents(sessionKey, detail);
+    const canSend =
+      !this.opts.readOnly &&
+      target.runtime !== "antigravity" &&
+      (detail.session.canSend || detail.pendingQuestions.some((q) => q.state !== "readonly"));
+    const readOnlyReason = !canSend
+      ? (detail.readOnlyReason ?? (target.runtime === "antigravity" ? "Antigravity 会话当前仅支持查看，不支持从手机发送消息。" : "当前会话处于只读状态，仅支持查看消息记录。"))
+      : undefined;
+    return { sessionKey, detail, events, canSend, ...(readOnlyReason ? { readOnlyReason } : {}) };
+  }
+
   private async handleRpc(f: Extract<ServerFrame, { type: "rpc" }>): Promise<void> {
     try {
-      const allow = this.opts.allow ?? [];
-      if (allow.length && !allow.includes(f.from)) throw new RpcFailure("forbidden", "这台电脑没有授权给你");
-      if (this.opts.runtimeOnly && !["runtimeSessions.list", "runtimeSessions.browse", "runtimeSessions.detail", "runtimeSessions.answer", "runtimeSessions.send", "host.info", "agents.list"].includes(f.method)) {
-        throw new RpcFailure("unsupported", "这台电脑仅提供共享的项目会话，不开放终端。");
+      if (!this.isAllowedCaller(f.from)) throw new RpcFailure("forbidden", "这台电脑没有授权给你");
+      if (this.opts.runtimeOnly) {
+        const baseAllowed = ["runtimeSessions.list", "runtimeSessions.browse", "runtimeSessions.detail", "runtimeSessions.answer", "runtimeSessions.send", "host.info", "agents.list"];
+        const publishAllowed = this.opts.runtimeSessions?.publishAgents === true
+          ? ["session.events", "session.children", "agent.seen", "terminal.read", "terminal.send", "spaces.list"]
+          : [];
+        const assistantAllowed = f.from === "relay" && this.opts.runtimeSessions?.allowAssistant === true
+          ? ["sessions.list", "sessions.search", "sessions.read", "sessions.usage", "spaces.list"]
+          : [];
+        if (!baseAllowed.includes(f.method) && !publishAllowed.includes(f.method) && !assistantAllowed.includes(f.method)) {
+          throw new RpcFailure("unsupported", "这台电脑仅提供共享的项目会话，不开放终端。");
+        }
       }
       const handler = (this.handlers as Record<string, Handler<any> | undefined>)[f.method];
       if (!handler) throw new RpcFailure("unsupported", `unknown method ${f.method}`);
@@ -444,25 +590,89 @@ export class Host {
   }
 
   private async handleStreamSubscribe(f: Extract<ServerFrame, { type: "stream_subscribe" }>): Promise<void> {
-    if (this.opts.runtimeOnly) {
-      this.send({ type: "stream_open", id: f.id, error: { code: "unsupported", message: "这台电脑仅提供共享的项目会话，不开放终端。" } });
+    if (!this.isAllowedCaller(f.from)) {
+      this.send({ type: "stream_open", id: f.id, error: { code: "forbidden", message: "这台电脑没有授权给你" } });
       return;
     }
-    const allow = this.opts.allow ?? [];
-    if (allow.length && !allow.includes(f.from)) {
-      this.send({ type: "stream_open", id: f.id, error: { code: "forbidden", message: "这台电脑没有授权给你" } });
+    if (this.opts.runtimeOnly && this.opts.runtimeSessions?.publishAgents !== true) {
+      this.send({ type: "stream_open", id: f.id, error: { code: "unsupported", message: "这台电脑仅提供共享的项目会话，不开放终端。" } });
       return;
     }
     const p = (f.params ?? {}) as Record<string, unknown>;
     const agentName = p.agent;
     try {
       const a = this.resolve(agentName);
+      if (this.opts.runtimeOnly && a.source !== "runtime") {
+        throw new RpcFailure("unsupported", "这台电脑仅提供共享的项目会话，不开放终端。");
+      }
       const prev = this.streamMeta.get(f.id);
       if (prev && prev.from !== f.from) throw new RpcFailure("bad_request", "重复的流 id");
       // The same viewer again (it reconnected through a relay that did not end the old one): the new one replaces it.
       if (prev) this.stopStream(f.id);
       const meta = { from: f.from, kind: f.stream, agent: a.key };
       this.streamMeta.set(f.id, meta);
+      if (a.source === "runtime") {
+        this.runtimeAccess(f.from);
+        const target = this.runtimeTargetOf(a);
+        if (f.stream === "terminal") {
+          if (p.screen !== false) {
+            const { detail } = await this.runtimeDetailForTarget(f.from, target, 40);
+            const text = formatRuntimeTerminalText(a, detail);
+            const paint = this.terminalPainter(f.id, p.rows === true);
+            paint({ lines: text.split("\n"), text, cols: 0, rows: 0 });
+          }
+          if (this.streamMeta.get(f.id) !== meta) return;
+          this.streamStops.set(f.id, () => undefined);
+          this.send({ type: "stream_open", id: f.id, result: { kind: "terminal", agent: a.key } });
+          return;
+        }
+        if (typeof p.sub === "string" && p.sub) throw new RpcFailure("not_found", "这个会话没有子对话");
+        let stopped = false;
+        const seen = new Map<string, string>();
+        let busy = false;
+        let failing = false;
+        let initialized = false;
+        const tick = async () => {
+          if (stopped || busy) return;
+          busy = true;
+          try {
+            const { events } = await this.runtimeDetailForTarget(f.from, target, 60);
+            if (failing) {
+              failing = false;
+              this.sendStream(f.id, { kind: "alive", at: Date.now() });
+            }
+            let added = false;
+            for (const e of events) {
+              const sig = JSON.stringify({ kind: e.kind, text: "text" in e ? e.text : undefined, output: "output" in e ? e.output : undefined, is_error: "is_error" in e ? e.is_error : undefined });
+              if (seen.get(e.id) === sig) continue;
+              seen.set(e.id, sig);
+              if (seen.size > 2000) seen.delete(seen.keys().next().value!);
+              this.sendStream(f.id, { kind: "session", event: e, at: Date.now() });
+              added = true;
+            }
+            if (initialized && added) void this.refreshRuntimeAgents();
+            initialized = true;
+          } catch (e) {
+            if (!failing) this.sendStream(f.id, { kind: "stale", message: (e as Error).message, at: Date.now() });
+            failing = true;
+          } finally {
+            busy = false;
+          }
+        };
+        const timer = setInterval(() => void tick(), 2000);
+        void tick();
+        if (this.streamMeta.get(f.id) !== meta) {
+          stopped = true;
+          clearInterval(timer);
+          return;
+        }
+        this.streamStops.set(f.id, () => {
+          stopped = true;
+          clearInterval(timer);
+        });
+        this.send({ type: "stream_open", id: f.id, result: { kind: "session", sessionKey: a.sessionKey ?? encodeRuntimeSessionKey(target.runtime, target.projectId, target.sessionId) } });
+        return;
+      }
       if (f.stream === "terminal") {
         let stop: () => void = () => undefined;
         // `screen: false`: only queue notices (they go to every terminal stream of the agent).
@@ -595,6 +805,59 @@ export class Host {
     return { id, position };
   }
 
+  private async dispatchRuntimeQueueItem(a: Agent, text: string): Promise<void> {
+    const view = this.opts.runtimeSessions;
+    if (!view) throw new RpcFailure("unsupported", "电脑端没有开启项目会话连接。");
+    const target = this.runtimeTargetOf(a);
+    let pending: RuntimeSessionDetail["pendingQuestions"] = [];
+    try {
+      const detail = await view.detail({ runtime: target.runtime, projectId: target.projectId, sessionId: target.sessionId, limit: 10 });
+      pending = detail.pendingQuestions;
+    } catch {
+      pending = [];
+    }
+    const actionable = pending.find((pq) => pq.state !== "readonly" && pq.questions.length === 1);
+    if (actionable && target.runtime !== "antigravity") {
+      await view.answer({
+        runtime: target.runtime,
+        projectId: target.projectId,
+        sessionId: target.sessionId,
+        requestId: randomUUID(),
+        callId: actionable.callId,
+        answers: [matchQuestionAnswer(actionable.questions[0]!, text)],
+      });
+      void this.refreshRuntimeAgents();
+      return;
+    }
+    try {
+      await view.send({ runtime: target.runtime, projectId: target.projectId, sessionId: target.sessionId, requestId: randomUUID(), input: text });
+      void this.refreshRuntimeAgents();
+      return;
+    } catch (e) {
+      if (!(e instanceof RuntimeError && e.code === "not_found" && target.runtime === "codex")) throw e;
+    }
+    // Codex local runtime rejects `thread/resume` writes while an active turn is still in progress: wait briefly until idle.
+    const deadline = Date.now() + 180_000;
+    while (!this.stopped && this.sendQueues.has(a.key) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1500));
+      let detail: RuntimeSessionDetail;
+      try {
+        detail = await view.detail({ runtime: target.runtime, projectId: target.projectId, sessionId: target.sessionId, limit: 2 });
+      } catch {
+        continue;
+      }
+      if (detail.session.canSend) {
+        await view.send({ runtime: target.runtime, projectId: target.projectId, sessionId: target.sessionId, requestId: randomUUID(), input: text });
+        void this.refreshRuntimeAgents();
+        return;
+      }
+      if (detail.session.state !== "running" && detail.session.state !== "attention") {
+        throw new RuntimeError("forbidden", detail.readOnlyReason ?? "当前会话已转为只读状态，未能发送消息。");
+      }
+    }
+    throw new RuntimeError("timeout", "等待上一轮结束超时，消息未发送。");
+  }
+
   private async drainSendQueue(a: Agent): Promise<void> {
     const q = this.sendQueues.get(a.key);
     if (!q) return;
@@ -602,7 +865,8 @@ export class Host {
       const item = q[0]!;
       this.queueEvent(a.key, { queueId: item.id, status: "sending", position: 0 });
       try {
-        if (a.source === "hc") await this.hc.send(a.localId, item.text, item.enter);
+        if (a.source === "runtime") await this.dispatchRuntimeQueueItem(a, item.text);
+        else if (a.source === "hc") await this.hc.send(a.localId, item.text, item.enter);
         else await this.herdr.send(a.localId, item.text, item.enter);
         this.queueEvent(a.key, { queueId: item.id, status: "sent", position: 0 });
       } catch (e) {
@@ -624,7 +888,15 @@ export class Host {
       try {
         const screen = async (a: Agent) =>
           a.source === "hc" && !this.sendQueues.has(a.key) ? (await this.hc.read(a.localId, 0)).text : undefined;
-        if (await this.waits.settle(this.agents, async (key) => (await this.uniflo.events(key, 15)).events, Date.now(), screen)) this.publish();
+        const events = async (key: string) => {
+          const target = parseRuntimeTarget(key);
+          if (target && this.opts.runtimeSessions) {
+            const detail = await this.opts.runtimeSessions.detail({ runtime: target.runtime, projectId: target.projectId, sessionId: target.sessionId, limit: 20 });
+            return this.runtimeEventSeq.toConvEvents(key, detail);
+          }
+          return (await this.uniflo.events(key, 15)).events;
+        };
+        if (await this.waits.settle(this.agents, events, Date.now(), screen)) this.publish();
       } finally {
         busy = false;
       }
@@ -700,7 +972,9 @@ export class Host {
    */
   private assistantOnly(from: string): void {
     if (from !== "relay") throw new RpcFailure("forbidden", "只有助理可以查这台电脑的全部会话");
-    if (!this.sources.includes("uniflo")) throw new RpcFailure("unsupported", "这台电脑没有运行 Uniflo，查不了会话记录");
+    if (!this.sources.includes("uniflo") && this.opts.runtimeSessions?.allowAssistant !== true) {
+      throw new RpcFailure("unsupported", "这台电脑没有运行 Uniflo，查不了会话记录");
+    }
   }
 
   /**
@@ -741,6 +1015,7 @@ export class Host {
     if (relay.protocol !== "https:" && !(relay.protocol === "http:" && relay.hostname === "127.0.0.1")) {
       throw new RpcFailure("forbidden", "项目会话只允许经过 HTTPS 中转或本机测试中转。");
     }
+    if (from === "relay" && view.allowAssistant === true) return view;
     // The relay derives `from` from the authenticated connection, never client parameters.
     if (from !== view.viewerId || this.devices.get(from)?.kind !== "viewer") throw new RpcFailure("forbidden", "这部手机没有获得项目会话授权。");
     return view;
@@ -782,15 +1057,28 @@ export class Host {
       this.agents = this.collect();
       return { agents: p.includeShells === false ? this.agents.filter((a) => !a.isShell) : this.agents };
     },
-    "terminal.read": async (p) => {
+    "terminal.read": async (p, from) => {
       const a = this.resolve(p.agent);
       const lines = Math.min(Math.max(Number(p.lines ?? 200) || 200, 0), 2000);
+      if (a.source === "runtime") {
+        const { detail } = await this.runtimeDetailForTarget(from, this.runtimeTargetOf(a), Math.min(Math.max(lines, 10), 100));
+        return { text: formatRuntimeTerminalText(a, detail), complete: true };
+      }
       return a.source === "hc" ? this.hc.read(a.localId, lines) : this.herdr.read(a.localId, lines);
     },
-    "terminal.send": async (p) => {
+    "terminal.send": async (p, from) => {
       this.writable();
       const a = this.resolve(p.agent);
       if (typeof p.text !== "string" || p.text.length > 20_000) throw new RpcFailure("bad_request", "text is required");
+      if (a.source === "runtime") {
+        this.runtimeAccess(from);
+        if (a.canSend === false) {
+          throw new RpcFailure("forbidden", a.readOnlyReason ?? "当前会话仅支持查看，不能发送消息。");
+        }
+        if (p.text.length > RUNTIME_SESSION_TEXT_LIMIT || /[\uD800-\uDFFF]/u.test(p.text) || p.text.includes("\0") || !p.text.trim()) {
+          throw new RpcFailure("bad_request", `消息内容无效或超过 ${RUNTIME_SESSION_TEXT_LIMIT} 字符限制。`);
+        }
+      }
       const status = a.status;
       const queued = this.enqueueSend(a, p.text, p.enter !== false);
       // In a turn, the program keeps typed text in its input box until the turn ends.
@@ -800,7 +1088,8 @@ export class Host {
         this.watchWaits();
         this.publish();
       }
-      return { ok: true as const, queueId: queued.id, position: queued.position, agentStatus: status, waiting };
+      const reportedStatus: AgentStatus = a.source === "runtime" && status === "blocked" ? "working" : status;
+      return { ok: true as const, queueId: queued.id, position: queued.position, agentStatus: reportedStatus, waiting };
     },
     "terminal.keys": async (p) => {
       this.writable();
@@ -838,17 +1127,43 @@ export class Host {
         throw new RpcFailure("internal", `图片没能放到这台电脑上：${msg}`);
       }
     },
-    "session.events": async (p) => {
+    "session.events": async (p, from) => {
+      const a = this.resolve(p.agent);
+      if (a.source === "runtime") {
+        if (typeof p.sub === "string" && p.sub) return { sessionKey: null, events: [], more: false, nextBefore: null };
+        const res = await this.runtimeDetailForTarget(from, this.runtimeTargetOf(a), p.limit ?? 60);
+        return {
+          sessionKey: res.sessionKey,
+          events: res.events,
+          more: false,
+          nextBefore: null,
+          pendingQuestions: res.detail.pendingQuestions,
+          canSend: res.canSend,
+          ...(res.readOnlyReason ? { readOnlyReason: res.readOnlyReason } : {}),
+        };
+      }
       const key = await this.sessionOf(p.agent, p.sub);
       if (!key) return { sessionKey: null, events: [], more: false, nextBefore: null };
       const r = await this.uniflo.events(key, p.limit ?? 80, p.before);
       return { sessionKey: key, events: r.events, more: r.more, nextBefore: r.nextBefore };
     },
     "session.children": async (p) => {
+      const a = this.resolve(p.agent);
+      if (a.source === "runtime") return { sessions: [] };
       const key = await this.sessionOf(p.agent, p.sub);
       return { sessions: key ? await this.uniflo.children(key) : [] };
     },
     "spaces.list": async () => {
+      if (this.opts.runtimeOnly) {
+        return {
+          spaces: [],
+          launchers: [],
+          folders: [],
+          canCreate: false,
+          reason: "当前使用统一会话模式，请在电脑端 DSH、Codex 或 Antigravity 中新建会话，列表会自动同步。",
+          typesTask: false,
+        };
+      }
       const launchers = await this.launchers;
       let spaces: Awaited<ReturnType<HerdrApp["spaces"]>> = [];
       let reason: string | undefined;
@@ -932,9 +1247,22 @@ export class Host {
       version: HOSTD_VERSION,
       hcVersion: this.hc.version,
     }),
-    "agent.seen": async (p) => {
-      this.writable();
+    "agent.seen": async (p, from) => {
       const a = this.resolve(p.agent);
+      if (a.source === "runtime") {
+        this.runtimeAccess(from);
+        const state = this.runtimeState.get(a.localId);
+        if (state) {
+          const turn = Math.max(state.turn, 1);
+          this.runtimeState.set(a.localId, { ...state, seenTurn: turn, status: state.status === "done" ? "idle" : state.status });
+          this.runtimeAgents = this.runtimeAgents.map((item) =>
+            item.localId === a.localId && item.status === "done" ? { ...item, status: "idle" } : item,
+          );
+          this.publish();
+        }
+        return { ok: true as const };
+      }
+      this.writable();
       const t = a.source === "hc" ? this.hc.terminals.get(a.localId) : undefined;
       // Same mark the desktop app leaves when the person looks at a finished turn.
       if (t && typeof t.turn === "number" && HcAdapter.status(t) === "done") {
@@ -1016,6 +1344,25 @@ export class Host {
     "sessions.list": async (p, from) => {
       this.assistantOnly(from);
       const limit = Math.min(Math.max(Number(p.limit ?? 15) || 15, 1), 50);
+      if (!this.sources.includes("uniflo")) {
+        const view = this.runtimeAccess(from);
+        const query = parseRuntimeSearchQuery(typeof p.q === "string" ? p.q.slice(0, 300) : undefined);
+        const entries = (await view.unifiedEntries()).filter((entry) => entryMatchesFilter(entry, query)).slice(0, limit);
+        const live = new Map(this.agents.filter((a) => a.sessionKey).map((a) => [a.sessionKey!, a.key]));
+        const sessions: SessionInfo[] = entries.map((entry) => {
+          const key = encodeRuntimeSessionKey(entry.runtime, entry.projectId, entry.session.id);
+          return {
+            key,
+            harness: entry.runtime,
+            title: entry.session.title,
+            cwd: entry.projectTitle,
+            status: entry.session.state === "running" || entry.session.state === "attention" ? "working" : "idle",
+            updatedAt: entry.session.updatedAt ?? Date.now(),
+            ...(live.has(key) ? { agent: live.get(key) } : {}),
+          };
+        });
+        return { sessions };
+      }
       const sessions = await this.uniflo.list(typeof p.q === "string" ? p.q.slice(0, 300) : undefined, limit);
       const live = new Map(this.agents.filter((a) => a.sessionKey).map((a) => [a.sessionKey!, a.key]));
       return { sessions: sessions.map((s) => ({ ...s, agent: live.get(s.key) })) };
@@ -1023,11 +1370,56 @@ export class Host {
     "sessions.search": async (p, from) => {
       this.assistantOnly(from);
       if (typeof p.q !== "string" || !p.q.trim()) throw new RpcFailure("bad_request", "要搜什么");
-      return this.uniflo.search(p.q.trim().slice(0, 300), Math.min(Math.max(Number(p.limit ?? 8) || 8, 1), 20));
+      const limit = Math.min(Math.max(Number(p.limit ?? 8) || 8, 1), 20);
+      if (!this.sources.includes("uniflo")) {
+        const view = this.runtimeAccess(from);
+        const query = parseRuntimeSearchQuery(p.q.trim().slice(0, 300));
+        const allEntries = await view.unifiedEntries();
+        const ranked = allEntries
+          .map((entry) => ({ entry, score: entrySearchPriority(entry, query) }))
+          .filter((item) => item.score >= 0)
+          .sort((a, b) => (b.score - a.score) || ((b.entry.session.updatedAt ?? 0) - (a.entry.session.updatedAt ?? 0)));
+        const candidates = ranked.slice(0, 20).map((item) => item.entry);
+        const results: SessionHit[] = [];
+        let cursor = 0;
+        const worker = async () => {
+          while (cursor < candidates.length) {
+            const entry = candidates[cursor++]!;
+            let detail: RuntimeSessionDetail | undefined;
+            try {
+              detail = await view.detail({ runtime: entry.runtime, projectId: entry.projectId, sessionId: entry.session.id, limit: 30 });
+            } catch {
+              detail = undefined;
+            }
+            const hit = extractSearchHit(entry, detail, query);
+            if (hit) results.push(hit);
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(4, Math.max(1, candidates.length)) }, () => worker()));
+        results.sort((a, b) => b.updatedAt - a.updatedAt);
+        return { total: results.length, results: results.slice(0, limit) };
+      }
+      return this.uniflo.search(p.q.trim().slice(0, 300), limit);
     },
     "sessions.read": async (p, from) => {
       this.assistantOnly(from);
       if (typeof p.session !== "string" || !p.session) throw new RpcFailure("bad_request", "session is required");
+      if (!this.sources.includes("uniflo")) {
+        const target = parseRuntimeTarget(p.session);
+        if (!target) throw new RpcFailure("not_found", "这台电脑上没有这个会话");
+        const res = await this.runtimeDetailForTarget(from, target, p.limit ?? 40);
+        const s = res.detail.session;
+        const info: SessionInfo = {
+          key: res.sessionKey,
+          harness: target.runtime,
+          title: s.title,
+          cwd: res.detail.project.title,
+          status: s.state === "running" || s.state === "attention" ? "working" : "idle",
+          updatedAt: s.updatedAt ?? Date.now(),
+          agent: this.agents.find((a) => a.sessionKey === res.sessionKey)?.key,
+        };
+        return { session: info, events: res.events, more: false, nextBefore: null };
+      }
       let session: Awaited<ReturnType<UnifloAdapter["info"]>>;
       try {
         session = await this.uniflo.info(p.session);
@@ -1043,6 +1435,12 @@ export class Host {
     },
     "sessions.usage": async (p, from) => {
       this.assistantOnly(from);
+      if (!this.sources.includes("uniflo")) {
+        return {
+          rows: [],
+          total: { key: "total", label: "合计", sessions: 0, steps: 0, prompts: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, costUsd: 0 },
+        };
+      }
       const groupBy = p.groupBy && ["harness", "model", "cwd", "day", "session"].includes(p.groupBy) ? p.groupBy : "harness";
       return this.uniflo.usage(typeof p.since === "string" ? p.since.slice(0, 40) : undefined, groupBy);
     },

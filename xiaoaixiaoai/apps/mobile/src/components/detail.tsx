@@ -5,7 +5,7 @@ import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { PUT_LIMITS, type Agent, type TerminalStreamParams } from "@xiaoaixiaoai/protocol";
+import { PUT_LIMITS, RUNTIME_SESSION_TEXT_LIMIT, type Agent, type TerminalStreamParams } from "@xiaoaixiaoai/protocol";
 import { call, subscribe, type RelayError } from "../lib/relay";
 import { addPictures, canPickImages, pickImages, type Attachment } from "../lib/attach";
 import { onQueueEvent, sendOut } from "../lib/outbox";
@@ -19,6 +19,7 @@ import { harnessLook } from "../lib/harness";
 import { parseChoices, type Choice } from "../lib/choices";
 import { usePalette } from "../theme/theme";
 import { agentStatusLabel, fonts, radius, space, statusColors } from "../theme/tokens";
+import { RuntimeQuestionPrompt } from "./RuntimeQuestionPrompt";
 import { TermKeyboard } from "./TermKeyboard";
 import { EmptyState, IconTile, SendPill } from "./ui";
 
@@ -669,8 +670,19 @@ export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: 
   }
   const stopDirect = direct.stop;
   useEffect(() => stopDirect, [mode, stopDirect]);
-  const showKeys = mode === "terminal" || extra;
-  const showInput = mode === "chat" || (extra && boxOnly);
+  const isRuntime = agent.source === "runtime";
+  const online = useLive((s) => s.devices[agent.deviceId]?.online ?? false);
+  const sessionQuery = useQuery({
+    queryKey: ["session.events", agent.key, null],
+    queryFn: () => call(agent.deviceId, "session.events", { agent: agent.key, limit: 60 }),
+    enabled: isRuntime && online,
+    staleTime: 2000,
+  });
+  const effectiveCanSend = isRuntime ? (sessionQuery.data?.canSend ?? agent.canSend) !== false : true;
+  const effectiveReadOnlyReason = isRuntime ? (sessionQuery.data?.readOnlyReason ?? agent.readOnlyReason) : undefined;
+  const pendingQuestions = isRuntime ? (sessionQuery.data?.pendingQuestions ?? []) : [];
+  const showKeys = !isRuntime && (mode === "terminal" || extra);
+  const showInput = isRuntime ? effectiveCanSend : mode === "chat" || (extra && boxOnly);
   /** A key press or "让它继续" on its way (messages go out on their own, see lib/outbox). */
   const [sending, setSending] = useState(false);
   /** This phone's messages that wait in the agent's input box: their bubbles say "排队中" already. */
@@ -679,7 +691,6 @@ export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: 
   const [tuning, setTuning] = useState(false);
   const termKeys = useSettings((x) => x.termKeys);
   const keys = useMemo(() => visibleTermKeys(normalizeTermKeyLayout(termKeys)), [termKeys]);
-  const online = useLive((s) => s.devices[agent.deviceId]?.online ?? false);
   const coral = statusColors("blocked", p.dark).fg;
 
   useEffect(() => {
@@ -802,7 +813,17 @@ export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: 
           </Pressable>
         </View>
       ) : null}
-      {agent.status === "blocked" && online ? <WaitingCard agent={agent} busy={sending} onKey={(k) => press(k)} onRetry={retry} compact={mode === "terminal"} onOpenTerminal={onOpenTerminal} /> : null}
+      {!isRuntime && agent.status === "blocked" && online ? <WaitingCard agent={agent} busy={sending} onKey={(k) => press(k)} onRetry={retry} compact={mode === "terminal"} onOpenTerminal={onOpenTerminal} /> : null}
+      {isRuntime && pendingQuestions.length > 0 && online ? (
+        <RuntimeQuestionPrompt
+          agent={agent}
+          pendingQuestions={pendingQuestions}
+          canSend={effectiveCanSend}
+          online={online}
+          onAnswered={refreshSoon}
+          onToast={(msg) => setToast(msg)}
+        />
+      ) : null}
       {showKeys ? (
       <View style={{ flexDirection: "row", alignItems: "center" }}>
       <ScrollView horizontal style={{ flex: 1 }} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: space.sm, paddingLeft: space.lg, paddingRight: space.xs, paddingVertical: space.xs }} keyboardShouldPersistTaps="always">
@@ -919,6 +940,7 @@ export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: 
           placeholder={!online ? "这台电脑离线了" : mode === "chat" ? "回它一句…" : "输入到终端，发送时带回车"}
           placeholderTextColor={p.faint}
           editable={online}
+          maxLength={isRuntime ? RUNTIME_SESSION_TEXT_LIMIT : undefined}
           multiline={mode === "chat"}
           autoFocus={mode === "terminal"}
           autoCapitalize={mode === "terminal" ? "none" : undefined}
@@ -934,14 +956,18 @@ export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: 
         />
         {mode === "chat" ? (
           <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
-            <IconTile
-              icon={extra ? "keyboardDown" : "keyboard"}
-              size={42}
-              active={extra}
-              onPress={() => setExtra((v) => !v)}
-              a11y={extra ? "收起快捷按键" : "显示回车、Esc、方向键等快捷按键"}
-            />
-            <IconTile icon="image" size={42} disabled={!online || picking} onPress={attach} a11y="添加图片，和消息一起发给它" />
+            {!isRuntime ? (
+              <>
+                <IconTile
+                  icon={extra ? "keyboardDown" : "keyboard"}
+                  size={42}
+                  active={extra}
+                  onPress={() => setExtra((v) => !v)}
+                  a11y={extra ? "收起快捷按键" : "显示回车、Esc、方向键等快捷按键"}
+                />
+                <IconTile icon="image" size={42} disabled={!online || picking} onPress={attach} a11y="添加图片，和消息一起发给它" />
+              </>
+            ) : null}
             <View style={{ flex: 1 }} />
             <SendPill disabled={(!text.trim() && !pictures.length) || !online} onPress={send} />
           </View>
@@ -949,6 +975,25 @@ export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: 
           <SendPill disabled={!text.trim() || !online} onPress={send} />
         )}
       </View>
+      ) : null}
+      {isRuntime && !effectiveCanSend ? (
+        <View
+          style={{
+            marginHorizontal: space.lg,
+            marginTop: space.xs,
+            paddingHorizontal: space.md,
+            paddingVertical: 10,
+            borderRadius: radius.pill,
+            backgroundColor: p.surface2,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+          }}
+        >
+          <MaterialCommunityIcons name="eye-outline" size={16} color={p.muted} />
+          <Text style={{ color: p.muted, fontSize: 12.5 }}>{effectiveReadOnlyReason ?? "当前会话仅支持查看消息记录"}</Text>
+        </View>
       ) : null}
       <KeyLayoutDialog visible={tuning} onDismiss={() => setTuning(false)} />
       <Snackbar visible={!!toast} onDismiss={() => setToast(null)} duration={2500} wrapperStyle={{ bottom: 140 }}>
@@ -1002,7 +1047,7 @@ export function InfoView({ agent, bottomInset }: { agent: Agent; bottomInset: nu
         {row("花费", money(agent.costUsd), "cash")}
         {row("轮次", agent.turn ? `第 ${agent.turn} 轮` : null, "counter")}
         {row("会话", agent.sessionKey, "message-text-outline", true)}
-        {row("终端地址", `${agent.source}:${agent.localId}`, "console", true)}
+        {row(agent.source === "runtime" ? "来源" : "终端地址", `${agent.source}:${agent.localId}`, "console", true)}
       </View>
     </ScrollView>
   );

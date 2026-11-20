@@ -179,7 +179,11 @@ export default function AgentsHub() {
   }, []);
 
   const multiHost = hosts.length > 1 && !hostFilter;
-  const sessionHosts = useMemo(() => hosts.filter((h) => h.online && h.sources?.includes("runtime-sessions")), [hosts]);
+  const legacySessionHosts = useMemo(
+    () => hosts.filter((h) => h.online && h.sources?.includes("runtime-sessions") && !all.some((a) => a.deviceId === h.id && a.source === "runtime")),
+    [hosts, all],
+  );
+  const canCreateOnAnyHost = useMemo(() => hosts.some((h) => h.online && h.sources?.includes("hc")), [hosts]);
   const allDone = counts.blocked === 0 && counts.working === 0 && counts.done > 0;
   const headline = counts.blocked ? `有 ${counts.blocked} 个 agent 在等你` : counts.working ? `${counts.working} 个 agent 正在忙` : allDone ? "大家都忙完啦" : "大家都歇着呢";
   const hostName = hostFilter ? hosts.find((h) => h.id === hostFilter)?.name ?? "这台电脑" : null;
@@ -202,11 +206,11 @@ export default function AgentsHub() {
 
       <StatRow counts={counts} active={filter} onPick={setFilter} />
 
-      {sessionHosts.length > 0 ? (
+      {legacySessionHosts.length > 0 ? (
         <Card flat style={{ padding: space.md, gap: space.xs }}>
           <Text style={{ color: p.ink, fontFamily: fonts.bodyBold, fontSize: 13.5 }}>项目会话 · DSH / Codex / Antigravity</Text>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
-            {sessionHosts.map((h) => (
+            {legacySessionHosts.map((h) => (
               <Button key={h.id} mode="contained-tonal" compact icon="folder-open-outline" onPress={() => router.navigate({ pathname: "/devices", params: { openHost: h.id } })}>
                 {h.name}
               </Button>
@@ -240,7 +244,11 @@ export default function AgentsHub() {
     ) : hosts.length === 0 ? (
       <EmptyState mood="sleepy" title="还没有电脑加入" body="在电脑上运行 xiaoaixiaoai up，再到“设备”页点“扫一扫”扫它显示的二维码。" />
     ) : (
-      <EmptyState mood="sleepy" title={filter || q ? "这里空空的" : "还没有 agent"} body={filter || q ? "换个筛选条件试试。" : "点右下角的加号新建一个。"} />
+      <EmptyState
+        mood="sleepy"
+        title={filter || q ? "这里空空的" : "还没有 agent"}
+        body={filter || q ? "换个筛选条件试试。" : canCreateOnAnyHost ? "点右下角的加号新建一个。" : "连接的电脑上暂时没有活跃会话，在电脑上打开 DSH、Codex 或 Antigravity 后会自动出现在这里。"}
+      />
     );
 
   return (
@@ -275,36 +283,38 @@ export default function AgentsHub() {
         ListHeaderComponent={header}
         ListEmptyComponent={empty}
         stickySectionHeadersEnabled={false}
-        contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: FAB + space.lg * 2, paddingTop: space.sm }}
+        contentContainerStyle={{ paddingHorizontal: space.lg, paddingBottom: (canCreateOnAnyHost ? FAB : 0) + space.lg * 2, paddingTop: space.sm }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[p.primary]} />}
         keyboardShouldPersistTaps="handled"
       />
 
-      {/* New agent FAB (thumb zone, bottom right). */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="新建 agent 或空间"
-        onPress={() => setCreate({ host: hostFilter, spaceName: activeSpace })}
-        style={({ pressed }) => ({
-          position: "absolute",
-          right: space.lg,
-          bottom: space.lg,
-          width: FAB,
-          height: FAB,
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: FAB / 2,
-          backgroundColor: pressed ? p.primaryPressed : p.primary,
-          transform: [{ scale: pressed ? 0.94 : 1 }],
-          shadowColor: p.shadow,
-          shadowOpacity: p.dark ? 0 : 0.3,
-          shadowRadius: 10,
-          shadowOffset: { width: 0, height: 4 },
-          elevation: 4,
-        })}
-      >
-        <CuteIcon name="plus" size={28} color={p.onPrimary} strokeWidth={2.8} />
-      </Pressable>
+      {/* New agent FAB (thumb zone, bottom right; shown only when a connected host supports herdr create). */}
+      {canCreateOnAnyHost ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="新建 agent 或空间"
+          onPress={() => setCreate({ host: hostFilter, spaceName: activeSpace })}
+          style={({ pressed }) => ({
+            position: "absolute",
+            right: space.lg,
+            bottom: space.lg,
+            width: FAB,
+            height: FAB,
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: FAB / 2,
+            backgroundColor: pressed ? p.primaryPressed : p.primary,
+            transform: [{ scale: pressed ? 0.94 : 1 }],
+            shadowColor: p.shadow,
+            shadowOpacity: p.dark ? 0 : 0.3,
+            shadowRadius: 10,
+            shadowOffset: { width: 0, height: 4 },
+            elevation: 4,
+          })}
+        >
+          <CuteIcon name="plus" size={28} color={p.onPrimary} strokeWidth={2.8} />
+        </Pressable>
+      ) : null}
 
       <Sidebar
         s={sidebar}

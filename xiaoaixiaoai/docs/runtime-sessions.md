@@ -98,3 +98,18 @@ xiaoaixiaoai run --runtime-only --read-only --runtime-config /absolute/private/r
 
 - 手机端每隔 4 小时或在「设置 → 检查更新」手动检查最新版本（指向 `momokiana/notionapp` 发布产物）：优先请求已配对中转站的 `/v1/releases/SHA256SUMS` 与 `/v1/releases/<apk>`，不可用时回退到 GitHub Releases / 镜像站，并在下载后强制校验 APK 的 SHA-256 摘要再交由系统安装器安装。
 - 说明：`0.1.9` 版本中发布仓库默认关闭，因此需要手动安装一次 `0.2.0` APK 后，后续版本才可直接在应用内自动检测并一键下载更新。
+
+## 统一会话池与爱弥斯联动（0.2.2）
+
+- 如需将各电脑端共享的 DSH、Codex、Antigravity 会话统一发布到手机端首页 Agent 池并开放给中转站助理（爱弥斯）检索、读消息与下发任务，可在私有运行时配置中显式开启 `"publishAgents": true` 与 `"allowAssistant": true`，并在启动参数 `--allow` 中同时包含 `<approved-phone-id>,assistant`：
+
+```json
+{
+  "viewerId": "approved-phone-id",
+  "publishAgents": true,
+  "allowAssistant": true
+}
+```
+
+- **统一聊天与底栏发送**：DSH、Codex、Antigravity 会话在手机端首页统一按「需要你 / 工作中 / 已完成 / 空闲」状态和所属工程展示；点击任意会话即进入原生对话页（隐藏不适用的终端 PTY 标签），底部常驻输入框可直接向可写 DSH / Codex 会话发消息，遇到单选/多选问题时会在底栏上方呈现交互式答题卡片。
+- **爱弥斯跨端检索与安全边界**：爱弥斯可通过 `sessions.list`、`sessions.search`、`read_agent`（支持「反重力」「DSH」「Codex」等别名与关键词检索）统一查看三端会话并替可写会话传话或盯进度；Antigravity 会话继续强制保持只读（`canSend: false`），无论是手机底部栏还是爱弥斯下发均只查看不写入。

@@ -136,7 +136,16 @@ const WAKE_TOOLS = new Set(["read_agent"]);
 const WAKE_ROUNDS = 3;
 const WAKE_CONCURRENCY = 2;
 const TOUCH_WINDOW_MS = 10 * 60_000;
-const HARNESS_NAMES: Record<string, string> = { "claude-code": "Claude Code", claude: "Claude Code", codex: "Codex", omp: "omp", opencode: "OpenCode", gemini: "Gemini" };
+const HARNESS_NAMES: Record<string, string> = {
+  "claude-code": "Claude Code",
+  claude: "Claude Code",
+  codex: "Codex",
+  dsh: "DSH",
+  antigravity: "Antigravity（反重力）",
+  omp: "omp",
+  opencode: "OpenCode",
+  gemini: "Gemini",
+};
 const STATUS_ZH: Record<AgentStatus, string> = { blocked: "需要你", working: "工作中", done: "已完成", idle: "空闲", unknown: "未知" };
 
 export class Assistant {
@@ -576,7 +585,8 @@ export class Assistant {
     const where = [this.deviceName(a.deviceId), a.where].filter(Boolean).join(" / ");
     const folder = a.cwd ? a.cwd.split("/").filter(Boolean).pop() : "";
     const queued = a.queued ? ` | 输入框里排着 ${a.queued} 条没处理` : "";
-    return `${a.key} | ${this.handleOf(a)} | 「${titleOf(a)}」 | ${a.harness} | ${STATUS_ZH[a.status]}${since} | ${where}${folder ? ` | ${folder}` : ""}${queued}`;
+    const ro = a.canSend === false ? " | 只读" : "";
+    return `${a.key} | ${this.handleOf(a)} | 「${titleOf(a)}」 | ${a.harness} | ${STATUS_ZH[a.status]}${since} | ${where}${folder ? ` | ${folder}` : ""}${queued}${ro}`;
   }
 
   /**
@@ -798,7 +808,20 @@ export class Assistant {
         }
         const limit = Math.min(Math.max(Number(input.limit ?? 24) || 24, 4), 80);
         const r = await this.host.call(a.deviceId, "session.events", { agent: a.key, limit }, 15_000);
-        return { out: `${this.agentLine(a)}\n最近的对话：\n${tail(renderEvents(r.events), 6000)}`, step: `读了「${titleOf(a)}」的对话` };
+        const extra: string[] = [];
+        if (r.pendingQuestions?.length) {
+          extra.push("[待回答问题]");
+          for (const pq of r.pendingQuestions) {
+            for (const q of pq.questions) {
+              const opts = q.options?.map((o, idx) => `${idx + 1}. ${o.label}${o.description ? `（${o.description}）` : ""}`).join("；");
+              extra.push(`- ${q.question}${q.multiSelect ? "（可多选）" : ""}${opts ? `｜选项：${opts}` : ""}`);
+            }
+          }
+        }
+        if (r.canSend === false || a.canSend === false) {
+          extra.push(`[说明] ${r.readOnlyReason ?? a.readOnlyReason ?? "当前会话仅支持查看，不能直接发消息。"}`);
+        }
+        return { out: `${this.agentLine(a)}\n最近的对话：\n${tail(renderEvents(r.events), 6000)}${extra.length ? `\n${extra.join("\n")}` : ""}`, step: `读了「${titleOf(a)}」的对话` };
       }
       case "list_launchers": {
         // No computer named: every computer that is on, one block each ("能建哪些", "各台电脑上有什么 agent").
@@ -825,6 +848,7 @@ export class Assistant {
       }
       case "send_to_agent": {
         const a = this.resolveAgent(input.agent);
+        if (a.canSend === false) throw new Error(a.readOnlyReason ?? "这个会话当前只支持查看消息记录，不能从这里直接发消息。");
         const text = typeof input.text === "string" ? input.text.trim() : "";
         if (!text) throw new Error("要发送的内容是空的");
         // The person's own words stay beside the message made from them; the same words twice are just the message.

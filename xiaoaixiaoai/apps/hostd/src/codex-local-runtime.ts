@@ -141,7 +141,7 @@ function queryThreads(dbPath: string, limit: number): ThreadRow[] {
       SELECT id, rollout_path, cwd, title, name, first_user_message, archived, updated_at, updated_at_ms
       FROM threads
       WHERE (thread_source IS NULL OR thread_source = 'user')
-      ORDER BY COALESCE(updated_at_ms, updated_at * 1000) DESC
+      ORDER BY COALESCE(archived, 0) ASC, COALESCE(updated_at_ms, updated_at * 1000) DESC
       LIMIT ?
     `).all(limit) as unknown as ThreadRow[];
   } finally {
@@ -286,6 +286,10 @@ export class CodexLocalRuntime {
     this.codexHome = options.codexHome;
     this.codexBin = options.codexBin;
     this.enableSend = options.enableSend === true;
+  }
+
+  get sendEnabled(): boolean {
+    return this.enableSend;
   }
 
   private toEntry(row: ThreadRow): { project: DshDirectoryProject; session: RuntimeSession; archived: boolean } {

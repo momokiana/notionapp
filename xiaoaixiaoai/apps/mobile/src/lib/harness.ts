@@ -70,7 +70,7 @@ const LOOKS: Record<string, HarnessLook> = {
   commandcode: { label: "Command Code", ...GREY, glyph: "⌘", svg: G.commandcode },
   copilot: { label: "Copilot", ...GREY, glyph: "C", svg: G.copilot },
   devin: { label: "Devin", ...MINT, glyph: "D", svg: G.devin },
-  dsh: { label: "DeepSeek Harness", ...SKY, glyph: "D", svg: G.dsh },
+  dsh: { label: "DSH", ...SKY, glyph: "D", svg: G.dsh },
   grok: { label: "Grok", ...GREY, glyph: "G", svg: G.grok },
   kilo: { label: "Kilo Code", ...BUTTER, glyph: "K", svg: G.kilo },
   kiro: { label: "Kiro", ...LAVENDER, glyph: "K", svg: G.kiro },

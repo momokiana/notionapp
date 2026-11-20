@@ -31,6 +31,7 @@ const OFFLINE = () => new RuntimeError("offline", "本机连接器不可用，�
 const INVALID = () => new RuntimeError("bad_request", "会话或请求参数无效。");
 
 export interface RuntimeAdapter {
+  readonly sendEnabled?: boolean;
   list(): Promise<RuntimeProject[]>;
   send(input: RuntimeSessionSend): Promise<RuntimeSessionReceipt>;
   browse?(input: DshDirectoryRequest): Promise<DshDirectoryReply>;
@@ -38,6 +39,35 @@ export interface RuntimeAdapter {
   answer?(input: RuntimeSessionAnswer): Promise<RuntimeSessionReceipt>;
   taskEvents?(): Promise<RuntimeTaskEvent[]> | RuntimeTaskEvent[];
   close?(): void;
+}
+
+export interface UnifiedRuntimeEntry {
+  runtime: SessionRuntime;
+  projectId: string;
+  projectTitle: string;
+  session: RuntimeSession;
+  sendConfigured: boolean;
+}
+
+/** Encode a runtime target into an unambiguous `Agent.localId` (`~` is excluded from `isRuntimeId`). */
+export function encodeRuntimeLocalId(runtime: SessionRuntime, projectId: string, sessionId: string): string {
+  return `${runtime}~${projectId}~${sessionId}`;
+}
+
+/** Encode a runtime target into an unambiguous `Agent.sessionKey` / `SessionInfo.key`. */
+export function encodeRuntimeSessionKey(runtime: SessionRuntime, projectId: string, sessionId: string): string {
+  return `runtime~${runtime}~${projectId}~${sessionId}`;
+}
+
+/** Parse either `localId` (`<runtime>~<projectId>~<sessionId>`) or `sessionKey` (`runtime~...`). */
+export function parseRuntimeTarget(value: string): { runtime: SessionRuntime; projectId: string; sessionId: string } | null {
+  if (typeof value !== "string" || !value) return null;
+  const raw = value.startsWith("runtime~") ? value.slice("runtime~".length) : value;
+  const parts = raw.split("~");
+  if (parts.length !== 3) return null;
+  const runtime = runtimeOf(parts[0]);
+  if (!runtime || !isRuntimeId(parts[1]) || !isRuntimeId(parts[2])) return null;
+  return { runtime, projectId: parts[1], sessionId: parts[2] };
 }
 
 function row(value: unknown): Record<string, unknown> | undefined {
@@ -166,12 +196,13 @@ function directoryReply(value: unknown, input: DshDirectoryRequest): DshDirector
     const project = named(item?.project, "未命名项目");
     const s = row(item?.session);
     const sessionName = named(s, "未命名会话");
+    const entryRuntime = runtimeOf(item?.runtime) ?? project.runtime ?? replyRuntime;
+    const isDsh = entryRuntime === undefined || entryRuntime === "dsh";
     if (!s || typeof s.state !== "string" || !states.has(s.state) || typeof item?.archived !== "boolean" ||
-        seen.has(sessionName.id) || (item.archived !== (project.id === DSH_ARCHIVE)) ||
+        seen.has(sessionName.id) || (isDsh ? item.archived !== (project.id === DSH_ARCHIVE) : project.id === DSH_ARCHIVE) ||
         (scope === "selected" && (item.archived || project.id === DSH_UNFILED))) throw OFFLINE();
     seen.add(sessionName.id);
     const state = item.archived ? "inactive" : s.state as RuntimeSession["state"];
-    const entryRuntime = runtimeOf(item.runtime) ?? project.runtime ?? replyRuntime;
     const canSend = !item.archived && s.canSend === true && entryRuntime !== "antigravity" && (
       state === "idle" || state === "running" || state === "attention" || (scope === "profile" && entryRuntime !== "codex" && state === "inactive")
     );
@@ -249,7 +280,8 @@ class DshRuntime implements RuntimeAdapter {
   async browse(input: DshDirectoryRequest): Promise<DshDirectoryReply> {
     if (this.activeReads >= 3) throw new RuntimeError("offline", "DSH 目录正忙，请稍后刷新。");
     this.activeReads++;
-    try { return directoryReply(await this.exchange("/v2/browse", JSON.stringify(input)), input); }
+    const { runtime: _ignoredRuntime, ...wireInput } = input;
+    try { return directoryReply(await this.exchange("/v2/browse", JSON.stringify(wireInput)), input); }
     finally { this.activeReads--; }
   }
 
@@ -414,11 +446,86 @@ export class RuntimeSessions {
   private ledger: DispatchLedger;
   private sent = 0;
   readonly viewerId: string;
+  readonly publishAgents: boolean;
+  readonly allowAssistant: boolean;
   private readonly adapters: Partial<Record<SessionRuntime, RuntimeAdapter>>;
-  constructor(viewerId: string, adapters: Partial<Record<SessionRuntime, RuntimeAdapter>>, ledgerDir: string) {
+  constructor(
+    viewerId: string,
+    adapters: Partial<Record<SessionRuntime, RuntimeAdapter>>,
+    ledgerDir: string,
+    options: { publishAgents?: boolean; allowAssistant?: boolean } = {},
+  ) {
     this.viewerId = viewerId;
     this.adapters = { ...adapters };
     this.ledger = new DispatchLedger(ledgerDir);
+    this.publishAgents = options.publishAgents === true;
+    this.allowAssistant = options.allowAssistant === true;
+  }
+
+  /** Collect non-archived sessions across configured runtimes, prioritized by live state and recency. */
+  async unifiedEntries(): Promise<UnifiedRuntimeEntry[]> {
+    const rankState: Record<RuntimeSession["state"], number> = {
+      attention: 0,
+      running: 1,
+      idle: 2,
+      unknown: 3,
+      inactive: 4,
+    };
+    const perRuntime = await Promise.all(
+      RUNTIMES.map(async (runtime): Promise<UnifiedRuntimeEntry[]> => {
+        const adapter = this.adapters[runtime];
+        if (!adapter) return [];
+        const collected: UnifiedRuntimeEntry[] = [];
+        try {
+          if (typeof adapter.browse === "function") {
+            let after: string | undefined;
+            for (let pageIndex = 0; pageIndex < 6; pageIndex++) {
+              const page = await this.browse({ runtime, view: "sessions", ...(after ? { after } : {}) });
+              if (page.view !== "sessions") break;
+              for (const entry of page.entries) {
+                if (entry.archived || entry.project.id === DSH_ARCHIVE) continue;
+                const s = entry.session;
+                const sendConfigured =
+                  runtime !== "antigravity" &&
+                  (s.canSend || (runtime === "codex" && adapter.sendEnabled === true && (s.state === "running" || s.state === "attention")));
+                collected.push({
+                  runtime,
+                  projectId: entry.project.id,
+                  projectTitle: entry.project.title,
+                  session: s,
+                  sendConfigured,
+                });
+              }
+              if (!page.next) break;
+              after = page.next;
+            }
+          } else {
+            const list = projects(runtime, await adapter.list());
+            for (const project of list) {
+              for (const s of project.sessions) {
+                const sendConfigured =
+                  runtime !== "antigravity" &&
+                  (s.canSend || (runtime === "codex" && adapter.sendEnabled === true && (s.state === "running" || s.state === "attention")));
+                collected.push({
+                  runtime,
+                  projectId: project.id,
+                  projectTitle: project.title,
+                  session: s,
+                  sendConfigured,
+                });
+              }
+            }
+          }
+        } catch {
+          return [];
+        }
+        collected.sort((a, b) =>
+          (rankState[a.session.state] - rankState[b.session.state]) ||
+          ((b.session.updatedAt ?? 0) - (a.session.updatedAt ?? 0)));
+        return collected.slice(0, 80);
+      }),
+    );
+    return perRuntime.flat();
   }
   list(): Promise<RuntimeCatalog> {
     if (this.loading) return this.loading;
@@ -564,8 +671,10 @@ export class RuntimeSessions {
 export function loadRuntimeSessions(path: string | undefined): RuntimeSessions | undefined {
   if (path === undefined) return undefined;
   try {
-    const cfg = exact(readPrivate(path, MAX_CONFIG), ["viewerId", "dsh", "codex", "codexLocal", "antigravity"]);
+    const cfg = exact(readPrivate(path, MAX_CONFIG), ["viewerId", "dsh", "codex", "codexLocal", "antigravity", "publishAgents", "allowAssistant"]);
     if (!isRuntimeId(cfg.viewerId)) throw INVALID();
+    if (cfg.publishAgents !== undefined && typeof cfg.publishAgents !== "boolean") throw INVALID();
+    if (cfg.allowAssistant !== undefined && typeof cfg.allowAssistant !== "boolean") throw INVALID();
     if (cfg.codex !== undefined && cfg.codexLocal !== undefined) throw INVALID();
     const adapters: Partial<Record<SessionRuntime, RuntimeAdapter>> = {};
     if (cfg.dsh !== undefined) {
@@ -598,7 +707,10 @@ export function loadRuntimeSessions(path: string | undefined): RuntimeSessions |
       adapters.antigravity = new AntigravityRuntime({ brainDir: a.brainDir });
     }
     if (!Object.keys(adapters).length) throw INVALID();
-    return new RuntimeSessions(cfg.viewerId, adapters, join(dirname(path), "runtime-dispatch"));
+    return new RuntimeSessions(cfg.viewerId, adapters, join(dirname(path), "runtime-dispatch"), {
+      publishAgents: cfg.publishAgents === true,
+      allowAssistant: cfg.allowAssistant === true,
+    });
   } catch {
     throw new RuntimeError("bad_request", "电脑端会话连接配置无效：请检查专用目录权限、允许的手机及连接器设置。");
   }

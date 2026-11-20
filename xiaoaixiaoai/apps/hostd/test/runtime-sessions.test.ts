@@ -6,7 +6,8 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { RuntimeProject } from "@xiaoaixiaoai/protocol";
-import { loadRuntimeSessions, RuntimeError, RuntimeSessions, type RuntimeAdapter } from "../src/runtime-sessions.ts";
+import { encodeRuntimeLocalId, encodeRuntimeSessionKey, loadRuntimeSessions, parseRuntimeTarget, RuntimeError, RuntimeSessions, type RuntimeAdapter } from "../src/runtime-sessions.ts";
+import { extractSearchHit, matchQuestionAnswer, nextRuntimeState, parseRuntimeSearchQuery, RuntimeEventSeqTracker } from "../src/runtime-bridge.ts";
 
 const title = "同名项目";
 const demo: RuntimeProject[] = [{ runtime: "dsh", id: "dsh-project", title, sessions: [{ id: "session-one", title: "测试会话", state: "idle", canSend: true }] }];
@@ -165,4 +166,51 @@ test("RuntimeSessions routes detail, idempotent answer, Antigravity read-only fe
   assert.equal(agDetail.pendingQuestions[0]!.state, "readonly");
   await assert.rejects(rs.send({ runtime: "antigravity", projectId: "ag-p1", sessionId: "ag-s1", requestId: randomUUID(), input: "nope" }), has("forbidden"));
   await assert.rejects(rs.answer({ runtime: "antigravity", projectId: "ag-p1", sessionId: "ag-s1", requestId: randomUUID(), callId: "ag-call-1", answers: [{ id: "q1", selected: ["x"] }] }), has("forbidden"));
+});
+
+test("runtime bridge helpers encode targets, convert events cleanly, and parse assistant search queries", async (t) => {
+  const dir = folder(); t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const localId = encodeRuntimeLocalId("antigravity", "ag:proj", "conv-1");
+  const sessionKey = encodeRuntimeSessionKey("antigravity", "ag:proj", "conv-1");
+  assert.deepEqual(parseRuntimeTarget(localId), { runtime: "antigravity", projectId: "ag:proj", sessionId: "conv-1" });
+  assert.deepEqual(parseRuntimeTarget(sessionKey), { runtime: "antigravity", projectId: "ag:proj", sessionId: "conv-1" });
+  assert.equal(parseRuntimeTarget("bad"), null);
+
+  let s = nextRuntimeState(undefined, "running", 1000);
+  assert.equal(s.status, "working");
+  assert.equal(s.turn, 1);
+  s = nextRuntimeState(s, "idle", 2000);
+  assert.equal(s.status, "done");
+  assert.equal(s.turn, 1);
+
+  const tracker = new RuntimeEventSeqTracker();
+  const detail = {
+    runtime: "dsh" as const,
+    project: { id: "p1", title: "gamesuperagent" },
+    session: { id: "s1", title: "测试", state: "idle" as const, canSend: true, updatedAt: 5000 },
+    messages: [
+      { id: "m1", role: "user" as const, text: "hi" },
+      { id: "m2", role: "tool" as const, text: "ok", toolName: "bash" },
+      { id: "m3", role: "assistant" as const, text: "完成" },
+    ],
+    pendingQuestions: [],
+  };
+  const events = tracker.toConvEvents(sessionKey, detail, 5000);
+  assert.equal(events.length, 4);
+  assert.deepEqual(events.map((e) => e.pos), ["1", "2", "3", "4"]);
+
+  assert.deepEqual(matchQuestionAnswer({ id: "q1", question: "选哪个", options: [{ label: "方案A" }, { label: "方案B" }] }, "2"), { id: "q1", selected: ["方案B"] });
+  assert.deepEqual(matchQuestionAnswer({ id: "q1", question: "选哪个", options: [{ label: "方案A" }] }, "补充说明"), { id: "q1", selected: [], custom: "补充说明" });
+
+  const q = parseRuntimeSearchQuery("反重力 gamesuperagent");
+  assert.deepEqual(q.terms, ["antigravity", "gamesuperagent"]);
+  const hit = extractSearchHit({ runtime: "antigravity", projectId: "ag-1", projectTitle: "gamesuperagent", session: { id: "c1", title: "计划", state: "idle", canSend: false, updatedAt: 9000 }, sendConfigured: false }, undefined, q);
+  assert.ok(hit);
+  assert.equal(extractSearchHit({ runtime: "codex", projectId: "cx-1", projectTitle: "gamesuperagent", session: { id: "c2", title: "计划", state: "idle", canSend: true, updatedAt: 9000 }, sendConfigured: true }, undefined, q), null);
+
+  const cfgPath = join(dir, "runtime.json");
+  writeFileSync(cfgPath, JSON.stringify({ viewerId: "v1", antigravity: { brainDir: dir }, publishAgents: true, allowAssistant: true }), { mode: 0o600 });
+  const loaded = loadRuntimeSessions(cfgPath)!;
+  assert.equal(loaded.publishAgents, true);
+  assert.equal(loaded.allowAssistant, true);
 });

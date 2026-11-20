@@ -33,6 +33,8 @@ const ALIASES: Array<[RegExp, string]> = [
   [/基洛|kilo\s*code/gi, "kilo"],
   [/赫尔墨斯|爱马仕/gi, "hermes"],
   [/优尼弗洛|尤尼弗洛/gi, "uniflo"],
+  [/反重力|安提格拉维蒂|anti\s*gravity/gi, "antigravity"],
+  [/深度求索|deep\s*seek\s*harness|deep\s*seek/gi, "dsh"],
 ];
 
 /** Words around a name that say nothing about which one. Longest first. */
@@ -57,6 +59,8 @@ const HARNESS_WORDS: Record<string, string[]> = {
   hermes: ["hermes"],
   pi: ["pi"],
   kilo: ["kilo"],
+  antigravity: ["antigravity", "agy"],
+  dsh: ["dsh", "deepseek", "deepseekharness"],
 };
 
 function bigrams(s: string): string[] {

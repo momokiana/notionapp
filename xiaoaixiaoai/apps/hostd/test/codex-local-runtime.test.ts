@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { CodexLocalRuntime } from "../src/codex-local-runtime.ts";
-import { RuntimeError } from "../src/runtime-sessions.ts";
+import { RuntimeError, RuntimeSessions } from "../src/runtime-sessions.ts";
 
 function setupCodexFixture(t: TestContext) {
   const dir = mkdtempSync(join(tmpdir(), "xa-codex-local-"));
@@ -151,6 +151,14 @@ test("CodexLocalRuntime lists, browses, and extracts bounded tail detail without
   assert.match(detail.messages[0]!.text, /\[图片\]/);
   assert.equal(detail.messages[1]!.role, "assistant");
   assert.equal(detail.messages[1]!.text, "已完成发布脚本检查。");
+
+  // RuntimeSessions browse & unifiedEntries handle archived Codex threads keeping their workspace project ID.
+  const rs = new RuntimeSessions("viewer", { codex: rt }, join(fx.dir, "dispatch"), { publishAgents: true });
+  const browsedSessions = await rs.browse({ runtime: "codex", view: "sessions" });
+  assert.equal(browsedSessions.view, "sessions");
+  assert.equal(browsedSessions.entries.length, 3);
+  const unified = await rs.unifiedEntries();
+  assert.deepEqual(unified.map((u) => u.session.id).sort(), ["thread-codex-idle-1", "thread-codex-run-2"]);
 });
 
 test("CodexLocalRuntime dispatches turn via app-server and records background completion events", async (t) => {

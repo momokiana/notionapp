@@ -45,7 +45,7 @@ export interface Device {
 // ---------------------------------------------------------------------------
 
 /** Where the agent lives on its host. */
-export type AgentSource = "hc" | "herdr" | "uniflo";
+export type AgentSource = "hc" | "herdr" | "uniflo" | "runtime";
 /** Metadata and operations for explicitly shared runtime sessions, not terminal Agents. */
 export type HostSource = AgentSource | "runtime-sessions" | "dsh-directory" | "runtime-detail";
 
@@ -101,6 +101,10 @@ export interface Agent {
   isShell: boolean;
   /** Matching Uniflo session key, when found (enables the chat view). */
   sessionKey?: string;
+  /** False when this session is view-only (e.g. Antigravity or read-only host). */
+  canSend?: boolean;
+  /** Human-readable reason shown in place of the input box when `canSend === false`. */
+  readOnlyReason?: string;
   model?: string;
   /** First human prompt of the matched session. */
   preview?: string;
@@ -288,7 +292,7 @@ export function parseAgentKey(key: string): { deviceId: string; source: AgentSou
   const colon = rest.indexOf(":");
   if (colon <= 0) return null;
   const source = rest.slice(0, colon) as AgentSource;
-  if (source !== "hc" && source !== "herdr" && source !== "uniflo") return null;
+  if (source !== "hc" && source !== "herdr" && source !== "uniflo" && source !== "runtime") return null;
   return { deviceId: key.slice(0, slash), source, localId: rest.slice(colon + 1) };
 }
 
@@ -560,7 +564,15 @@ export interface RpcMethods {
     /** `sub`: read a subagent session of this agent instead (from `session.children`). */
     params: { agent: string; sub?: string; limit?: number; before?: string };
     /** `nextBefore`: pass as `before` to load the previous page (null when none). */
-    result: { sessionKey: string | null; events: ConvEvent[]; more: boolean; nextBefore?: string | null };
+    result: {
+      sessionKey: string | null;
+      events: ConvEvent[];
+      more: boolean;
+      nextBefore?: string | null;
+      pendingQuestions?: RuntimePendingQuestion[];
+      canSend?: boolean;
+      readOnlyReason?: string;
+    };
   };
   /** Subagent sessions under the agent's session (or under `sub`), newest first. */
   "session.children": { params: { agent: string; sub?: string }; result: { sessions: SubSession[] } };
