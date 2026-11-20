@@ -912,3 +912,115 @@ test("OpenAI Realtime receives the same optional style and fixed boundary on its
     await new Promise<void>((resolve) => rt.close(() => resolve()));
   }
 });
+
+test("smart filtering suppresses noisy runtime stops, exhausted tool loops get a tool-free decision turn, and repeat fallback stops cool down", async () => {
+  assert.match(systemPrompt("爱弥斯", "woken", ""), /默认回「不用说」/);
+  assert.doesNotMatch(systemPrompt("爱弥斯", "woken", ""), /拿不准该不该说，就说/);
+
+  const { host, publish } = await fakeHost("Win Filter", (method) =>
+    method === "session.events"
+      ? {
+          sessionKey: "ag:r1",
+          more: false,
+          events: [
+            { id: "1", session: "ag:r1", ts: 1, kind: "user_message", text: "帮我看一下这个问题" },
+            { id: "2", session: "ag:r1", ts: 2, kind: "assistant_message", text: "看完了，可以继续。" },
+          ],
+        }
+      : undefined,
+  );
+  const phone = await pair("viewer", "Oppo Filter");
+  const p = await Sock.open("/v1/ws", phone.token);
+  await p.next((f) => f.type === "snapshot");
+  const push = await Sock.open("/v1/notify", phone.token);
+  await push.next((f) => f.type === "hello");
+  const quiet = async () => {
+    await sleep(160);
+    assert.equal(push.frames.filter((f) => f.type === "notice").length, 0, JSON.stringify(push.frames));
+  };
+
+  let looks = 0;
+  wake = () => {
+    looks++;
+    return text("成了\n看完了。");
+  };
+
+  // Unwatched desktop runtime turn < 3 min does not even wake the assistant.
+  publish([agent("r1", "working", "Checking", { source: "runtime", ...ran(70_000) })]);
+  await sleep(20);
+  publish([agent("r1", "done", "Checking", { source: "runtime" })]);
+  await quiet();
+  assert.equal(looks, 0);
+
+  // Even a long unwatched runtime turn whose wake throws does not spam a blind "Checking停了。" fallback.
+  wake = () => {
+    looks++;
+    throw new Error("wake offline");
+  };
+  publish([agent("r2", "working", "Game-SuperAgent", { source: "runtime", ...ran(10 * 60_000) })]);
+  await sleep(20);
+  publish([agent("r2", "done", "Game-SuperAgent", { source: "runtime" })]);
+  await quiet();
+  assert.equal(looks, 1);
+
+  // When wake exhausts its read_agent rounds, run() does one tool-free turn (respecting "不用说").
+  let toolFreeCalls = 0;
+  wake = (req) => {
+    looks++;
+    if (req.tools.length) return call("read_agent", { agent: `${host.device.id}/hc:t-loop` });
+    toolFreeCalls++;
+    return text("不用说");
+  };
+  publish([agent("t-loop", "working", "循环查看", ran(10 * 60_000))]);
+  await sleep(20);
+  publish([agent("t-loop", "done", "循环查看")]);
+  await quiet();
+  assert.equal(toolFreeCalls, 1);
+
+  // Repeated fallback stops on the same long terminal agent are cooled down after the first notice.
+  wake = () => {
+    throw new Error("still down");
+  };
+  publish([agent("t-cool", "working", "久跑失败", ran(10 * 60_000))]);
+  await sleep(20);
+  publish([agent("t-cool", "done", "久跑失败")]);
+  const firstFallback = await push.next((f) => f.type === "notice");
+  assert.equal(firstFallback.notice.body, "久跑失败停了。");
+  publish([agent("t-cool", "working", "久跑失败", ran(10 * 60_000))]);
+  await sleep(20);
+  publish([agent("t-cool", "done", "久跑失败")]);
+  await quiet();
+  void host;
+});
+
+test("idle or done parent with working subagents is listed as working and emits finish notice once subagents complete", async () => {
+  const { publish } = await fakeHost("SubHost");
+  const phone = await pair("viewer", "SubPhone");
+  const p = await Sock.open("/v1/ws", phone.token);
+  await p.next((f) => f.type === "snapshot");
+  const push = await Sock.open("/v1/notify", phone.token);
+  await push.next((f) => f.type === "hello");
+
+  const long = ran(10 * 60_000);
+  publish([agent("sub-p1", "idle", "后台子任务汇总", { ...long, subagents: 2, subagentsWorking: 2 })]);
+  await sleep(40);
+
+  let workingToolOutput = "";
+  script = (req) => {
+    const res = toolResults(req);
+    if (!res.length) return call("list_agents", { status: "working" });
+    workingToolOutput = res[0]!;
+    return text("还在跑。");
+  };
+  await api("/v1/assistant/messages", { token: phone.token, body: { text: "谁在忙" } });
+  await p.next((f) => f.type === "assistant_busy" && f.busy === false);
+  assert.match(workingToolOutput, /后台子任务汇总/);
+  assert.match(workingToolOutput, /子 agent 工作中（2 个在忙）/);
+  await sleep(160);
+  assert.equal(push.frames.filter((f) => f.type === "notice").length, 0);
+
+  wake = () => text("成了\n子任务也都结束了。");
+  publish([agent("sub-p1", "done", "后台子任务汇总", { subagents: 2, subagentsWorking: 0 })]);
+  const finished = await push.next((f) => f.type === "notice");
+  assert.equal(finished.notice.body, "子任务也都结束了。");
+});

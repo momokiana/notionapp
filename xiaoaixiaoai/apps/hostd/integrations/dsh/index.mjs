@@ -223,18 +223,49 @@ function sessionHasPendingQuestion(ctx, foreground, sessionId, agent) {
   return active.some((q) => typeof q?.callId === "string" && !queued.has(q.callId));
 }
 
-function sessionRow(ctx, foreground, config, agents, roots, projectId, id, row, archived) {
+function summarizeSubagents(rows, agents) {
+  const subs = new Map();
+  const counts = new Map();
+  for (const r of rows.values()) {
+    if (isId(r?.sessionId) && typeof r.origin === "string" && isId(r.parentSessionId) && r.parentSessionId !== r.sessionId) {
+      subs.set(r.sessionId, r);
+    }
+  }
+  for (const [id, r] of subs) {
+    const pid = r.parentSessionId;
+    const direct = counts.get(pid) ?? { total: 0, working: 0 };
+    direct.total++;
+    counts.set(pid, direct);
+    const liveAgent = agents.get(id);
+    if (r.running === true || liveAgent?.status === "running") {
+      let cur = pid;
+      const seen = new Set([id]);
+      for (let depth = 0; cur && depth < 12 && !seen.has(cur); depth++) {
+        seen.add(cur);
+        const entry = counts.get(cur) ?? { total: 0, working: 0 };
+        entry.working++;
+        counts.set(cur, entry);
+        cur = subs.get(cur)?.parentSessionId;
+      }
+    }
+  }
+  return counts;
+}
+
+function sessionRow(ctx, foreground, config, agents, roots, projectId, id, row, archived, subCounts) {
   if (!ordinary(row)) return undefined;
   const agent = agents.get(id);
   if (agent !== undefined && !isTopLevel(agent, id, roots)) return undefined;
   const available = live(row, agent);
   const resumable = config.resumeExisting && agent === undefined && cold(row);
   const waitingQuestion = !archived && row.formatStatus !== "migration-required" && sessionHasPendingQuestion(ctx, foreground, id, agent);
+  const subs = subCounts?.get(id);
   return {
     id, title: title(row.projections?.values?.title, `会话 ${id}`),
     state: archived ? "inactive" : row.formatStatus === "migration-required" ? "attention" : waitingQuestion ? "attention" : available ? agent.status :
       agent === undefined ? "inactive" : "unknown",
     canSend: !archived && (available || resumable) && config.canWrite(projectId, id),
+    ...(subs && subs.working > 0 ? { subagents: subs.total, subagentsWorking: subs.working } : {}),
   };
 }
 
@@ -246,6 +277,7 @@ async function catalog(ctx, foreground, config, signal) {
   const archived = new Set(archivedIds(registry));
   const agents = ctx.agents;
   const roots = rootAgents(agents);
+  const subCounts = summarizeSubagents(rows, agents);
   const projects = [];
   let remaining = SESSION_LIMIT;
   for (const id of config.workspaceIds) {
@@ -257,7 +289,7 @@ async function catalog(ctx, foreground, config, signal) {
       if (remaining === 0) break;
       if (seen.has(sessionId) || archived.has(sessionId)) continue;
       seen.add(sessionId);
-      const session = sessionRow(ctx, foreground, config, agents, roots, id, sessionId, rows.get(sessionId), false);
+      const session = sessionRow(ctx, foreground, config, agents, roots, id, sessionId, rows.get(sessionId), false, subCounts);
       if (!session) continue;
       sessions.push(session);
       remaining--;
@@ -322,6 +354,7 @@ async function browse(ctx, foreground, config, request, signal) {
   const archived = new Set(archivedIds(registry));
   const agents = ctx.agents;
   const roots = rootAgents(agents);
+  const subCounts = summarizeSubagents(rows, agents);
   const owners = new Map();
   for (const [id, w] of workspaces) for (const sessionId of w.sessionIds) {
     if (!rows.has(sessionId)) continue;
@@ -340,7 +373,7 @@ async function browse(ctx, foreground, config, request, signal) {
     if (!config.all && (fromArchive || !owner)) continue;
     const project = fromArchive ? groups.get(ARCHIVE) : owner ? workspaces.get(owner.id).project : groups.get(UNFILED);
     if (input.projectId !== undefined && input.projectId !== project.id) continue;
-    const session = sessionRow(ctx, foreground, config, agents, roots, project.id, id, rows.get(id), fromArchive);
+    const session = sessionRow(ctx, foreground, config, agents, roots, project.id, id, rows.get(id), fromArchive, subCounts);
     if (!session || (needle && ![project.title, project.id, session.title, session.id].some((str) => searchKey(str).includes(needle)))) continue;
     if (owner?.ambiguous) session.canSend = false;
     entries.set(id, { project, session, archived: fromArchive });

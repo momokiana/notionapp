@@ -386,6 +386,8 @@ export interface RuntimeSession {
   state: RuntimeSessionState;
   canSend: boolean;
   updatedAt?: number;
+  subagents?: number;
+  subagentsWorking?: number;
 }
 
 export interface RuntimeProject {
@@ -1034,6 +1036,9 @@ export type ServerFrame =
   | { type: "assistant_busy"; busy: boolean; label?: string }
   /** The thread was cleared or reminders changed: refetch GET /v1/assistant. */
   | { type: "assistant_reset" }
+  | { type: "assistant_profile"; profile: AssistantPersonaConfig }
+  | { type: "assistant_memories" }
+  | { type: "ledger_updated" }
   /** Normal-chat local TTS stream for an assistant or notice item. */
   | {
       type: "assistant_speech";
@@ -1379,6 +1384,16 @@ export function normalizeStatus(raw: string | null | undefined): AgentStatus {
   }
 }
 
+/**
+ * Effective session status across a main agent and its spawned subagents:
+ * paused/done parents with running subagents stay `"working"` unless blocked.
+ */
+export function effectiveAgentStatus(a: { status: AgentStatus; subagentsWorking?: number }): AgentStatus {
+  if (a.status === "blocked") return "blocked";
+  if ((a.subagentsWorking ?? 0) > 0) return "working";
+  return a.status;
+}
+
 /** Sort weight: what needs a human first. */
 export const STATUS_ORDER: Record<AgentStatus, number> = {
   blocked: 0,
@@ -1387,3 +1402,351 @@ export const STATUS_ORDER: Record<AgentStatus, number> = {
   idle: 3,
   unknown: 4,
 };
+
+export type LedgerTxDirection = "expense" | "income";
+export type LedgerTxSource = "wechat_notify" | "assistant" | "manual";
+
+export interface LedgerFixedExpense {
+  id: string;
+  name: string;
+  /** Positive integer cents (分). */
+  amountCents: number;
+  /** Month (`YYYY-MM`) marked as paid this month, or null/undefined if still unpaid. */
+  paidYm?: string | null;
+  createdAt: number;
+}
+
+export interface LedgerTransaction {
+  id: string;
+  ts: number;
+  ym: string;
+  ymd: string;
+  direction: LedgerTxDirection;
+  amountCents: number;
+  title: string;
+  note?: string;
+  source: LedgerTxSource;
+  /** Idempotency key for WeChat notification captures. */
+  externalId?: string;
+  /** Linked monthly fixed expense id when this spend fulfills a pre-reserved fixed item. */
+  fixedId?: string;
+}
+
+export interface LedgerConfig {
+  enabled: boolean;
+  /** Estimated current WeChat wallet balance in cents; null until calibrated once. */
+  balanceCents: number | null;
+  /** Target minimum balance to keep by month-end (月底至少保留/想省出的钱), in cents. */
+  savingsGoalCents: number;
+  balanceUpdatedAt: number | null;
+}
+
+export interface LedgerDateParts {
+  ym: string;
+  ymd: string;
+  day: number;
+  daysInMonth: number;
+}
+
+export interface LedgerPlan {
+  ym: string;
+  ymd: string;
+  daysInMonth: number;
+  daysLeftInclusive: number;
+  daysLeftAfterToday: number;
+  balanceCents: number | null;
+  savingsGoalCents: number;
+  unpaidFixedCents: number;
+  paidFixedCents: number;
+  monthIncomeCents: number;
+  monthExpenseCents: number;
+  todayExpenseCents: number;
+  todayDiscretionaryExpenseCents: number;
+  spendableNowCents: number | null;
+  todayLimitCents: number | null;
+  todayRemainingCents: number | null;
+  nextDailyLimitCents: number | null;
+  overspentTodayCents: number;
+}
+
+export interface LedgerAlertSummary {
+  title: string;
+  body: string;
+  overspent: boolean;
+}
+
+export interface LedgerState {
+  config: LedgerConfig;
+  fixedExpenses: LedgerFixedExpense[];
+  plan: LedgerPlan;
+  recentTransactions: LedgerTransaction[];
+}
+
+export function daysInYearMonth(year: number, month1Based: number): number {
+  return new Date(Date.UTC(year, month1Based, 0)).getUTCDate();
+}
+
+export function formatYuan(cents: number): string {
+  const neg = cents < 0 ? "-" : "";
+  const abs = Math.abs(Math.trunc(cents));
+  const whole = Math.floor(abs / 100);
+  const rem = abs % 100;
+  return rem === 0 ? `${neg}${whole}` : `${neg}${whole}.${String(rem).padStart(2, "0")}`;
+}
+
+/** Exact integer cents parser without floating-point rounding drift. */
+export function parseYuanToCents(raw: string | number | null | undefined): number | null {
+  if (raw === null || raw === undefined) return null;
+  const s = String(raw).trim().replace(/[¥￥,\s元块]/g, "");
+  if (!s) return null;
+  const m = /^(-)?(\d+)(?:\.(\d{1,}))?$/.exec(s);
+  if (!m) return null;
+  const neg = m[1] === "-";
+  const whole = Number.parseInt(m[2]!, 10);
+  const fracRaw = (m[3] ?? "").slice(0, 2).padEnd(2, "0");
+  const frac = Number.parseInt(fracRaw || "0", 10);
+  if (!Number.isFinite(whole) || !Number.isFinite(frac) || whole > 10_000_000) return null;
+  const total = whole * 100 + frac;
+  return neg ? -total : total;
+}
+
+/**
+ * Calculates remaining monthly spendable budget, today's allowance, and tomorrow-onwards
+ * re-planned daily cap based strictly on current balance, unpaid fixed bills, and savings goal.
+ */
+export function computeLedgerPlan(
+  config: LedgerConfig,
+  fixedExpenses: LedgerFixedExpense[],
+  monthTransactions: LedgerTransaction[],
+  date: LedgerDateParts,
+): LedgerPlan {
+  const daysLeftInclusive = Math.max(1, date.daysInMonth - date.day + 1);
+  const daysLeftAfterToday = Math.max(0, date.daysInMonth - date.day);
+
+  let unpaidFixedCents = 0;
+  let paidFixedCents = 0;
+  for (const f of fixedExpenses) {
+    if (f.paidYm === date.ym) paidFixedCents += f.amountCents;
+    else unpaidFixedCents += f.amountCents;
+  }
+
+  let monthIncomeCents = 0;
+  let monthExpenseCents = 0;
+  let todayExpenseCents = 0;
+  let todayDiscretionaryExpenseCents = 0;
+  for (const tx of monthTransactions) {
+    if (tx.ym !== date.ym) continue;
+    if (tx.direction === "income") {
+      monthIncomeCents += tx.amountCents;
+    } else {
+      monthExpenseCents += tx.amountCents;
+      if (tx.ymd === date.ymd) {
+        todayExpenseCents += tx.amountCents;
+        if (!tx.fixedId) todayDiscretionaryExpenseCents += tx.amountCents;
+      }
+    }
+  }
+
+  if (config.balanceCents === null) {
+    return {
+      ym: date.ym,
+      ymd: date.ymd,
+      daysInMonth: date.daysInMonth,
+      daysLeftInclusive,
+      daysLeftAfterToday,
+      balanceCents: null,
+      savingsGoalCents: config.savingsGoalCents,
+      unpaidFixedCents,
+      paidFixedCents,
+      monthIncomeCents,
+      monthExpenseCents,
+      todayExpenseCents,
+      todayDiscretionaryExpenseCents,
+      spendableNowCents: null,
+      todayLimitCents: null,
+      todayRemainingCents: null,
+      nextDailyLimitCents: null,
+      overspentTodayCents: 0,
+    };
+  }
+
+  const spendableNowCents = config.balanceCents - unpaidFixedCents - config.savingsGoalCents;
+  const spendableStartOfTodayCents = spendableNowCents + todayDiscretionaryExpenseCents;
+  const todayLimitCents = Math.max(0, Math.floor(spendableStartOfTodayCents / daysLeftInclusive));
+  const todayRemainingCents = todayLimitCents - todayDiscretionaryExpenseCents;
+  const overspentTodayCents = todayRemainingCents < 0 ? -todayRemainingCents : 0;
+  const nextDailyLimitCents =
+    daysLeftAfterToday > 0 ? Math.max(0, Math.floor(Math.max(0, spendableNowCents) / daysLeftAfterToday)) : null;
+
+  return {
+    ym: date.ym,
+    ymd: date.ymd,
+    daysInMonth: date.daysInMonth,
+    daysLeftInclusive,
+    daysLeftAfterToday,
+    balanceCents: config.balanceCents,
+    savingsGoalCents: config.savingsGoalCents,
+    unpaidFixedCents,
+    paidFixedCents,
+    monthIncomeCents,
+    monthExpenseCents,
+    todayExpenseCents,
+    todayDiscretionaryExpenseCents,
+    spendableNowCents,
+    todayLimitCents,
+    todayRemainingCents,
+    nextDailyLimitCents,
+    overspentTodayCents,
+  };
+}
+
+/** Builds a clear push notification message after capturing or recording a transaction. */
+export function formatBudgetAlert(
+  tx: Pick<LedgerTransaction, "direction" | "amountCents" | "title">,
+  plan: LedgerPlan,
+): LedgerAlertSummary {
+  const amt = formatYuan(tx.amountCents);
+  const label = tx.title.trim() || (tx.direction === "income" ? "微信收款" : "微信消费");
+  const balNote = plan.balanceCents !== null ? `当前余额约 ${formatYuan(plan.balanceCents)} 元` : "尚未设置初始余额";
+
+  if (tx.direction === "income") {
+    const quota =
+      plan.todayRemainingCents !== null
+        ? plan.todayRemainingCents >= 0
+          ? `，今天还能用 ${formatYuan(plan.todayRemainingCents)} 元`
+          : `，今日仍超出 ${formatYuan(-plan.todayRemainingCents)} 元`
+        : "";
+    return {
+      title: `微信收款 ${amt} 元`,
+      body: `「${label}」已入账，${balNote}${quota}。`,
+      overspent: false,
+    };
+  }
+
+  if (plan.overspentTodayCents > 0) {
+    const over = formatYuan(plan.overspentTodayCents);
+    if (plan.daysLeftAfterToday > 0) {
+      const next = formatYuan(plan.nextDailyLimitCents ?? 0);
+      const shortNote =
+        plan.spendableNowCents !== null && plan.spendableNowCents <= 0 ? "（当前已不足覆盖保底/固定开支）" : "";
+      return {
+        title: `今日超支 ${over} 元`,
+        body: `刚支出 ${amt} 元（${label}），${balNote}。已按剩余 ${plan.daysLeftAfterToday} 天重算：接下来每天最多用 ${next} 元${shortNote}。`,
+        overspent: true,
+      };
+    }
+    return {
+      title: `今日超支 ${over} 元`,
+      body: `刚支出 ${amt} 元（${label}），已是本月最后一天，${balNote}。`,
+      overspent: true,
+    };
+  }
+
+  const leftNote =
+    plan.todayRemainingCents !== null
+      ? `，今天还能用 ${formatYuan(plan.todayRemainingCents)} 元`
+      : "（开启界面设置一次当前余额即可按日限额）";
+  return {
+    title: `微信支出 ${amt} 元`,
+    body: `「${label}」已记账，${balNote}${leftNote}。`,
+    overspent: false,
+  };
+}
+
+export interface LedgerDayBar {
+  ymd: string;
+  label: string;
+  expenseCents: number;
+}
+
+/** Last `count` calendar days ending at `todayYmd` (`YYYY-MM-DD`), oldest to newest, with discretionary expense totals. */
+export function computeRecentDaysBars(
+  transactions: LedgerTransaction[],
+  todayYmd: string,
+  count = 7,
+): LedgerDayBar[] {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(todayYmd);
+  if (!m) return [];
+  const baseMs = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const totals = new Map<string, number>();
+  for (const tx of transactions) {
+    if (tx.direction !== "expense" || tx.fixedId) continue;
+    totals.set(tx.ymd, (totals.get(tx.ymd) ?? 0) + tx.amountCents);
+  }
+  const bars: LedgerDayBar[] = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const d = new Date(baseMs - i * 86_400_000);
+    const yyyy = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const ymd = `${yyyy}-${mm}-${dd}`;
+    bars.push({
+      ymd,
+      label: `${d.getUTCMonth() + 1}/${d.getUTCDate()}`,
+      expenseCents: totals.get(ymd) ?? 0,
+    });
+  }
+  return bars;
+}
+
+// ---------------------------------------------------------------------------
+// Assistant persona & server-side personal memory bank
+// ---------------------------------------------------------------------------
+
+export type MemoryCategory =
+  | "profile"
+  | "habit"
+  | "preference"
+  | "schedule"
+  | "relationship"
+  | "work"
+  | "note";
+
+export const MEMORY_CATEGORIES: ReadonlyArray<{
+  id: MemoryCategory;
+  label: string;
+  hint: string;
+}> = [
+  { id: "profile", label: "核心档案", hint: "城市、身份、常住地、基本信息" },
+  { id: "habit", label: "生活习惯", hint: "作息时间、日常节律、健身频率" },
+  { id: "preference", label: "偏好忌口", hint: "饮食口味、过敏忌口、沟通喜好" },
+  { id: "schedule", label: "日程日子", hint: "纪念日、发薪日、固定计划、近期日程" },
+  { id: "relationship", label: "重要的人", hint: "家人、朋友、同事、宠物称呼" },
+  { id: "work", label: "工作项目", hint: "项目别名、电脑分工、工作约定" },
+  { id: "note", label: "随手备忘", hint: "零碎生活琐事与长期交代" },
+] as const;
+
+export interface AssistantMemoryItem {
+  id: string;
+  category: MemoryCategory;
+  /** Optional slot key so updated facts (e.g. sleep_time / city) supersede old values cleanly. */
+  slotKey?: string;
+  content: string;
+  /** 3 = core permanent, 2 = important long-term, 1 = normal daily fact. */
+  importance: 1 | 2 | 3;
+  pinned?: boolean;
+  expiresAt?: number;
+  source: "user" | "assistant" | "seed";
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AssistantPersonaConfig {
+  name: string;
+  /** How she addresses the user (e.g. "哥哥"). */
+  userCall: string;
+  /** "wuthering_aemeath" | "warm_friend" | "custom" */
+  presetId: string;
+  personaText: string;
+  /** True: assistant can capture stable life/personal facts during normal chat/calls. */
+  autoMemory: boolean;
+  updatedAt: number;
+}
+
+export interface PersonaPresetSummary {
+  id: string;
+  label: string;
+  userCall: string;
+  summary: string;
+  personaText: string;
+}

@@ -300,3 +300,85 @@ test("CodexLocalRuntime supports knownFolders, create (thread/start + turn/start
   assert.ok(logged.some((r) => r.method === "thread/start"));
   assert.ok(logged.some((r) => r.method === "turn/interrupt" && r.threadId === "thread-codex-created-9" && r.turnId === "turn-codex-1"));
 });
+
+test("CodexLocalRuntime counts active subagent threads on idle parent threads and exposes children/detail", async (t) => {
+  const { RuntimeSessions } = await import("../src/runtime-sessions.ts");
+  const dir = mkdtempSync(join(tmpdir(), "xa-codex-sub-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const codexHome = join(dir, "codex-home");
+  const cwd = join(dir, "repo-sub");
+  mkdirSync(codexHome, { recursive: true });
+  mkdirSync(cwd, { recursive: true });
+
+  const parentRollout = join(codexHome, "rollout-parent.jsonl");
+  writeFileSync(parentRollout, `${JSON.stringify({ type: "event_msg", payload: { type: "task_complete" } })}\n`);
+  const subRollout = join(codexHome, "rollout-sub.jsonl");
+  writeFileSync(
+    subRollout,
+    `${JSON.stringify({ type: "event_msg", payload: { type: "task_started" } })}\n` +
+      `${JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "审查 API 更改" }] } })}\n`,
+  );
+
+  const db = new DatabaseSync(join(codexHome, "state_5.sqlite"));
+  db.exec(`
+    CREATE TABLE threads (
+      id TEXT PRIMARY KEY,
+      rollout_path TEXT,
+      cwd TEXT,
+      title TEXT,
+      name TEXT,
+      first_user_message TEXT,
+      archived INTEGER DEFAULT 0,
+      updated_at INTEGER,
+      updated_at_ms INTEGER,
+      thread_source TEXT,
+      source TEXT,
+      attached_thread_parent_id TEXT,
+      agent_nickname TEXT,
+      agent_role TEXT
+    );
+  `);
+  const nowSec = Math.trunc(Date.now() / 1000);
+  const ins = db.prepare(`
+    INSERT INTO threads (id, rollout_path, cwd, title, name, first_user_message, archived, updated_at, updated_at_ms, thread_source, source, attached_thread_parent_id, agent_nickname, agent_role)
+    VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  ins.run("thread-parent-1", parentRollout, cwd, "主开发任务", null, "开始开发", nowSec - 10, (nowSec - 10) * 1000, "user", "cli", null, null, null);
+  ins.run(
+    "thread-child-1",
+    subRollout,
+    cwd,
+    "Subagent task",
+    null,
+    "审查 API 更改",
+    nowSec,
+    nowSec * 1000,
+    "subagent",
+    JSON.stringify({ subagent: { thread_spawn: { parent_thread_id: "thread-parent-1", depth: 1 } } }),
+    null,
+    "Noether",
+    "reviewer",
+  );
+  db.close();
+
+  const rt = new CodexLocalRuntime({ codexHome, enableSend: true });
+  t.after(() => rt.close());
+  const rs = new RuntimeSessions("viewer", { codex: rt }, join(dir, "dispatch"), { publishAgents: true });
+  const entries = await rs.unifiedEntries();
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]!.session.id, "thread-parent-1");
+  assert.equal(entries[0]!.session.state, "idle");
+  assert.equal(entries[0]!.session.subagents, 1);
+  assert.equal(entries[0]!.session.subagentsWorking, 1);
+
+  const kids = await rs.children({ runtime: "codex", projectId: entries[0]!.projectId, sessionId: "thread-parent-1" });
+  assert.equal(kids.length, 1);
+  assert.equal(kids[0]!.status, "working");
+  assert.equal(kids[0]!.title, "Noether (reviewer)");
+  assert.equal(await rs.descends("codex", "thread-child-1", "thread-parent-1"), true);
+
+  const childDetail = await rt.detail(entries[0]!.projectId, "thread-child-1", 20);
+  assert.equal(childDetail.session.canSend, false);
+  assert.equal(childDetail.messages[0]?.text, "审查 API 更改");
+});

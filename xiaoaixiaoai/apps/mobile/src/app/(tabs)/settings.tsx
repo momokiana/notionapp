@@ -13,8 +13,9 @@ import { StarTrail } from "../../components/Starlight";
 import { useLive, useSettings, type ThemeMode } from "../../lib/store";
 import { signOut } from "../../lib/session";
 import { isMockServer } from "../../lib/mock";
-import { loadAssistant, setAssistantConfirm, setAssistantReplyMode, useAssistant } from "../../lib/assistant";
+import { loadAssistant, loadAssistantProfile, setAssistantConfirm, setAssistantReplyMode, useAssistant } from "../../lib/assistant";
 import { alertsSupported, askNotificationPermission, refreshAlertState, useAlerts } from "../../lib/alerts";
+import { useLedger } from "../../lib/ledger";
 import { checkForUpdate, currentVersion, downloadUpdate, installUpdate, resumeInstallIfAllowed, useNewRelease, useUpdate } from "../../lib/update";
 import { XiaoaiNative } from "../../../modules/xiaoaixiaoai-native";
 import { usePalette } from "../../theme/theme";
@@ -46,12 +47,16 @@ export default function SettingsScreen() {
   const alerts = useAlerts();
   const askFirst = useAssistant((x) => x.confirm);
   const replyMode = useAssistant((x) => x.replyMode);
+  const assistantName = useAssistant((x) => x.name);
+  const assistantProfile = useAssistant((x) => x.profile);
   const assistantChatVoice = useAssistant((x) => x.chatVoice);
   const assistantLoaded = useAssistant((x) => x.loaded);
+  const ledgerEnabled = useLedger((x) => x.state.config.enabled);
   const [askError, setAskError] = useState<string | null>(null);
   const [replyModeError, setReplyModeError] = useState<string | null>(null);
   useEffect(() => {
     if (!useAssistant.getState().loaded) void loadAssistant();
+    if (!useAssistant.getState().profile) void loadAssistantProfile().catch(() => {});
   }, []);
   useEffect(() => {
     refreshAlertState();
@@ -214,7 +219,7 @@ export default function SettingsScreen() {
           <Row
             icon="progress-clock"
             title="DSH 任务有进展时"
-            sub="从这部手机发出的任务完成关键步骤时提醒"
+            sub="任务执行中间步骤时推送（消息较多，默认关闭）"
             dim={!s.alertsOn}
             right={<Toggle label="DSH 进展提醒" value={s.alertProgress} disabled={!s.alertsOn} onChange={(v) => s.set({ alertProgress: v })} />}
           />
@@ -233,13 +238,37 @@ export default function SettingsScreen() {
           {alertsSupported && s.alertsOn ? (
             <>
               <Divider />
+              <Row icon="cog-outline" title="应用后台与自启动设置" sub="若只点进 App 才收得到通知，请到「应用信息 → 耗电管理」允许完全后台行为，并打开自启动" onPress={() => XiaoaiNative?.openAppDetails?.()} />
+              <Divider />
               <Row icon="bell-ring-outline" title="发一条测试提醒" sub="看看通知能不能送到这台手机" onPress={() => XiaoaiNative?.testNotice("爱弥斯：测试提醒", "能看到这条，说明 agent 的提醒也能送到。")} />
             </>
           ) : null}
         </Card>
 
+        <SectionHeader title="功能与插件" />
+        <Card style={{ paddingVertical: space.xs }}>
+          <Row
+            icon="puzzle-outline"
+            title="功能插件"
+            sub={ledgerEnabled ? "已开启「微信账单与攒钱规划」" : "按需开启可选功能，如微信收付款记账与每日预算（默认关闭）"}
+            right={<MaterialCommunityIcons name="chevron-right" size={20} color={p.faint} />}
+            onPress={() => router.push("/plugins")}
+          />
+        </Card>
+
         <SectionHeader title="爱弥斯办事" />
         <Card style={{ paddingVertical: space.xs }}>
+          <Row
+            icon="card-account-details-outline"
+            title={`${assistantName}人设与记忆库`}
+            sub={
+              assistantProfile
+                ? `服务器保存 · 称呼「${assistantProfile.userCall || "你"}」· ${assistantProfile.autoMemory ? "自动记住生活细节" : "仅手动记住"}`
+                : "服务器统一存储人设、称呼与私人生活记忆库"
+            }
+            onPress={() => router.push("/persona")}
+          />
+          <Divider />
           <Row
             icon="volume-high"
             title="平时聊天用语音回复"

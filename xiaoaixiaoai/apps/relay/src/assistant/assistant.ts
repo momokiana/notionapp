@@ -13,11 +13,13 @@
 import { randomUUID } from "node:crypto";
 import {
   HERDR_COMMANDS,
+  effectiveAgentStatus,
   type Agent,
   type AgentStatus,
   type AssistantAction,
   type AssistantConfirm,
   type AssistantItem,
+  type AssistantPersonaConfig,
   type AssistantReplyMode,
   type AssistantSettings,
   type AssistantState,
@@ -29,6 +31,7 @@ import {
   type LayoutSpace,
   type Notice,
   type NoticeVerdict,
+  type PersonaPresetSummary,
   type Reminder,
   type RpcMethod,
   type RpcParams,
@@ -38,6 +41,10 @@ import {
 } from "@xiaoaixiaoai/protocol";
 import type { EventQuery, Store } from "../store.ts";
 import type { EventInput } from "../eventlog.ts";
+import type { LedgerService } from "../ledger/service.ts";
+import { LEDGER_TOOLS, LEDGER_TOOL_NAMES, ledgerPromptSnippet, runLedgerTool } from "./ledger-tools.ts";
+import { MemoryService } from "./memory.ts";
+import { MEMORY_TOOLS, MEMORY_TOOL_NAMES, memoryPromptSnippet, runMemoryTool } from "./memory-tools.ts";
 import { claimsDelivery, guardClaims, newFacts, type RunFacts } from "./guard.ts";
 import { MATCH_MIN, agentNames, foldName, pickOne, rank } from "./lookup.ts";
 import type { ContentBlock, Llm, Msg, ToolDef } from "./llm.ts";
@@ -45,7 +52,7 @@ import { PROMPT_EPOCH, delegateAsk, herdrCommandList, systemPrompt, wakeBatch, w
 import { clip, clockTime, cnNumber, cutAtSentence, filterTalk, noEmoji, normName, oneLine, parseWake, splitScript, spokenFor, spokenTime, stripMd } from "./speech.ts";
 import { splitSpeakableSentences } from "./local-call.ts";
 import { timeZone, utcOffset, zoneLabel, zoneName } from "./timezone.ts";
-import { DEFAULT_ASSISTANT_NAME } from "./persona.ts";
+import { DEFAULT_ASSISTANT_NAME, PERSONA_PRESETS, buildDefaultServerPersona, sanitizePersonaPatch } from "./persona.ts";
 
 export { clip, noEmoji } from "./speech.ts";
 
@@ -59,6 +66,8 @@ export interface AssistantHost {
   event?(e: EventInput): void;
   /** Reads the event log, for the `read_logs` tool. */
   logs?(q: EventQuery): LogEntry[];
+  /** Optional WeChat bill & savings budget planning plugin. */
+  ledger?: LedgerService;
 }
 
 export interface AssistantOptions {
@@ -130,6 +139,7 @@ interface Turn {
 
 const SETTING_CONFIRM = "assistant.confirm";
 const SETTING_REPLY_MODE = "assistant.replyMode";
+const SETTING_PROFILE = "assistant.profile";
 
 /** Extracts clean, concise speakable clauses for normal-chat dual-track TTS. */
 export function chatSpeechSentences(raw: string): string[] {
@@ -184,6 +194,7 @@ export class Assistant {
   private touched = new Map<string, number>();
   /** Why an agent is stopped, in the assistant's own sentence; gone once it works again. */
   private reasons = new Map<string, string>();
+  private lastFallbackNoticeAt = new Map<string, number>();
   /** Agents that stopped and passed the thresholds, waiting to be looked at (possibly together). */
   private stops: Stop[] = [];
   private wakeTimes: number[] = [];
@@ -196,16 +207,14 @@ export class Assistant {
   private voices = new Set<VoiceSink>();
   private activeChatSpeech: { utteranceId: string; itemId: string; hostId: string; reqId?: string; ac: AbortController } | null = null;
   private closed = false;
-  readonly name: string;
-  readonly persona?: string;
+  readonly memory: MemoryService;
 
   constructor(opts: AssistantOptions) {
     this.opts = opts;
     this.store = opts.store;
     this.host = opts.host;
     this.llm = opts.llm;
-    this.name = opts.name?.trim() || DEFAULT_ASSISTANT_NAME;
-    this.persona = opts.persona?.trim() || undefined;
+    this.memory = new MemoryService(this.store, () => this.now());
     this.items = this.store.listAssistantItems<AssistantItem>(MAX_ITEMS);
     this.reminders = this.store.listReminders<Reminder>();
     // An action left pending across a restart is no longer what the person saw.
@@ -264,6 +273,65 @@ export class Assistant {
     return includeReply
       ? { name: this.name, confirm: this.confirmMode(), replyMode: this.replyMode() }
       : { name: this.name, confirm: this.confirmMode() };
+  }
+
+  get name(): string {
+    return this.profile().name || DEFAULT_ASSISTANT_NAME;
+  }
+
+  get persona(): string | undefined {
+    const p = this.profile().personaText.trim();
+    return p || undefined;
+  }
+
+  get userCall(): string | undefined {
+    const c = this.profile().userCall.trim();
+    return c || undefined;
+  }
+
+  presets(): PersonaPresetSummary[] {
+    return [...PERSONA_PRESETS];
+  }
+
+  profile(): AssistantPersonaConfig {
+    const fallback = buildDefaultServerPersona({ name: this.opts.name, persona: this.opts.persona });
+    const saved = this.store.getSetting<Partial<AssistantPersonaConfig>>(SETTING_PROFILE);
+    if (!saved || typeof saved !== "object") return fallback;
+    return {
+      name: typeof saved.name === "string" && saved.name.trim() ? saved.name.trim() : fallback.name,
+      userCall: typeof saved.userCall === "string" ? saved.userCall : fallback.userCall,
+      presetId: typeof saved.presetId === "string" && saved.presetId.trim() ? saved.presetId.trim() : fallback.presetId,
+      personaText: typeof saved.personaText === "string" ? saved.personaText : fallback.personaText,
+      autoMemory: typeof saved.autoMemory === "boolean" ? saved.autoMemory : fallback.autoMemory,
+      updatedAt: typeof saved.updatedAt === "number" ? saved.updatedAt : fallback.updatedAt,
+    };
+  }
+
+  setProfile(patch: Record<string, unknown>, by: string): AssistantPersonaConfig {
+    const next = sanitizePersonaPatch(this.profile(), patch, this.now());
+    this.store.putSetting(SETTING_PROFILE, next);
+    this.event({
+      kind: "settings",
+      msg: `profile updated (name=${next.name}, userCall=${next.userCall || "你"}, preset=${next.presetId}, autoMemory=${next.autoMemory}) by ${by}`,
+    });
+    this.host.toViewers({ type: "assistant_profile", profile: next });
+    this.host.toViewers({ type: "assistant_reset" });
+    for (const v of this.voices) v.board?.();
+    return next;
+  }
+
+  notifyMemoriesChanged(): void {
+    this.host.toViewers({ type: "assistant_memories" });
+    for (const v of this.voices) v.board?.();
+  }
+
+  voiceMemoryContext(): string {
+    const recentUserText = this.fresh()
+      .filter((i) => i.role === "user" && i.text)
+      .slice(-3)
+      .map((i) => i.text)
+      .join(" ");
+    return this.memory.buildPromptContext(recentUserText, 900);
   }
 
   /** What the relay starts with when the app has not chosen. */
@@ -729,12 +797,29 @@ export class Assistant {
     const steps: string[] = [];
     const used: string[] = [];
     const turn: Turn = { occasion: opts.occasion, facts: newFacts() };
-    const system = systemPrompt(this.name, opts.occasion, this.backendBoard(), {
-      confirm: !this.direct(turn),
-      persona: this.persona,
-      replyMode: this.replyMode(),
-    });
-    const tools = opts.allow ? TOOLS.filter((t) => opts.allow!.has(t.name)) : TOOLS;
+    const prof = this.profile();
+    const ledgerOn = !opts.allow && !!this.host.ledger?.isEnabled();
+    const memoryOn = !opts.allow;
+    const queryText = memoryOn
+      ? messages
+          .filter((m) => m.role === "user" && typeof m.content === "string")
+          .slice(-3)
+          .map((m) => m.content as string)
+          .join(" ")
+      : "";
+    const recalled = memoryOn ? this.memory.buildPromptContext(queryText, 1600) : "";
+    const system =
+      systemPrompt(prof.name, opts.occasion, this.backendBoard(), {
+        confirm: !this.direct(turn),
+        persona: prof.personaText.trim() || undefined,
+        userCall: prof.userCall.trim() || undefined,
+        replyMode: this.replyMode(),
+      }) +
+      (memoryOn ? `\n\n${memoryPromptSnippet(prof, recalled)}` : "") +
+      (ledgerOn ? ledgerPromptSnippet(this.host.ledger!) : "");
+    const tools = opts.allow
+      ? TOOLS.filter((t) => opts.allow!.has(t.name))
+      : [...TOOLS, ...MEMORY_TOOLS, ...(ledgerOn ? LEDGER_TOOLS : [])];
     const rounds = opts.maxRounds ?? MAX_TOOL_ROUNDS;
     /** What is said must match what was done in this run (the guard), and the log says when it did not. */
     const finish = (raw: string) => {
@@ -800,6 +885,21 @@ export class Assistant {
       messages.push({ role: "user", content: results });
       opts.onDraft?.(text, steps);
     }
+    // Woken look exhausted its tool budget without emitting text: force one tool-free decision turn.
+    if (opts.occasion === "woken" && !opts.signal?.aborted && used.length > 0) {
+      messages.push({ role: "user", content: "不要再调用工具，直接按格式给出最终判断（如果只是日常小步停顿、不用打扰，回：不用说）。" });
+      try {
+        const res = await this.llm!({ system, messages, tools: [], maxTokens: 300, signal: opts.signal });
+        const finalRaw = res.content
+          .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
+          .map((b) => b.text)
+          .join("")
+          .trim();
+        if (finalRaw) return finish(noEmoji(finalRaw));
+      } catch (e) {
+        if (opts.signal?.aborted) throw e;
+      }
+    }
     // Out of rounds: whatever was done is still reported as it really ended.
     const done = turn.facts.actions.filter((a) => a.state !== "pending");
     const tail = done.length ? `办了的：${done.map((a) => `${a.title ?? a.kind}${a.state === "done" ? "成了" : "没成"}`).join("，")}。` : "";
@@ -822,12 +922,19 @@ export class Assistant {
   }
 
   private agentLine(a: Agent): string {
+    const eff = effectiveAgentStatus(a);
+    const statusLabel =
+      a.status !== "working" && a.status !== "blocked" && (a.subagentsWorking ?? 0) > 0
+        ? `子 agent 工作中（${a.subagentsWorking} 个在忙）`
+        : a.subagentsWorking
+          ? `${STATUS_ZH[eff]}（含 ${a.subagentsWorking} 个子 agent 在忙）`
+          : STATUS_ZH[eff];
     const since = a.statusSince ? `（${ago(this.now() - a.statusSince)}）` : "";
     const where = [this.deviceName(a.deviceId), a.where].filter(Boolean).join(" / ");
     const folder = a.cwd ? a.cwd.split("/").filter(Boolean).pop() : "";
     const queued = a.queued ? ` | 输入框里排着 ${a.queued} 条没处理` : "";
     const ro = a.canSend === false ? " | 只读" : "";
-    return `${a.key} | ${this.handleOf(a)} | 「${titleOf(a)}」 | ${a.harness} | ${STATUS_ZH[a.status]}${since} | ${where}${folder ? ` | ${folder}` : ""}${queued}${ro}`;
+    return `${a.key} | ${this.handleOf(a)} | 「${titleOf(a)}」 | ${a.harness} | ${statusLabel}${since} | ${where}${folder ? ` | ${folder}` : ""}${queued}${ro}`;
   }
 
   /**
@@ -1004,7 +1111,7 @@ export class Assistant {
         const status = typeof input.status === "string" ? input.status : "all";
         const query = typeof input.query === "string" ? input.query.trim() : "";
         let list = this.host.agents().filter((a) => (input.include_shells ? true : !a.isShell));
-        if (status !== "all") list = list.filter((a) => a.status === status);
+        if (status !== "all") list = list.filter((a) => effectiveAgentStatus(a) === status);
         if (typeof input.device === "string" && input.device) {
           const id = this.resolveDevice(input.device);
           list = list.filter((a) => a.deviceId === id);
@@ -1018,7 +1125,7 @@ export class Assistant {
           list = list.filter((a) => hit.has(a) || `${titleOf(a)} ${a.cwd ?? ""} ${a.harness} ${a.where ?? ""}`.toLowerCase().includes(plain));
         }
         const order: Record<AgentStatus, number> = { blocked: 0, working: 1, done: 2, idle: 3, unknown: 4 };
-        list.sort((a, b) => order[a.status] - order[b.status] || (b.statusSince ?? 0) - (a.statusSince ?? 0));
+        list.sort((a, b) => order[effectiveAgentStatus(a)] - order[effectiveAgentStatus(b)] || (b.statusSince ?? 0) - (a.statusSince ?? 0));
         const shown = list.slice(0, 40);
         const out = shown.length
           ? `key | 叫法 | 标题 | 程序 | 状态 | 位置 | 文件夹\n${shown.map((a) => this.agentLine(a)).join("\n")}${list.length > shown.length ? `\n…还有 ${list.length - shown.length} 个` : ""}`
@@ -1392,6 +1499,15 @@ export class Assistant {
         return { out: ok ? "取消了" : "没有这个提醒", step: ok ? "取消了一个提醒" : undefined };
       }
       default:
+        if (MEMORY_TOOL_NAMES.has(name)) {
+          const res = runMemoryTool(this.memory, name, input);
+          if (res.mutated) this.notifyMemoriesChanged();
+          return { out: res.out, step: res.step };
+        }
+        if (LEDGER_TOOL_NAMES.has(name)) {
+          if (!this.host.ledger?.isEnabled()) throw new Error("微信账单与攒钱规划插件未启用");
+          return runLedgerTool(this.host.ledger, name, input);
+        }
         throw new Error(`没有 ${name} 这个工具`);
     }
   }
@@ -1570,20 +1686,21 @@ export class Assistant {
     const t = this.now();
     for (const a of agents) {
       if (a.isShell) continue;
+      const eff = effectiveAgentStatus(a);
       const prev = this.seen.get(a.key);
-      this.seen.set(a.key, a.status);
-      if (prev !== a.status) {
+      this.seen.set(a.key, eff);
+      if (prev !== eff) {
         // The sentence about why it stopped is only true while it stays stopped that way.
-        if (a.status === "working" || prev === "blocked") this.reasons.delete(a.key);
-        if (a.status === "working") this.workingSince.set(a.key, first || prev === undefined ? (a.statusSince ?? t) : t);
+        if (eff === "working" || prev === "blocked") this.reasons.delete(a.key);
+        if (eff === "working") this.workingSince.set(a.key, first || prev === undefined ? (a.statusSince ?? t) : t);
       }
-      if (first || prev === undefined || prev === a.status) continue;
-      if (a.status === "blocked") {
+      if (first || prev === undefined || prev === eff) continue;
+      if (eff === "blocked") {
         this.later(this.opts.blockedDelayMs ?? 4000, () => this.onBlocked(a.key));
-      } else if (prev === "working" && (a.status === "done" || a.status === "idle")) {
+      } else if (prev === "working" && (eff === "done" || eff === "idle")) {
         const ranMs = Math.max(0, t - (this.workingSince.get(a.key) ?? t));
         if (!this.worthLooking(a, t, ranMs)) continue;
-        const stop: Stop = { key: a.key, at: t, ranMs, desk: a.status === "idle" };
+        const stop: Stop = { key: a.key, at: t, ranMs, desk: eff === "idle" };
         this.stops.push(stop);
         this.later(this.opts.doneDelayMs ?? 10_000, () => this.onStopped(stop));
       }
@@ -1598,6 +1715,8 @@ export class Assistant {
     if (a.status === "idle" && ranMs < (this.opts.deskTurnMs ?? 180_000)) return false;
     const touched = this.touched.get(a.key);
     if (touched !== undefined && t - touched < TOUCH_WINDOW_MS) return true;
+    // Unwatched desktop IDE/GUI runtime sessions pause frequently between turns; only wake after a long autonomous stretch.
+    if (a.source === "runtime") return ranMs >= (this.opts.deskTurnMs ?? 180_000);
     // A short turn is a quick question and answer, or agents passing notes: the board is enough.
     return ranMs >= (this.opts.minTurnMs ?? 45_000);
   }
@@ -1678,6 +1797,8 @@ export class Assistant {
     drop();
     for (const r of watching) this.cancelReminder(r.id);
     const handle = this.handleOf(a);
+    const touchedAt = this.touched.get(a.key);
+    const recentlyTouched = touchedAt !== undefined && this.now() - touchedAt < TOUCH_WINDOW_MS;
     const material = await this.finishedMaterial(a, handle, stop.ranMs, watching);
     const looked = material ? await this.look(material, true, this.opts.wakeTimeoutMs ?? 20_000) : null;
     if (looked?.verdict === "skip" && !watching.length) {
@@ -1685,6 +1806,21 @@ export class Assistant {
       return;
     }
     const told = looked && looked.verdict !== "skip" && looked.say ? looked : null;
+    if (!told && !watching.length) {
+      const longTerminal = a.source !== "runtime" && stop.ranMs >= (this.opts.deskTurnMs ?? 180_000);
+      const lastFallback = this.lastFallbackNoticeAt.get(stop.key);
+      const cooledDown = lastFallback !== undefined && this.now() - lastFallback < 15 * 60_000;
+      if (!material || (!recentlyTouched && !longTerminal) || cooledDown) {
+        this.event({
+          kind: "wake",
+          level: "warn",
+          msg: `suppressed fallback notice for ${handle} (${!material ? "no material" : cooledDown ? "cooldown" : "unwatched short/runtime"})`,
+          data: { agent: stop.key },
+        });
+        return;
+      }
+      this.lastFallbackNoticeAt.set(stop.key, this.now());
+    }
     // Not looked at (no material, timeout, over the limit): it stopped, nothing more is known.
     const verdict: NoticeVerdict = told ? (told.verdict as NoticeVerdict) : "stopped";
     const say = told?.say ?? `${handle}停了。`;
@@ -1693,7 +1829,9 @@ export class Assistant {
   }
 
   private stillStopped(key: string): boolean {
-    const s = this.agentByKey(key)?.status;
+    const a = this.agentByKey(key);
+    if (!a) return false;
+    const s = effectiveAgentStatus(a);
     return s === "done" || s === "idle";
   }
 

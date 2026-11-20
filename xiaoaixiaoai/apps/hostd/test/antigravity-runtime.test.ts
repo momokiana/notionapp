@@ -439,3 +439,78 @@ rl.on("line", (line) => {
   assert.ok(rpcs.some((r) => r.method === "session/new"));
   assert.ok(rpcs.some((r) => r.method === "session/cancel" && r.params?.sessionId === "ag-created-1"));
 });
+
+test("AntigravityRuntime rolls active child subagents up to idle parent and exposes children/detail", async (t) => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { RuntimeSessions } = await import("../src/runtime-sessions.ts");
+  const root = mkdtempSync(join(tmpdir(), "xa-ag-subrun-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const brainDir = join(root, "brain");
+  mkdirSync(brainDir, { recursive: true });
+  const dbPath = join(root, "conversation_summaries.db");
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE conversation_summaries (
+      conversation_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT "",
+      workspace_uris TEXT NOT NULL DEFAULT "[]",
+      status TEXT NOT NULL DEFAULT "",
+      parent_conversation_id TEXT NOT NULL DEFAULT "",
+      nesting_depth INTEGER NOT NULL DEFAULT 0,
+      not_fully_idle NUMERIC NOT NULL DEFAULT false,
+      killed NUMERIC NOT NULL DEFAULT false,
+      last_modified_time DATETIME NOT NULL DEFAULT ""
+    );
+  `);
+  const ins = db.prepare(`
+    INSERT INTO conversation_summaries (conversation_id, title, workspace_uris, status, parent_conversation_id, nesting_depth, not_fully_idle, killed, last_modified_time)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const writeAg = (id: string, steps: unknown[], opts?: { lock?: boolean }) => {
+    const base = join(brainDir, id);
+    const logs = join(base, ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, "transcript.jsonl"), `${steps.map((s) => JSON.stringify(s)).join("\n")}\n`);
+    if (opts?.lock) writeFileSync(join(base, ".lock"), "");
+  };
+
+  writeAg("ag-parent-idle", [
+    { type: "USER_INPUT", content: "<USER_REQUEST>\n帮我巡检全部测试\n</USER_REQUEST>" },
+    { type: "PLANNER_RESPONSE", status: "DONE", content: "已派出子智能体在后台运行。" },
+  ]);
+  ins.run("ag-parent-idle", "主任务", '["file:///work/sub-repo"]', "CASCADE_RUN_STATUS_IDLE", "", 0, 1, 0, "2026-11-20T12:00:00Z");
+
+  writeAg("ag-child-running", [
+    { type: "USER_INPUT", content: "<USER_REQUEST>\n运行完整回归测试\n</USER_REQUEST>" },
+  ], { lock: true });
+  ins.run("ag-child-running", "", '["file:///work/sub-repo"]', "CASCADE_RUN_STATUS_RUNNING", "ag-parent-idle", 1, 1, 0, "2026-11-20T12:01:00Z");
+
+  writeAg("ag-child-done", [
+    { type: "USER_INPUT", content: "<USER_REQUEST>\n检查依赖\n</USER_REQUEST>" },
+    { type: "PLANNER_RESPONSE", status: "DONE", content: "完成" },
+  ]);
+  ins.run("ag-child-done", "依赖检查", '["file:///work/sub-repo"]', "CASCADE_RUN_STATUS_IDLE", "ag-parent-idle", 1, 0, 0, "2026-11-20T11:59:00Z");
+  db.close();
+
+  const rt = new AntigravityRuntime({ brainDir });
+  const rs = new RuntimeSessions("viewer", { antigravity: rt }, join(root, "dispatch"), { publishAgents: true });
+  const entries = await rs.unifiedEntries();
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]!.session.id, "ag-parent-idle");
+  assert.equal(entries[0]!.session.state, "idle");
+  assert.equal(entries[0]!.session.subagents, 2);
+  assert.equal(entries[0]!.session.subagentsWorking, 1);
+
+  const kids = await rs.children({ runtime: "antigravity", projectId: entries[0]!.projectId, sessionId: "ag-parent-idle" });
+  assert.equal(kids.length, 2);
+  assert.equal(kids[0]!.status, "working");
+  assert.equal(kids[0]!.title, "运行完整回归测试");
+  assert.equal(await rs.descends("antigravity", "ag-child-running", "ag-parent-idle"), true);
+  assert.equal(await rs.descends("antigravity", "ag-other", "ag-parent-idle"), false);
+
+  const childDetail = await rt.detail(entries[0]!.projectId, "ag-child-running", 20);
+  assert.equal(childDetail.session.canSend, false);
+  assert.equal(childDetail.messages[0]?.text, "运行完整回归测试");
+});

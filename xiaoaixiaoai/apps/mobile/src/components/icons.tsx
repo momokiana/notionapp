@@ -44,7 +44,8 @@ export type CuteIconName =
   | "laptop"
   | "gear"
   | "plane"
-  | "image";
+  | "image"
+  | "wallet";
 
 const S = { strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
 
@@ -269,6 +270,14 @@ function shape(name: CuteIconName, ink: string, fill: string, w: number) {
       );
     case "plane":
       return <Path d="M20.5 3.8 L3.8 10.6 L10.4 13.4 L13.2 20.2 Z M10.4 13.4 L20.5 3.8" {...body} />;
+    case "wallet":
+      return (
+        <G>
+          <Rect x={3.5} y={6} width={17} height={12.5} rx={3.5} {...body} />
+          <Path d="M15.5 10.5 H20.5 V14 H15.5 C14.5 14 13.8 13.3 13.8 12.25 C13.8 11.2 14.5 10.5 15.5 10.5 Z" {...line} />
+          <Circle cx={16} cy={12.25} r={0.9} fill={ink} />
+        </G>
+      );
     case "image":
       // A little photo: a sun over a soft hill, for attaching pictures.
       return (

@@ -10,7 +10,7 @@ import {
   type DshDirectoryProject, type DshDirectoryReply, type DshDirectoryRequest,
   type LaunchOption, type RpcErrorCode, type RuntimeCatalog, type RuntimePendingQuestion, type RuntimeProject, type RuntimeQuestionItem,
   type RuntimeSession, type RuntimeSessionAnswer, type RuntimeSessionDetail, type RuntimeSessionMessage,
-  type RuntimeSessionReceipt, type RuntimeSessionSend, type RuntimeTaskEvent, type SessionRuntime, type SpaceInfo,
+  type RuntimeSessionReceipt, type RuntimeSessionSend, type RuntimeTaskEvent, type SessionRuntime, type SpaceInfo, type SubSession,
 } from "@xiaoaixiaoai/protocol";
 import { AntigravityRuntime } from "./antigravity-runtime.ts";
 import { CodexLocalRuntime } from "./codex-local-runtime.ts";
@@ -67,6 +67,8 @@ export interface RuntimeAdapter {
   knownFolders?(): Promise<RuntimeKnownFolder[]> | RuntimeKnownFolder[];
   create?(input: RuntimeCreateInput): Promise<RuntimeCreatedSession>;
   interrupt?(projectId: string, sessionId: string): Promise<{ interrupted: boolean }>;
+  children?(sessionId: string): Array<Omit<SubSession, "key"> & { sessionId: string }> | Promise<Array<Omit<SubSession, "key"> & { sessionId: string }>>;
+  descends?(sessionId: string, rootSessionId: string): boolean | Promise<boolean>;
   close?(): void;
 }
 
@@ -132,6 +134,17 @@ function readPrivateText(rawPath: string, limit: number): string {
 }
 function readPrivate(path: string, limit: number): unknown { return JSON.parse(readPrivateText(path, limit)); }
 
+function subagentCounts(raw: Record<string, unknown>): { subagents?: number; subagentsWorking?: number } {
+  const out: { subagents?: number; subagentsWorking?: number } = {};
+  if (typeof raw.subagents === "number" && Number.isSafeInteger(raw.subagents) && raw.subagents >= 0) {
+    out.subagents = raw.subagents;
+  }
+  if (typeof raw.subagentsWorking === "number" && Number.isSafeInteger(raw.subagentsWorking) && raw.subagentsWorking >= 0) {
+    out.subagentsWorking = raw.subagentsWorking;
+  }
+  return out;
+}
+
 /** Never accept paths, history, prompts, or executable values returned by a bridge. */
 function projects(runtime: SessionRuntime, value: unknown, allowAntigravitySend = false): RuntimeProject[] {
   if (!Array.isArray(value) || value.length > 20) throw OFFLINE();
@@ -152,6 +165,7 @@ function projects(runtime: SessionRuntime, value: unknown, allowAntigravitySend 
         state: s.state as RuntimeSession["state"],
         canSend: (runtime !== "antigravity" || allowAntigravitySend) && s.canSend === true,
         ...(typeof s.updatedAt === "number" && Number.isSafeInteger(s.updatedAt) && s.updatedAt > 0 ? { updatedAt: s.updatedAt } : {}),
+        ...subagentCounts(s),
       };
     });
     return { runtime, id: p.id, title: label(p.title, "未命名项目"), sessions };
@@ -239,7 +253,7 @@ function directoryReply(value: unknown, input: DshDirectoryRequest, allowAntigra
     return {
       ...(item.runtime !== undefined ? { runtime: item.runtime as SessionRuntime } : {}),
       project,
-      session: { id: sessionName.id, title: sessionName.title, state, canSend, ...(updatedAt !== undefined ? { updatedAt } : {}) },
+      session: { id: sessionName.id, title: sessionName.title, state, canSend, ...(updatedAt !== undefined ? { updatedAt } : {}), ...subagentCounts(s) },
       archived: item.archived,
     };
   });
@@ -489,6 +503,7 @@ function sanitizeDetail(runtime: SessionRuntime, raw: Record<string, unknown>, a
       state: session.state as RuntimeSession["state"],
       canSend,
       ...(updatedAt !== undefined ? { updatedAt } : {}),
+      ...subagentCounts(session),
     },
     messages,
     pendingQuestions,
@@ -611,8 +626,10 @@ export class RuntimeSessions {
         } catch {
           return [];
         }
+        const effRank = (e: UnifiedRuntimeEntry) =>
+          (e.session.state === "idle" && (e.session.subagentsWorking ?? 0) > 0) ? rankState.running : rankState[e.session.state];
         collected.sort((a, b) =>
-          (rankState[a.session.state] - rankState[b.session.state]) ||
+          (effRank(a) - effRank(b)) ||
           ((b.session.updatedAt ?? 0) - (a.session.updatedAt ?? 0)));
         return collected.slice(0, 80);
       }),
@@ -758,6 +775,42 @@ export class RuntimeSessions {
     }
     const raw = await adapter.detail(p.projectId, p.sessionId, p.limit);
     return sanitizeDetail(runtime, raw as unknown as Record<string, unknown>, runtime === "antigravity" && adapter.sendEnabled === true);
+  }
+
+  async children(input: { runtime: SessionRuntime; projectId: string; sessionId: string; sub?: string }): Promise<SubSession[]> {
+    const adapter = this.adapters[input.runtime];
+    if (!adapter || typeof adapter.children !== "function") return [];
+    let querySessionId = input.sessionId;
+    if (input.sub) {
+      const parsed = parseRuntimeTarget(input.sub);
+      if (!parsed || parsed.runtime !== input.runtime) return [];
+      const allowed = await this.descends(input.runtime, parsed.sessionId, input.sessionId);
+      if (!allowed) return [];
+      querySessionId = parsed.sessionId;
+    }
+    const raw = await adapter.children(querySessionId);
+    return raw.map((c) => ({
+      key: encodeRuntimeSessionKey(input.runtime, input.projectId, c.sessionId),
+      parent: encodeRuntimeSessionKey(input.runtime, input.projectId, c.parent),
+      ...(c.parentCall ? { parentCall: c.parentCall } : {}),
+      harness: c.harness,
+      ...(c.title ? { title: c.title } : {}),
+      ...(c.preview ? { preview: c.preview } : {}),
+      ...(c.model ? { model: c.model } : {}),
+      status: c.status,
+      ...(c.statusSince !== undefined ? { statusSince: c.statusSince } : {}),
+      ...(c.startedAt !== undefined ? { startedAt: c.startedAt } : {}),
+      updatedAt: c.updatedAt,
+      ...(c.costUsd !== undefined ? { costUsd: c.costUsd } : {}),
+      children: c.children,
+    }));
+  }
+
+  async descends(runtime: SessionRuntime, sessionId: string, rootSessionId: string): Promise<boolean> {
+    if (sessionId === rootSessionId) return true;
+    const adapter = this.adapters[runtime];
+    if (!adapter || typeof adapter.descends !== "function") return false;
+    return await adapter.descends(sessionId, rootSessionId);
   }
 
   async send(input: unknown): Promise<RuntimeSessionReceipt> {

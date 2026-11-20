@@ -1,6 +1,16 @@
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
-import type { Device, DeviceKind, Notice, RuntimeTaskEvent, RuntimeTaskNoticeTarget } from "@xiaoaixiaoai/protocol";
+import type {
+  AssistantMemoryItem,
+  Device,
+  DeviceKind,
+  LedgerConfig,
+  LedgerFixedExpense,
+  LedgerTransaction,
+  Notice,
+  RuntimeTaskEvent,
+  RuntimeTaskNoticeTarget,
+} from "@xiaoaixiaoai/protocol";
 import {
   RUNTIME_TASK_MAX_ACTIVE,
   RUNTIME_TASK_MAX_CLAIMS_PER_HOST,
@@ -142,6 +152,35 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
       CREATE INDEX IF NOT EXISTS events_device ON events (device, ts);
+      CREATE TABLE IF NOT EXISTS ledger_fixed (
+        id TEXT PRIMARY KEY,
+        created_at INTEGER NOT NULL,
+        json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS ledger_transactions (
+        id TEXT PRIMARY KEY,
+        ts INTEGER NOT NULL,
+        ym TEXT NOT NULL,
+        ymd TEXT NOT NULL,
+        external_id TEXT UNIQUE,
+        json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS ledger_tx_ym ON ledger_transactions (ym, ts);
+      CREATE INDEX IF NOT EXISTS ledger_tx_ts ON ledger_transactions (ts);
+      CREATE TABLE IF NOT EXISTS assistant_memories (
+        id TEXT PRIMARY KEY,
+        category TEXT NOT NULL,
+        slot_key TEXT,
+        content TEXT NOT NULL,
+        importance INTEGER NOT NULL DEFAULT 2,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        expires_at INTEGER,
+        source TEXT NOT NULL DEFAULT 'assistant',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS assistant_memories_updated ON assistant_memories (updated_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS assistant_memories_slot ON assistant_memories (category, slot_key) WHERE slot_key IS NOT NULL;
     `);
     this.pruneRuntimeTasks(Date.now());
   }
@@ -470,5 +509,256 @@ export class Store {
       createdAt: r.created_at,
       lastSeenAt: r.last_seen_at,
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // Ledger plugin storage
+  // -------------------------------------------------------------------------
+
+  getLedgerConfig(): LedgerConfig {
+    const saved = this.getSetting<LedgerConfig>("ledger_config");
+    return {
+      enabled: saved?.enabled ?? false,
+      balanceCents: typeof saved?.balanceCents === "number" ? saved.balanceCents : null,
+      savingsGoalCents: typeof saved?.savingsGoalCents === "number" ? Math.max(0, saved.savingsGoalCents) : 0,
+      balanceUpdatedAt: typeof saved?.balanceUpdatedAt === "number" ? saved.balanceUpdatedAt : null,
+    };
+  }
+
+  putLedgerConfig(cfg: LedgerConfig): void {
+    this.putSetting("ledger_config", cfg);
+  }
+
+  listLedgerFixed(): LedgerFixedExpense[] {
+    const rows = this.db.prepare("SELECT json FROM ledger_fixed ORDER BY created_at ASC, id ASC").all() as Array<{ json: string }>;
+    return rows.map((r) => JSON.parse(r.json) as LedgerFixedExpense);
+  }
+
+  getLedgerFixed(id: string): LedgerFixedExpense | undefined {
+    const row = this.db.prepare("SELECT json FROM ledger_fixed WHERE id = ?").get(id) as { json: string } | undefined;
+    return row ? (JSON.parse(row.json) as LedgerFixedExpense) : undefined;
+  }
+
+  putLedgerFixed(item: LedgerFixedExpense): void {
+    this.db.prepare("INSERT OR REPLACE INTO ledger_fixed (id, created_at, json) VALUES (?, ?, ?)").run(item.id, item.createdAt, JSON.stringify(item));
+  }
+
+  deleteLedgerFixed(id: string): boolean {
+    return Number(this.db.prepare("DELETE FROM ledger_fixed WHERE id = ?").run(id).changes) > 0;
+  }
+
+  listLedgerTransactionsByMonth(ym: string): LedgerTransaction[] {
+    const rows = this.db.prepare("SELECT json FROM ledger_transactions WHERE ym = ? ORDER BY ts ASC, id ASC").all(ym) as Array<{ json: string }>;
+    return rows.map((r) => JSON.parse(r.json) as LedgerTransaction);
+  }
+
+  listRecentLedgerTransactions(limit = 120): LedgerTransaction[] {
+    const rows = this.db.prepare("SELECT json FROM ledger_transactions ORDER BY ts DESC, id DESC LIMIT ?").all(limit) as Array<{ json: string }>;
+    return rows.map((r) => JSON.parse(r.json) as LedgerTransaction);
+  }
+
+  getLedgerTransaction(id: string): LedgerTransaction | undefined {
+    const row = this.db.prepare("SELECT json FROM ledger_transactions WHERE id = ?").get(id) as { json: string } | undefined;
+    return row ? (JSON.parse(row.json) as LedgerTransaction) : undefined;
+  }
+
+  insertLedgerTransactionAtomic(tx: LedgerTransaction, adjustBalance: boolean): { duplicate: boolean; existing?: LedgerTransaction } {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      if (tx.externalId) {
+        const dup = this.db.prepare("SELECT json FROM ledger_transactions WHERE external_id = ?").get(tx.externalId) as { json: string } | undefined;
+        if (dup) {
+          this.db.exec("COMMIT");
+          return { duplicate: true, existing: JSON.parse(dup.json) as LedgerTransaction };
+        }
+      }
+      this.db
+        .prepare("INSERT INTO ledger_transactions (id, ts, ym, ymd, external_id, json) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(tx.id, tx.ts, tx.ym, tx.ymd, tx.externalId ?? null, JSON.stringify(tx));
+      if (adjustBalance) {
+        const cfg = this.getLedgerConfig();
+        if (cfg.balanceCents !== null) {
+          const delta = tx.direction === "income" ? tx.amountCents : -tx.amountCents;
+          this.putLedgerConfig({ ...cfg, balanceCents: cfg.balanceCents + delta, balanceUpdatedAt: tx.ts });
+        }
+      }
+      if (tx.fixedId && tx.direction === "expense") {
+        const fixed = this.getLedgerFixed(tx.fixedId);
+        if (fixed && fixed.paidYm !== tx.ym) this.putLedgerFixed({ ...fixed, paidYm: tx.ym });
+      }
+      this.db.exec("COMMIT");
+      return { duplicate: false };
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  updateLedgerTransactionAtomic(prev: LedgerTransaction, next: LedgerTransaction, now: number): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare("UPDATE ledger_transactions SET ts = ?, ym = ?, ymd = ?, json = ? WHERE id = ?")
+        .run(next.ts, next.ym, next.ymd, JSON.stringify(next), next.id);
+      const prevDelta = prev.direction === "income" ? prev.amountCents : -prev.amountCents;
+      const nextDelta = next.direction === "income" ? next.amountCents : -next.amountCents;
+      const diff = nextDelta - prevDelta;
+      if (diff !== 0) {
+        const cfg = this.getLedgerConfig();
+        if (cfg.balanceCents !== null) {
+          this.putLedgerConfig({ ...cfg, balanceCents: cfg.balanceCents + diff, balanceUpdatedAt: now });
+        }
+      }
+      if (prev.fixedId && prev.fixedId !== next.fixedId) {
+        const oldFixed = this.getLedgerFixed(prev.fixedId);
+        if (oldFixed && oldFixed.paidYm === prev.ym) this.putLedgerFixed({ ...oldFixed, paidYm: null });
+      }
+      if (next.fixedId && next.direction === "expense") {
+        const newFixed = this.getLedgerFixed(next.fixedId);
+        if (newFixed && newFixed.paidYm !== next.ym) this.putLedgerFixed({ ...newFixed, paidYm: next.ym });
+      }
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  deleteLedgerTransactionAtomic(id: string, adjustBalance: boolean, now: number): LedgerTransaction | undefined {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.getLedgerTransaction(id);
+      if (!existing) {
+        this.db.exec("COMMIT");
+        return undefined;
+      }
+      this.db.prepare("DELETE FROM ledger_transactions WHERE id = ?").run(id);
+      if (adjustBalance) {
+        const cfg = this.getLedgerConfig();
+        if (cfg.balanceCents !== null) {
+          const revert = existing.direction === "income" ? -existing.amountCents : existing.amountCents;
+          this.putLedgerConfig({ ...cfg, balanceCents: cfg.balanceCents + revert, balanceUpdatedAt: now });
+        }
+      }
+      if (existing.fixedId) {
+        const fixed = this.getLedgerFixed(existing.fixedId);
+        if (fixed && fixed.paidYm === existing.ym) this.putLedgerFixed({ ...fixed, paidYm: null });
+      }
+      this.db.exec("COMMIT");
+      return existing;
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  clearLedgerData(): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db.prepare("DELETE FROM ledger_transactions").run();
+      this.db.prepare("DELETE FROM ledger_fixed").run();
+      const cfg = this.getLedgerConfig();
+      this.putLedgerConfig({ enabled: cfg.enabled, balanceCents: null, savingsGoalCents: 0, balanceUpdatedAt: null });
+      this.db.exec("COMMIT");
+    } catch (e) {
+      this.db.exec("ROLLBACK");
+      throw e;
+    }
+  }
+
+  // Assistant long-term personal memory bank (server canonical storage).
+
+  private rowToMemory(r: {
+    id: string;
+    category: string;
+    slot_key: string | null;
+    content: string;
+    importance: number;
+    pinned: number;
+    expires_at: number | null;
+    source: string;
+    created_at: number;
+    updated_at: number;
+  }): AssistantMemoryItem {
+    return {
+      id: r.id,
+      category: r.category as AssistantMemoryItem["category"],
+      ...(r.slot_key ? { slotKey: r.slot_key } : {}),
+      content: r.content,
+      importance: (r.importance >= 3 ? 3 : r.importance <= 1 ? 1 : 2) as AssistantMemoryItem["importance"],
+      ...(r.pinned === 1 ? { pinned: true } : {}),
+      ...(typeof r.expires_at === "number" ? { expiresAt: r.expires_at } : {}),
+      source: (r.source === "user" || r.source === "seed" ? r.source : "assistant") as AssistantMemoryItem["source"],
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  listMemories(): AssistantMemoryItem[] {
+    const rows = this.db
+      .prepare(
+        "SELECT id, category, slot_key, content, importance, pinned, expires_at, source, created_at, updated_at FROM assistant_memories ORDER BY pinned DESC, importance DESC, updated_at DESC",
+      )
+      .all() as Array<Parameters<Store["rowToMemory"]>[0]>;
+    return rows.map((r) => this.rowToMemory(r));
+  }
+
+  getMemory(id: string): AssistantMemoryItem | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT id, category, slot_key, content, importance, pinned, expires_at, source, created_at, updated_at FROM assistant_memories WHERE id = ?",
+      )
+      .get(id) as Parameters<Store["rowToMemory"]>[0] | undefined;
+    return row ? this.rowToMemory(row) : undefined;
+  }
+
+  findMemoryBySlot(category: string, slotKey: string): AssistantMemoryItem | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT id, category, slot_key, content, importance, pinned, expires_at, source, created_at, updated_at FROM assistant_memories WHERE category = ? AND slot_key = ?",
+      )
+      .get(category, slotKey) as Parameters<Store["rowToMemory"]>[0] | undefined;
+    return row ? this.rowToMemory(row) : undefined;
+  }
+
+  putMemory(item: AssistantMemoryItem): void {
+    this.db
+      .prepare(
+        `INSERT INTO assistant_memories (id, category, slot_key, content, importance, pinned, expires_at, source, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           category = excluded.category,
+           slot_key = excluded.slot_key,
+           content = excluded.content,
+           importance = excluded.importance,
+           pinned = excluded.pinned,
+           expires_at = excluded.expires_at,
+           source = excluded.source,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        item.id,
+        item.category,
+        item.slotKey ?? null,
+        item.content,
+        item.importance,
+        item.pinned ? 1 : 0,
+        item.expiresAt ?? null,
+        item.source,
+        item.createdAt,
+        item.updatedAt,
+      );
+  }
+
+  deleteMemory(id: string): boolean {
+    return Number(this.db.prepare("DELETE FROM assistant_memories WHERE id = ?").run(id).changes) > 0;
+  }
+
+  clearMemories(): number {
+    return Number(this.db.prepare("DELETE FROM assistant_memories").run().changes);
+  }
+
+  pruneExpiredMemories(now: number): number {
+    return Number(this.db.prepare("DELETE FROM assistant_memories WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now).changes);
   }
 }

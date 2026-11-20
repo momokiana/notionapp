@@ -163,13 +163,27 @@ export class UnifloAdapter {
       const list = (await this.get("/v1/sessions?limit=300")) as UnifloSession[];
       const before = this.sig();
       this.sessions = list.filter((s) => !s.parent);
+      const parentOf = new Map<string, string>();
+      for (const s of list) {
+        if (s.parent && s.parent !== s.key) parentOf.set(s.key, s.parent);
+      }
       this.childCounts = new Map();
       for (const s of list) {
         if (!s.parent) continue;
         const c = this.childCounts.get(s.parent) ?? [0, 0];
         c[0]++;
-        if (s.status === "work") c[1]++;
         this.childCounts.set(s.parent, c);
+        if (s.status !== "work") continue;
+        // Roll active subagents up to root ancestors so paused parents stay working.
+        let anc: string | undefined = s.parent;
+        const seen = new Set<string>([s.key]);
+        for (let depth = 0; anc && depth < 12 && !seen.has(anc); depth++) {
+          seen.add(anc);
+          const ac = this.childCounts.get(anc) ?? [0, 0];
+          ac[1]++;
+          this.childCounts.set(anc, ac);
+          anc = parentOf.get(anc);
+        }
       }
       // Named sessions outside the recent list go stale too: read them again.
       let namedChanged = false;
@@ -422,7 +436,7 @@ export class UnifloAdapter {
       title: cleanTitle(s.title),
       preview: s.preview ? s.preview.replace(/<\/?[\w-]+[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 300) || undefined : undefined,
       model: s.model,
-      status: s.status === "work" ? "working" : "idle",
+      status: s.status === "work" || (this.childCounts.get(s.key)?.[1] ?? 0) > 0 ? "working" : "idle",
       statusSince: s.status_since,
       startedAt: s.started_at,
       updatedAt: s.updated_at,

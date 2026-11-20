@@ -22,6 +22,7 @@ import {
   type RuntimeSessionSend,
   type RuntimeSessionState,
   type RuntimeTaskEvent,
+  type SubSession,
 } from "@xiaoaixiaoai/protocol";
 import { VERSION } from "@xiaoaixiaoai/update";
 import { localAppData, onPath } from "./platform.ts";
@@ -56,6 +57,11 @@ interface ThreadRow {
   archived: number;
   updated_at: number;
   updated_at_ms: number | null;
+  source?: string | null;
+  thread_source?: string | null;
+  attached_thread_parent_id?: string | null;
+  agent_nickname?: string | null;
+  agent_role?: string | null;
 }
 
 interface ActiveTurn {
@@ -140,11 +146,34 @@ function findDbPath(codexHome: string): string | undefined {
   return candidates.length ? join(codexHome, candidates[0]!.name) : undefined;
 }
 
+function threadExtraSelect(db: DatabaseSync): string {
+  const cols = new Set((db.prepare(`PRAGMA table_info(threads)`).all() as Array<{ name?: string }>).map((c) => c.name));
+  const extras = ["source", "thread_source", "attached_thread_parent_id", "agent_nickname", "agent_role"].filter((c) => cols.has(c));
+  return extras.length ? `, ${extras.join(", ")}` : "";
+}
+
+function parseParentThreadId(row: ThreadRow): string | undefined {
+  if (typeof row.attached_thread_parent_id === "string" && row.attached_thread_parent_id.trim()) {
+    return row.attached_thread_parent_id.trim();
+  }
+  if (typeof row.source !== "string" || !row.source.trim().startsWith("{")) return undefined;
+  try {
+    const parsed = JSON.parse(row.source) as Record<string, unknown>;
+    const sub = parsed?.subagent && typeof parsed.subagent === "object" ? (parsed.subagent as Record<string, unknown>) : undefined;
+    const spawn = sub?.thread_spawn && typeof sub.thread_spawn === "object" ? (sub.thread_spawn as Record<string, unknown>) : undefined;
+    const pid = typeof spawn?.parent_thread_id === "string" ? spawn.parent_thread_id.trim() : typeof sub?.parent_thread_id === "string" ? sub.parent_thread_id.trim() : "";
+    return pid && pid !== row.id ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function queryThreads(dbPath: string, limit: number): ThreadRow[] {
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
   try {
+    const extra = threadExtraSelect(db);
     return db.prepare(`
-      SELECT id, rollout_path, cwd, title, name, first_user_message, archived, updated_at, updated_at_ms
+      SELECT id, rollout_path, cwd, title, name, first_user_message, archived, updated_at, updated_at_ms${extra}
       FROM threads
       WHERE (thread_source IS NULL OR thread_source = 'user')
       ORDER BY COALESCE(archived, 0) ASC, COALESCE(updated_at_ms, updated_at * 1000) DESC
@@ -155,15 +184,36 @@ function queryThreads(dbPath: string, limit: number): ThreadRow[] {
   }
 }
 
-function queryThreadById(dbPath: string, threadId: string): ThreadRow | undefined {
+function queryThreadById(dbPath: string, threadId: string, includeSubagent = false): ThreadRow | undefined {
   const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
   try {
+    const extra = threadExtraSelect(db);
+    const whereUser = includeSubagent ? "" : " AND (thread_source IS NULL OR thread_source = 'user')";
     return db.prepare(`
-      SELECT id, rollout_path, cwd, title, name, first_user_message, archived, updated_at, updated_at_ms
+      SELECT id, rollout_path, cwd, title, name, first_user_message, archived, updated_at, updated_at_ms${extra}
       FROM threads
-      WHERE id = ? AND (thread_source IS NULL OR thread_source = 'user')
+      WHERE id = ?${whereUser}
       LIMIT 1
     `).get(threadId) as unknown as ThreadRow | undefined;
+  } finally {
+    db.close();
+  }
+}
+
+function querySubagentRows(dbPath: string): ThreadRow[] {
+  const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
+  try {
+    const extra = threadExtraSelect(db);
+    if (!extra.includes("source") && !extra.includes("attached_thread_parent_id")) return [];
+    return db.prepare(`
+      SELECT id, rollout_path, cwd, title, name, first_user_message, archived, updated_at, updated_at_ms${extra}
+      FROM threads
+      WHERE thread_source IS NOT NULL AND thread_source != 'user' AND COALESCE(archived, 0) = 0
+      ORDER BY COALESCE(updated_at_ms, updated_at * 1000) DESC
+      LIMIT 200
+    `).all() as unknown as ThreadRow[];
+  } catch {
+    return [];
   } finally {
     db.close();
   }
@@ -348,15 +398,50 @@ export class CodexLocalRuntime {
     return [...extras, ...dbRows].sort((a, b) => rowTs(b) - rowTs(a)).slice(0, limit);
   }
 
-  private findRow(sessionId: string): ThreadRow | undefined {
+  private findRow(sessionId: string, includeSubagent = false): ThreadRow | undefined {
     this.pruneRecentCreated();
     const dbPath = findDbPath(this.codexHome);
-    const dbRow = dbPath ? queryThreadById(dbPath, sessionId) : undefined;
+    const dbRow = dbPath ? queryThreadById(dbPath, sessionId, includeSubagent) : undefined;
     if (dbRow && isRuntimeId(dbRow.id)) {
       this.recentCreated.delete(sessionId);
       return dbRow;
     }
     return this.recentCreated.get(sessionId)?.row;
+  }
+
+  private subagentIndex() {
+    const dbPath = findDbPath(this.codexHome);
+    const rows = dbPath ? querySubagentRows(dbPath).filter((r) => isRuntimeId(r.id)) : [];
+    const parentOf = new Map<string, string>();
+    const childrenByParent = new Map<string, Array<{ row: ThreadRow; working: boolean }>>();
+    const countsByParent = new Map<string, [number, number]>();
+    for (const r of rows) {
+      const pid = parseParentThreadId(r);
+      if (pid) parentOf.set(r.id, pid);
+    }
+    for (const r of rows) {
+      const pid = parentOf.get(r.id);
+      if (!pid) continue;
+      const working = probeState(r, this.activeTurns.get(r.id)) === "running";
+      const list = childrenByParent.get(pid) ?? [];
+      list.push({ row: r, working });
+      childrenByParent.set(pid, list);
+      const direct = countsByParent.get(pid) ?? [0, 0];
+      direct[0]++;
+      countsByParent.set(pid, direct);
+      if (working) {
+        let anc: string | undefined = pid;
+        const seen = new Set<string>([r.id]);
+        for (let depth = 0; anc && depth < 12 && !seen.has(anc); depth++) {
+          seen.add(anc);
+          const ac = countsByParent.get(anc) ?? [0, 0];
+          ac[1]++;
+          countsByParent.set(anc, ac);
+          anc = parentOf.get(anc);
+        }
+      }
+    }
+    return { parentOf, childrenByParent, countsByParent };
   }
 
   knownFolders(): Array<{ id: string; title: string; path: string; updatedAt?: number }> {
@@ -378,7 +463,7 @@ export class CodexLocalRuntime {
     return [...seen.values()].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   }
 
-  private toEntry(row: ThreadRow): { project: DshDirectoryProject; session: RuntimeSession; archived: boolean } {
+  private toEntry(row: ThreadRow, counts?: [number, number], readOnlyChild = false): { project: DshDirectoryProject; session: RuntimeSession; archived: boolean } {
     const project = projectForCwd(row.cwd);
     const archived = row.archived === 1;
     const state = probeState(row, this.activeTurns.get(row.id));
@@ -387,7 +472,7 @@ export class CodexLocalRuntime {
       : typeof row.updated_at === "number" && row.updated_at > 0
         ? row.updated_at * 1000
         : undefined;
-    const rawTitle = cleanLabel(row.name || row.title || row.first_user_message, `Codex ${row.id.slice(-8)}`);
+    const rawTitle = cleanLabel(row.name || row.agent_nickname || row.title || row.first_user_message, `Codex ${row.id.slice(-8)}`);
     return {
       project: { runtime: "codex", id: project.id, title: project.title },
       archived,
@@ -395,8 +480,9 @@ export class CodexLocalRuntime {
         id: row.id,
         title: rawTitle,
         state,
-        canSend: this.enableSend && !archived && state !== "running" && state !== "attention" && !!row.cwd && existsSync(row.cwd),
+        canSend: !readOnlyChild && this.enableSend && !archived && state !== "running" && state !== "attention" && !!row.cwd && existsSync(row.cwd),
         ...(updatedAt !== undefined ? { updatedAt } : {}),
+        ...(counts?.[0] ? { subagents: counts[0], subagentsWorking: counts[1] } : {}),
       },
     };
   }
@@ -404,11 +490,12 @@ export class CodexLocalRuntime {
   async list(): Promise<RuntimeProject[]> {
     const rows = this.listRows(THREAD_LIST_LIMIT);
     if (!rows.length) return [];
+    const { countsByParent } = this.subagentIndex();
     const grouped = new Map<string, RuntimeProject>();
     let sessionCount = 0;
     for (const row of rows) {
       if (sessionCount >= 100) break;
-      const entry = this.toEntry(row);
+      const entry = this.toEntry(row, countsByParent.get(row.id));
       let project = grouped.get(entry.project.id);
       if (!project) {
         if (grouped.size >= 20) continue;
@@ -423,7 +510,8 @@ export class CodexLocalRuntime {
 
   async browse(input: DshDirectoryRequest): Promise<DshDirectoryReply> {
     const rows = this.listRows(input.view === "exact" ? 200 : THREAD_LIST_LIMIT);
-    const items = rows.map((row) => this.toEntry(row));
+    const { countsByParent } = this.subagentIndex();
+    const items = rows.map((row) => this.toEntry(row, countsByParent.get(row.id)));
     if (input.view === "projects") {
       const map = new Map<string, DshDirectoryProject>();
       for (const item of items) if (!map.has(item.project.id)) map.set(item.project.id, item.project);
@@ -453,10 +541,57 @@ export class CodexLocalRuntime {
     };
   }
 
+  children(parentSessionId: string): Array<Omit<SubSession, "key"> & { sessionId: string }> {
+    if (!isRuntimeId(parentSessionId)) return [];
+    const { childrenByParent, countsByParent } = this.subagentIndex();
+    const list = childrenByParent.get(parentSessionId) ?? [];
+    return list
+      .map(({ row, working }) => {
+        const subCounts = countsByParent.get(row.id);
+        const effWorking = working || (subCounts?.[1] ?? 0) > 0;
+        const updatedAt = typeof row.updated_at_ms === "number" && row.updated_at_ms > 0
+          ? row.updated_at_ms
+          : typeof row.updated_at === "number" && row.updated_at > 0
+            ? row.updated_at * 1000
+            : Date.now();
+        const title = cleanLabel(
+          [row.agent_nickname, row.agent_role ? `(${row.agent_role})` : ""].filter(Boolean).join(" ") || row.name || row.title || row.first_user_message,
+          `Codex 子线程 ${row.id.slice(-8)}`,
+        );
+        const preview = cleanLabel(row.first_user_message || row.title, "");
+        return {
+          sessionId: row.id,
+          parent: parentSessionId,
+          harness: "codex",
+          title,
+          ...(preview && preview !== title ? { preview } : {}),
+          status: (effWorking ? "working" : "idle") as SubSession["status"],
+          updatedAt,
+          children: subCounts?.[0] ?? 0,
+        };
+      })
+      .sort((a, b) => Number(b.status === "working") - Number(a.status === "working") || b.updatedAt - a.updatedAt);
+  }
+
+  descends(sessionId: string, rootSessionId: string): boolean {
+    if (!isRuntimeId(sessionId) || !isRuntimeId(rootSessionId)) return false;
+    const { parentOf } = this.subagentIndex();
+    let cur: string | undefined = sessionId;
+    const seen = new Set<string>();
+    for (let i = 0; cur && i < 12 && !seen.has(cur); i++) {
+      if (cur === rootSessionId) return true;
+      seen.add(cur);
+      cur = parentOf.get(cur);
+    }
+    return false;
+  }
+
   async detail(projectId: string, sessionId: string, limit = 60): Promise<RuntimeSessionDetail> {
-    const row = this.findRow(sessionId);
+    const row = this.findRow(sessionId, true);
     if (!row || !isRuntimeId(row.id)) throw new RuntimeError("not_found", "未找到对应的本地 Codex 会话。");
-    const entry = this.toEntry(row);
+    const isChild = Boolean(parseParentThreadId(row) || (row.thread_source != null && row.thread_source !== "user"));
+    const { countsByParent } = this.subagentIndex();
+    const entry = this.toEntry(row, countsByParent.get(row.id), isChild);
     if (entry.project.id !== projectId) throw new RuntimeError("not_found", "该 Codex 会话不属于所选项目。");
     const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 60, 1), RUNTIME_DETAIL_LIMIT);
     let messages = row.rollout_path && existsSync(row.rollout_path) ? parseRolloutMessages(row.rollout_path, boundedLimit) : [];

@@ -3,9 +3,10 @@
  * a notification when an agent needs you, finishes, or a reminder is due.
  */
 import { useEffect } from "react";
-import { PermissionsAndroid, Platform } from "react-native";
+import { AppState, PermissionsAndroid, Platform } from "react-native";
 import { create } from "zustand";
 import { XiaoaiNative } from "../../modules/xiaoaixiaoai-native";
+import { applog } from "./applog";
 import { useSettings } from "./store";
 import { loadToken } from "./auth";
 import { isMockServer } from "./mock";
@@ -27,7 +28,15 @@ export function refreshAlertState() {
   useAlerts.setState({ connected: s.connected, notificationsAllowed: s.notificationsAllowed, batteryUnrestricted: s.batteryUnrestricted });
 }
 
-XiaoaiNative?.addListener("onNotifier", (e) => useAlerts.setState({ connected: e.connected }));
+XiaoaiNative?.addListener("onNotifier", (e) => {
+  useAlerts.setState({ connected: e.connected });
+  refreshAlertState();
+  applog(e.connected ? "info" : "warn", "notify", `notifier ${e.connected ? "connected" : "disconnected"}${e.reason ? ` (${e.reason})` : ""}`);
+});
+
+export function openAppDetails(): void {
+  XiaoaiNative?.openAppDetails?.();
+}
 
 /** Asks for the notification permission (Android 13+). */
 export async function askNotificationPermission(): Promise<boolean> {
@@ -69,6 +78,13 @@ export function useAlertSync() {
     if (!hydrated) return;
     void sync();
   }, [hydrated, server, deviceId, on, blocked, done, progress, name]);
+  useEffect(() => {
+    if (!hydrated) return;
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next === "active") void sync();
+    });
+    return () => sub.remove();
+  }, [hydrated]);
   // First time on a real server: ask once, so alerts can show at all.
   useEffect(() => {
     if (!hydrated || asked || !server || isMockServer(server) || !XiaoaiNative) return;

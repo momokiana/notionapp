@@ -782,3 +782,21 @@ fixtureTest("/v5/create and /v5/cancel create sessions and interrupt active agen
   assert.deepEqual(interrupted, { interrupted: true });
   assert.deepEqual(cancelledCalls, [{ sessionId: "live" }]);
 });
+
+fixtureTest("idle DSH parent session reports active subagent counts when origin=subagent child is running", async (t) => {
+  const { DshRuntime, RuntimeSessions } = await import("../src/runtime-sessions.ts");
+  const f = await setup(t);
+  f.live.set("live", agent("live", "idle"));
+  f.items[f.items.findIndex((i) => i.sessionId === "live")] = summary("live", "Idle parent", { running: false });
+  f.live.set("child", agent("child", "running", "subagent"));
+  f.items[f.items.findIndex((i) => i.sessionId === "child")] = summary("child", "Working child", { origin: "subagent", parentSessionId: "live", running: true });
+  await f.start();
+
+  const rs = new RuntimeSessions("viewer", { dsh: new DshRuntime(f.socketPath) }, join(f.dir, "dispatch"), { publishAgents: true });
+  const list = await rs.list();
+  const second = list.projects.find((p) => p.id === "second")!;
+  const parent = second.sessions.find((s) => s.id === "live")!;
+  assert.equal(parent.state, "idle");
+  assert.equal(parent.subagents, 1);
+  assert.equal(parent.subagentsWorking, 1);
+});

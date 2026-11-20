@@ -36,6 +36,12 @@ interface XiaoaiNativeModule {
   notifierState(): { enabled: boolean; connected: boolean; notificationsAllowed: boolean; batteryUnrestricted: boolean };
   requestBatteryExemption(): void;
   openNotificationSettings(): void;
+  openAppDetails?(): void;
+  notificationAccessEnabled?(): boolean;
+  openNotificationAccessSettings?(): void;
+  setLedgerPluginEnabled?(enabled: boolean): void;
+  syncLedgerCache?(snapshotJson: string): void;
+  flushPendingLedger?(): void;
   testNotice(title: string, body: string): void;
   /** In-app update (absent in builds before it existed). */
   appVersion?(): string | null;
@@ -53,10 +59,11 @@ interface XiaoaiNativeModule {
   addListener(event: "onCallEvent", fn: (e: { json: string }) => void): EventSubscription;
   addListener(event: "onLevel", fn: (e: { mic: number; out: number }) => void): EventSubscription;
   addListener(event: "onNotice", fn: (e: { json: string }) => void): EventSubscription;
-  addListener(event: "onNotifier", fn: (e: { connected: boolean }) => void): EventSubscription;
+  addListener(event: "onNotifier", fn: (e: { connected: boolean; reason?: string }) => void): EventSubscription;
   addListener(event: "onUpdateProgress", fn: (e: { received: number; total: number }) => void): EventSubscription;
   addListener(event: "onSpeech", fn: (e: { utteranceId: string; state: "playing" | "ended" | "stopped" }) => void): EventSubscription;
   addListener(event: "onPttLevel", fn: (e: { level: number }) => void): EventSubscription;
+  addListener(event: "onLedgerUpdated", fn: () => void): EventSubscription;
 }
 
 /** A matching native APK is required; Expo Go and pre-0.1.5 APKs have no XiaoaiNative bridge. */

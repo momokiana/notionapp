@@ -14,6 +14,7 @@ import { isMockServer } from "../lib/mock";
 import { startAppLog } from "../lib/applog";
 import { fonts } from "../theme/tokens";
 import { useAlertSync } from "../lib/alerts";
+import { useLedgerSync } from "../lib/ledger";
 import { IconTile } from "../components/ui";
 import { useHarnessIconSync } from "../lib/harnessRemote";
 import { Portal, Snackbar } from "react-native-paper";
@@ -54,6 +55,7 @@ function Navigator() {
   const p = usePalette();
   useRelayLink();
   useAlertSync();
+  useLedgerSync();
   useHarnessIconSync();
   const dsh = useDshForegroundNotice();
   return (
@@ -86,6 +88,9 @@ function Navigator() {
         <Stack.Screen name="agent/[key]" options={{ title: "" }} />
         <Stack.Screen name="dsh-task" options={{ headerShown: false }} />
         <Stack.Screen name="assistant" options={{ headerShown: false, animation: "none" }} />
+        <Stack.Screen name="plugins" options={{ title: "功能插件", headerBackTitle: "返回" }} />
+        <Stack.Screen name="ledger" options={{ title: "微信账单与攒钱", headerBackTitle: "返回" }} />
+        <Stack.Screen name="persona" options={{ title: "爱弥斯人设与记忆库", headerBackTitle: "返回" }} />
       </Stack>
       <Portal>
         <Snackbar visible={dsh.notice > 0} onDismiss={dsh.dismiss} duration={4500} wrapperStyle={{ bottom: 64 }}>

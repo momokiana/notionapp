@@ -1,12 +1,16 @@
-import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Image, Pressable, ScrollView, View, type ListRenderItem } from "react-native";
 import { ActivityIndicator, Button, Snackbar, Text } from "react-native-paper";
+import * as Clipboard from "expo-clipboard";
+import * as Haptics from "expo-haptics";
 import Markdown from "react-native-markdown-display";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
-import type { Agent, ConvEvent, SubSession } from "@xiaoaixiaoai/protocol";
+import { effectiveAgentStatus, type Agent, type ConvEvent, type SubSession } from "@xiaoaixiaoai/protocol";
 import { call, subscribe } from "../lib/relay";
 import { splitPictures } from "../lib/attach";
+import { splitQuotedPrefix, type ReplyQuote } from "../lib/quote";
+import { formatChatGapLabel, shouldShowTimeDivider } from "../lib/chat-time";
 import { followSends, forget } from "../lib/outbox";
 import { useLive, usePending, useSettings, type PendingSend } from "../lib/store";
 import { fixCjkEmphasis, hasList } from "../lib/markdown";
@@ -17,6 +21,8 @@ import { EmptyState, TypingDots } from "./ui";
 import { ReplyDots, SendMark } from "./outbox";
 import { BusyMascot, Sparkle } from "./Mascot";
 import { CuteIcon } from "./icons";
+import { TimeDividerChip, useChatMarkdownRules } from "./chat-ui";
+import { MessageActions, QuoteSnippet } from "./quote-ui";
 
 const clock = (ts: number) => {
   const d = new Date(ts);
@@ -40,6 +46,7 @@ export type Row =
   /** Sent from this phone, not yet echoed by the session. */
   | { type: "pending"; id: string; text: string; ts: number; pictures?: string[]; send: PendingSend; agentKey: string }
   | { type: "turn_end"; id: string; ts: number }
+  | { type: "time_divider"; id: string; ts: number }
   | { type: "system"; id: string; text: string; summary: string };
 
 export function foldEvents(events: ConvEvent[]): Row[] {
@@ -274,14 +281,18 @@ function FoldChip({ label, icon, body, align = "center", a11y }: { label: string
 const UserBubble = memo(function UserBubble({ text, injected, ts, send, agentKey, pictures }: { text: string; injected?: string; ts?: number; send?: PendingSend; agentKey?: string; pictures?: string[] }) {
   const p = usePalette();
   const scale = useSettings((s) => s.textScale);
+  const actions = useContext(MsgActionsCtx);
   // Picture paths sent with a message (and Claude Code's [Image #n] marks) fold into a chip.
   const shown = useMemo(() => splitPictures(text), [text]);
+  const parsed = useMemo(() => splitQuotedPrefix(shown.text), [shown.text]);
+  const copyValue = parsed.body || shown.text;
   return (
     <View style={{ alignItems: "flex-end", paddingLeft: 48, gap: space.xs }}>
       {shown.text ? (
         <View style={{ backgroundColor: p.bubble, borderRadius: radius.card, borderBottomRightRadius: radius.xs, paddingHorizontal: space.lg, paddingVertical: space.md }}>
+          {parsed.quote ? <QuoteSnippet author={parsed.quote.author} text={parsed.quote.text} /> : null}
           <Text selectable style={{ color: p.ink, fontSize: 15.5 * scale, lineHeight: 15.5 * scale * 1.5 }}>
-            {shown.text}
+            {parsed.body}
           </Text>
         </View>
       ) : null}
@@ -295,42 +306,65 @@ const UserBubble = memo(function UserBubble({ text, injected, ts, send, agentKey
         <FoldChip label={`图片 ×${shown.count}`} icon="image-outline" body={shown.lines.join("\n")} align="flex-end" a11y={`这条消息带了 ${shown.count} 张图片`} />
       ) : null}
       {injected ? <FoldChip label="附加内容" icon="paperclip" body={injected} align="flex-end" a11y="这条消息的附加内容" /> : null}
-      {send && agentKey ? (
-        <SendMark send={send} agentKey={agentKey} time={clock(send.ts)} />
-      ) : ts ? (
-        <Text style={{ color: p.faint, fontSize: 11 }}>{clock(ts)}</Text>
-      ) : null}
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap", gap: space.sm }}>
+        {copyValue ? (
+          <MessageActions
+            align="right"
+            onCopy={actions ? () => actions.copy(copyValue) : undefined}
+            onQuote={actions?.quote ? () => actions.quote!({ author: "我", text: copyValue }) : undefined}
+          />
+        ) : null}
+        {send && agentKey ? (
+          <SendMark send={send} agentKey={agentKey} time={clock(send.ts)} />
+        ) : ts ? (
+          <Text style={{ color: p.faint, fontSize: 11 }}>{clock(ts)}</Text>
+        ) : null}
+      </View>
     </View>
   );
 });
 
 /** Children of the session on screen, keyed by the parent tool_call that spawned them. */
 const SubCtx = createContext<{ byCall: Map<string, SubSession>; open: (s: SubSession) => void } | null>(null);
+const MsgActionsCtx = createContext<{ copy: (text: string) => void; quote?: (q: ReplyQuote) => void; agentLabel: string } | null>(null);
 
 /** The agent's reply, always in full: folding it behind "展开全文" read as broken. */
-const AssistantBlock = memo(function AssistantBlock({ text }: { text: string }) {
+const AssistantBlock = memo(function AssistantBlock({ text, ts }: { text: string; ts?: number }) {
   const p = usePalette();
   const scale = useSettings((s) => s.textScale);
+  const actions = useContext(MsgActionsCtx);
   const styles = useMemo(() => mdStyles(p, scale), [p, scale]);
+  const rules = useChatMarkdownRules(actions ? () => undefined : undefined);
   const md = useMemo(() => fixCjkEmphasis(text), [text]);
   return (
-    <View
-      style={{
-        alignSelf: "flex-start",
-        ...(hasList(md) ? { width: "94%" as const } : { maxWidth: "94%" as const }),
-        backgroundColor: p.surface,
-        borderRadius: radius.card,
-        borderBottomLeftRadius: 6,
-        paddingHorizontal: space.lg,
-        paddingVertical: space.xs,
-        elevation: p.dark ? 0 : 1,
-        shadowColor: p.shadow,
-        shadowOpacity: 0.1,
-        shadowRadius: 8,
-        shadowOffset: { width: 0, height: 3 },
-      }}
-    >
-      <Markdown style={styles}>{md}</Markdown>
+    <View style={{ alignSelf: "flex-start", gap: 4, ...(hasList(md) ? { width: "94%" as const } : { maxWidth: "94%" as const }) }}>
+      <View
+        style={{
+          backgroundColor: p.surface,
+          borderRadius: radius.card,
+          borderBottomLeftRadius: 6,
+          paddingHorizontal: space.lg,
+          paddingVertical: space.xs,
+          elevation: p.dark ? 0 : 1,
+          shadowColor: p.shadow,
+          shadowOpacity: 0.1,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 3 },
+        }}
+      >
+        <Markdown style={styles} rules={rules}>{md}</Markdown>
+      </View>
+      {text.trim() || ts ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm, flexWrap: "wrap", paddingHorizontal: 4 }}>
+          {ts ? <Text style={{ color: p.faint, fontSize: 11 }}>{clock(ts)}</Text> : null}
+          {text.trim() ? (
+            <MessageActions
+              onCopy={actions ? () => actions.copy(text) : undefined}
+              onQuote={actions?.quote ? () => actions.quote!({ author: actions.agentLabel, text }) : undefined}
+            />
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 });
@@ -529,13 +563,15 @@ const renderRow: ListRenderItem<Row> = ({ item }) => {
     case "tools":
       return <ToolGroup items={item.items} />;
     case "assistant":
-      return <AssistantBlock text={item.text} />;
+      return <AssistantBlock text={item.text} ts={item.ts} />;
     case "thinking":
       return <ThinkingPill text={item.text} />;
     case "tool":
       return <ToolCard call={item.call} result={item.result} />;
     case "turn_end":
       return <TurnEnd ts={item.ts} />;
+    case "time_divider":
+      return <TimeDividerChip label={formatChatGapLabel(item.ts)} />;
     case "system":
       return <FoldChip label={item.summary} icon="information-outline" body={item.text} a11y={`系统提醒：${item.summary}`} />;
   }
@@ -551,6 +587,8 @@ interface ChatViewProps {
   active: boolean;
   bottomInset: number;
   onNoSession: () => void;
+  /** Quote a message into the parent's composer (undefined on read-only subagent view). */
+  onQuote?: (q: ReplyQuote) => void;
   /** Read a subagent session of this agent instead of its own. */
   sub?: string;
   /** Known number of children of the session on screen (enables `session.children`). */
@@ -568,21 +606,33 @@ function SessionChatView({
   active,
   bottomInset,
   onNoSession,
+  onQuote,
   sub,
   childCount,
   trail = [],
 }: ChatViewProps) {
   const p = usePalette();
+  const [copiedToast, setCopiedToast] = useState(false);
+  const copyMsg = useCallback((value: string) => {
+    Haptics.selectionAsync().catch(() => undefined);
+    void Clipboard.setStringAsync(value).then(() => setCopiedToast(true));
+  }, []);
+  const agentLabel = agent.name?.trim() || agent.title?.trim() || "agent";
+  const msgActions = useMemo(
+    () => ({ copy: copyMsg, quote: onQuote, agentLabel }),
+    [copyMsg, onQuote, agentLabel],
+  );
   const [older, setOlder] = useState<ConvEvent[]>([]);
   const [olderCursor, setOlderCursor] = useState<string | null | undefined>(undefined);
   const [loadingOlder, setLoadingOlder] = useState(false);
 
+  const effWorking = effectiveAgentStatus(agent) === "working";
   const q = useQuery({
     queryKey: ["session.events", agent.key, sub ?? null],
     // One screenful first; older pages load as the list is scrolled up.
     queryFn: () => call(agent.deviceId, "session.events", { agent: agent.key, sub, limit: 60 }),
     enabled: active,
-    refetchInterval: active && (sub || agent.status === "working") ? 8000 : active ? 20_000 : false,
+    refetchInterval: active && (sub || effWorking) ? 8000 : active ? 20_000 : false,
   });
   // Everything received for this conversation, by id. The newest page slides forward as the agent works;
   // without this, events between the older pages and the current page would silently disappear.
@@ -642,7 +692,7 @@ function SessionChatView({
     queryKey: ["session.children", agent.key, sub ?? null],
     queryFn: () => call(agent.deviceId, "session.children", { agent: agent.key, sub }),
     enabled: active && (childCount ?? 0) > 0,
-    refetchInterval: active && (sub || agent.status === "working") ? 3000 : active ? 10_000 : false,
+    refetchInterval: active && (sub || effWorking) ? 3000 : active ? 10_000 : false,
     retry: false,
   });
   const subCtx = useMemo(() => {
@@ -661,10 +711,10 @@ function SessionChatView({
   const patchSend = usePending((s) => s.update);
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
-    if (!sendsAll?.length && agent.status !== "working") return;
+    if (!sendsAll?.length && !effWorking) return;
     const t = setInterval(() => setNowTick(Date.now()), 5000);
     return () => clearInterval(t);
-  }, [sendsAll?.length, agent.status]);
+  }, [sendsAll?.length, effWorking]);
   const folded = useMemo(() => foldEvents(events), [events]);
   const sends = useMemo(() => followSends(sendsAll ?? [], folded, { status: agent.status, queued: agent.queued }, nowTick), [sendsAll, folded, agent.status, agent.queued, nowTick]);
   useEffect(() => {
@@ -673,17 +723,27 @@ function SessionChatView({
   }, [sends, patchSend, agent.key]);
 
   // Inverted list: newest at index 0. The session's copy of a message from this phone keeps its bubble's key.
-  const rows = useMemo(
-    () =>
-      [
-        ...folded.map((r): Row => {
-          const x = r.type === "user" ? sends.echoes.get(r.id) : undefined;
-          return r.type === "user" && x ? { ...r, id: x.id, pictures: x.pictures } : r;
-        }),
-        ...sends.shown.map((x): Row => ({ type: "pending", id: x.id, text: x.text, ts: x.ts, pictures: x.pictures, send: x, agentKey: agent.key })),
-      ].reverse(),
-    [folded, sends, agent.key],
-  );
+  const rows = useMemo(() => {
+    const linear: Row[] = [
+      ...folded.map((r): Row => {
+        const x = r.type === "user" ? sends.echoes.get(r.id) : undefined;
+        return r.type === "user" && x ? { ...r, id: x.id, pictures: x.pictures } : r;
+      }),
+      ...sends.shown.map((x): Row => ({ type: "pending", id: x.id, text: x.text, ts: x.ts, pictures: x.pictures, send: x, agentKey: agent.key })),
+    ];
+    const withDividers: Row[] = [];
+    let lastShownTs: number | undefined;
+    for (const r of linear) {
+      if (r.type === "user" || r.type === "assistant" || r.type === "pending") {
+        if (shouldShowTimeDivider(lastShownTs, r.ts)) {
+          withDividers.push({ type: "time_divider", id: `td-${r.id}`, ts: r.ts });
+        }
+        lastShownTs = r.ts;
+      }
+      withDividers.push(r);
+    }
+    return withDividers.reverse();
+  }, [folded, sends, agent.key]);
   const more = olderCursor === undefined ? q.data?.more : olderCursor !== null;
 
   const listRef = useRef<FlatList<Row>>(null);
@@ -784,6 +844,7 @@ function SessionChatView({
 
   return (
     <SubCtx.Provider value={subCtx}>
+      <MsgActionsCtx.Provider value={msgActions}>
       <View style={{ flex: 1 }}>
         <FlatList
           ref={listRef}
@@ -823,7 +884,15 @@ function SessionChatView({
           }
           ListHeaderComponent={
             // Inverted list: the header sits under the newest message. One at a time: working, or about to answer.
-            !sub && agent.status === "working" ? <WorkingBadge since={agent.statusSince} now={nowTick} /> : sends.awaiting ? <ReplyDots /> : undefined
+            !sub && effWorking ? (
+              <WorkingBadge
+                since={agent.statusSince}
+                now={nowTick}
+                label={agent.status !== "working" && (agent.subagentsWorking ?? 0) > 0 ? `子 agent 在干活（${agent.subagentsWorking} 个）` : undefined}
+              />
+            ) : sends.awaiting ? (
+              <ReplyDots />
+            ) : undefined
           }
           keyboardDismissMode="interactive"
           extraData={subCtx}
@@ -856,7 +925,11 @@ function SessionChatView({
         <Snackbar visible={capped} onDismiss={() => setCapped(false)} duration={4000}>
           对话太长，只载入了最近约 {JUMP_CAP} 条，这里是已载入部分的开头
         </Snackbar>
+        <Snackbar visible={copiedToast} onDismiss={() => setCopiedToast(false)} duration={1600}>
+          已复制
+        </Snackbar>
       </View>
+      </MsgActionsCtx.Provider>
     </SubCtx.Provider>
   );
 }
@@ -890,7 +963,7 @@ function workedFor(ms: number): string {
 }
 
 /** Under the newest message while the agent works: the busy mascot on a soft card, and for how long. */
-function WorkingBadge({ since, now }: { since?: number; now: number }) {
+function WorkingBadge({ since, now, label }: { since?: number; now: number; label?: string }) {
   const p = usePalette();
   const c = statusColors("working", p.dark);
   return (
@@ -917,7 +990,7 @@ function WorkingBadge({ since, now }: { since?: number; now: number }) {
         <BusyMascot size={44} />
         <View style={{ width: 1, alignSelf: "stretch", marginVertical: 4, backgroundColor: p.divider }} />
         <View style={{ gap: 1 }}>
-          <Text style={{ fontFamily: fonts.cute, fontSize: 15.5, color: p.accentText }}>正在干活</Text>
+          <Text style={{ fontFamily: fonts.cute, fontSize: 15.5, color: p.accentText }}>{label ?? "正在干活"}</Text>
           <Text style={{ color: p.muted, fontSize: 12, fontFamily: fonts.bodySemi }}>{since ? workedFor(now - since) : "刚开始"}</Text>
         </View>
         <View style={{ marginLeft: space.xs }}>

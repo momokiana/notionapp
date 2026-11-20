@@ -18,7 +18,7 @@ class XiaoaiNativeModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("XiaoaiNative")
 
-    Events("onCall", "onCallEvent", "onLevel", "onNotice", "onNotifier", "onUpdateProgress", "onSpeech", "onPttLevel")
+    Events("onCall", "onCallEvent", "onLevel", "onNotice", "onNotifier", "onUpdateProgress", "onSpeech", "onPttLevel", "onLedgerUpdated")
 
     OnCreate {
       XiaoaiBus.listener = { name, body -> sendEvent(name, body) }
@@ -122,6 +122,35 @@ class XiaoaiNativeModule : Module() {
         .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       context.startActivity(i)
+    }
+
+    /** Opens App Info so OEMs (e.g. ColorOS/MIUI) can allow full background activity and auto-start. */
+    Function("openAppDetails") {
+      val i = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      context.startActivity(i)
+    }
+
+    Function("notificationAccessEnabled") {
+      NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+    }
+
+    Function("openNotificationAccessSettings") {
+      val i = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      context.startActivity(i)
+    }
+
+    Function("setLedgerPluginEnabled") { enabled: Boolean ->
+      Prefs(context).ledgerEnabled = enabled
+      if (enabled) Thread { LedgerSync.flushPending(context) }.start()
+    }
+
+    Function("syncLedgerCache") { snapshotJson: String ->
+      Prefs(context).setLedgerSnapshot(snapshotJson)
+    }
+
+    Function("flushPendingLedger") {
+      Thread { LedgerSync.flushPending(context) }.start()
     }
 
     /** The installed versionName, e.g. "0.1.0". */

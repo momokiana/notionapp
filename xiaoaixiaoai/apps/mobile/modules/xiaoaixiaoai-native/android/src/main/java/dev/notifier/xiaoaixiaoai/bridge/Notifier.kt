@@ -11,6 +11,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import okhttp3.OkHttpClient
@@ -23,11 +25,13 @@ import java.util.concurrent.TimeUnit
 
 // Android settings are bound to these IDs; changing them would discard notification preferences.
 const val ALERT_CHANNEL = "pocket_alerts"
-const val STATUS_CHANNEL = "pocket_status"
+const val STATUS_CHANNEL = "pocket_status_v2"
+private const val LEGACY_STATUS_CHANNEL = "pocket_status"
 
 fun ensureChannels(ctx: Context) {
   if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
   val nm = ctx.getSystemService(NotificationManager::class.java)
+  nm.deleteNotificationChannel(LEGACY_STATUS_CHANNEL)
   if (nm.getNotificationChannel(ALERT_CHANNEL) == null) {
     nm.createNotificationChannel(
       NotificationChannel(ALERT_CHANNEL, "agent 提醒", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -38,9 +42,11 @@ fun ensureChannels(ctx: Context) {
   }
   if (nm.getNotificationChannel(STATUS_CHANNEL) == null) {
     nm.createNotificationChannel(
-      NotificationChannel(STATUS_CHANNEL, "后台在线", NotificationManager.IMPORTANCE_MIN).apply {
+      NotificationChannel(STATUS_CHANNEL, "后台在线", NotificationManager.IMPORTANCE_LOW).apply {
         description = "保持和服务器的连接，提醒才能及时到达"
         setShowBadge(false)
+        setSound(null, null)
+        enableVibration(false)
       },
     )
   }
@@ -63,7 +69,7 @@ class Notifier(private val ctx: Context) {
   private val prefs = Prefs(ctx)
   private val main = Handler(Looper.getMainLooper())
   private val client = OkHttpClient.Builder()
-    .pingInterval(30, TimeUnit.SECONDS)
+    .pingInterval(20, TimeUnit.SECONDS)
     .readTimeout(0, TimeUnit.MILLISECONDS)
     .connectTimeout(15, TimeUnit.SECONDS)
     .build()
@@ -71,18 +77,40 @@ class Notifier(private val ctx: Context) {
   private var running = false
   private var backoff = 2_000L
   private var target: Prefs.Pairing? = null
+  @Volatile private var lastActivityAt = 0L
   @Volatile var connected = false
     private set
   private val retry = Runnable { connect() }
   private var netCallback: ConnectivityManager.NetworkCallback? = null
 
   fun start() {
-    if (running && target?.let(prefs::matches) == true) return
+    if (running && target?.let(prefs::matches) == true) {
+      ensureAlive()
+      return
+    }
     stop()
     target = prefs.pairing() ?: return
     running = true
+    lastActivityAt = SystemClock.elapsedRealtime()
     connect()
     watchNetwork()
+  }
+
+  /** Called when the keepalive alarm or OS wake fires: reconnects immediately if dead or frozen in Doze. */
+  fun ensureAlive() {
+    if (!running || target?.let(prefs::matches) != true) {
+      start()
+      return
+    }
+    val stale = SystemClock.elapsedRealtime() - lastActivityAt > 75_000L
+    if (!connected || ws == null || stale) {
+      main.post {
+        if (!running) return@post
+        main.removeCallbacks(retry)
+        backoff = 2_000L
+        connect()
+      }
+    }
   }
 
   fun stop() {
@@ -103,10 +131,20 @@ class Notifier(private val ctx: Context) {
     val cb = object : ConnectivityManager.NetworkCallback() {
       override fun onAvailable(network: Network) {
         main.post {
-          if (running && !connected) {
+          val stale = SystemClock.elapsedRealtime() - lastActivityAt > 45_000L
+          if (running && (!connected || stale)) {
             main.removeCallbacks(retry)
             backoff = 2_000L
             connect()
+          }
+        }
+      }
+
+      override fun onLost(network: Network) {
+        main.post {
+          if (running && connected) {
+            connected = false
+            XiaoaiBus.emit("onNotifier", mapOf("connected" to false, "reason" to "network_lost"))
           }
         }
       }
@@ -126,15 +164,18 @@ class Notifier(private val ctx: Context) {
     val req = Request.Builder().url(wsUrl(pair.server, "/v1/notify") + "?since=" + since).header("Authorization", "Bearer ${pair.token}").build()
     ws = client.newWebSocket(req, object : WebSocketListener() {
       override fun onOpen(webSocket: WebSocket, response: Response) {
+        Thread { LedgerSync.flushPending(ctx) }.start()
         main.post {
           if (!current(webSocket, pair)) return@post
           connected = true
+          lastActivityAt = SystemClock.elapsedRealtime()
           backoff = 2_000L
-          XiaoaiBus.emit("onNotifier", mapOf("connected" to true))
+          XiaoaiBus.emit("onNotifier", mapOf("connected" to true, "reason" to "open"))
         }
       }
 
       override fun onMessage(webSocket: WebSocket, text: String) {
+        lastActivityAt = SystemClock.elapsedRealtime()
         val o = try { JSONObject(text) } catch (_: Throwable) { return }
         when (o.optString("type")) {
           "hello" -> main.post {
@@ -148,16 +189,17 @@ class Notifier(private val ctx: Context) {
       }
 
       override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-        lost(webSocket, response?.code == 401)
+        val reason = response?.let { "http_${it.code}" } ?: (t::class.simpleName ?: "failure")
+        lost(webSocket, response?.code == 401, reason)
       }
 
       override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
         webSocket.close(1000, null)
-        if (code == 4001 || code == 4401) lost(webSocket, true)
+        if (code == 4001 || code == 4401) lost(webSocket, true, "revoked_$code")
       }
 
       override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-        lost(webSocket, code == 4001 || code == 4401)
+        lost(webSocket, code == 4001 || code == 4401, "closed_$code")
       }
     })
   }
@@ -165,12 +207,12 @@ class Notifier(private val ctx: Context) {
   private fun current(socket: WebSocket, pair: Prefs.Pairing): Boolean =
     running && socket === ws && target === pair && prefs.matches(pair)
 
-  private fun lost(socket: WebSocket, revoked: Boolean) {
+  private fun lost(socket: WebSocket, revoked: Boolean, reason: String) {
     main.post {
       val pair = target ?: return@post
       if (!current(socket, pair)) return@post
       connected = false
-      XiaoaiBus.emit("onNotifier", mapOf("connected" to false))
+      XiaoaiBus.emit("onNotifier", mapOf("connected" to false, "reason" to reason))
       if (revoked) {
         // The phone was removed from the relay: stop instead of retrying forever.
         prefs.revoke(pair)
@@ -188,15 +230,24 @@ class Notifier(private val ctx: Context) {
     val id = n.optString("id")
     val ts = n.optLong("ts")
     if (id.isEmpty() || id.length > 128 || id.contains(',') || ts <= 0 || !prefs.remember(pair, id, ts)) return
-    XiaoaiBus.emit("onNotice", mapOf("json" to n.toString()))
-    if (!prefs.kinds.contains(n.optString("kind")) || !prefs.matches(pair)) return
-    val task = n.optJSONObject("runtimeTask")
-    val host = task?.optString("hostId")
-    val session = task?.optString("sessionId")
-    val path = if (host != null && session != null && RUNTIME_ID.matches(host) && RUNTIME_ID.matches(session)) {
-      "dsh-task?host=${Uri.encode(host)}&session=${Uri.encode(session)}"
-    } else "assistant"
-    post(ctx, id, n.optString("title"), n.optString("body"), path)
+    val pm = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    val wl = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "xiaoaixiaoai:notify")?.apply {
+      setReferenceCounted(false)
+      acquire(5_000L)
+    }
+    try {
+      XiaoaiBus.emit("onNotice", mapOf("json" to n.toString()))
+      if (!prefs.kinds.contains(n.optString("kind")) || !prefs.matches(pair)) return
+      val task = n.optJSONObject("runtimeTask")
+      val host = task?.optString("hostId")
+      val session = task?.optString("sessionId")
+      val path = if (host != null && session != null && RUNTIME_ID.matches(host) && RUNTIME_ID.matches(session)) {
+        "dsh-task?host=${Uri.encode(host)}&session=${Uri.encode(session)}"
+      } else "assistant"
+      post(ctx, id, n.optString("title"), n.optString("body"), path)
+    } finally {
+      try { if (wl?.isHeld == true) wl.release() } catch (_: Throwable) {}
+    }
   }
 }
 

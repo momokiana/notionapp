@@ -274,7 +274,16 @@ export class RealtimeCall {
   // ---------------------------------------------------------------------------
 
   private instructions(): string {
-    const text = [personaPrompt(this.assistant.name, this.assistant.persona), BRIDGE, voiceInstructions({ board: this.assistant.voiceBoard(), pending: [], recent: this.recentText })].join("\n\n");
+    const text = [
+      personaPrompt(this.assistant.name, this.assistant.persona, this.assistant.userCall),
+      BRIDGE,
+      voiceInstructions({
+        board: this.assistant.voiceBoard(),
+        pending: [],
+        recent: this.recentText,
+        memories: this.assistant.voiceMemoryContext(),
+      }),
+    ].join("\n\n");
     return Array.from(text).slice(0, MAX_INSTRUCTIONS).join("");
   }
 

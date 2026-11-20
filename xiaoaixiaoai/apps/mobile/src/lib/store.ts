@@ -37,6 +37,8 @@ interface SettingsState {
   dshFollows: DshFollowStore | null;
   /** Agent list groups the person folded (blocked / working / done / idle / offline). */
   foldedGroups: string[];
+  /** Pinned agent keys kept at the top of the Agents tab. */
+  pinnedAgents: string[];
   /** Accessory key bar order/visibility (normalise with normalizeTermKeyLayout). */
   termKeys: TermKeyLayout | null;
   /** Terminal keyboard button opens the phone's own key panel ("pad") or the system input method. */
@@ -72,13 +74,14 @@ export const useSettings = create<SettingsState>()(
       hostFilter: null,
       dshFollows: null,
       foldedGroups: [],
+      pinnedAgents: [],
       termKeys: null,
       termInput: "pad",
       termPadRow: 34,
       alertsOn: true,
       alertBlocked: true,
       alertDone: true,
-      alertProgress: true,
+      alertProgress: false,
       alertsAsked: false,
       updateCheckedAt: 0,
       updateRelease: null,
@@ -98,6 +101,14 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: "xiaoaixiaoai.settings",
+      version: 2,
+      migrate: (persisted: unknown, version) => {
+        if (!persisted || typeof persisted !== "object") return persisted as SettingsState;
+        const next = { ...(persisted as Record<string, unknown>) };
+        // Prior versions defaulted alertProgress=true, flooding phones with step-by-step progress notices.
+        if (version < 2) next.alertProgress = false;
+        return next as unknown as SettingsState;
+      },
       storage: createJSONStorage(() => AsyncStorage),
       partialize: ({ hydrated: _h, set: _s, signOut: _o, ...rest }) => rest,
       onRehydrateStorage: () => () => {

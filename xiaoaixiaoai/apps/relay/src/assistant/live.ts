@@ -276,7 +276,14 @@ export class LiveCall {
 
   /** Rules, the snapshot, what is waiting to be said and the recent chat: one builder for every refresh (4.3). */
   private instructions(): string {
-    return Array.from(voiceInstructions({ board: this.assistant.voiceBoard(), pending: this.pending, recent: this.recent }))
+    return Array.from(
+      voiceInstructions({
+        board: this.assistant.voiceBoard(),
+        pending: this.pending,
+        recent: this.recent,
+        memories: this.assistant.voiceMemoryContext(),
+      }),
+    )
       .slice(0, MAX_INSTRUCTIONS)
       .join("");
   }
@@ -294,7 +301,7 @@ export class LiveCall {
           name,
           // Speech recognition often hears the name as a homophone.
           aliases: [...new Set(["助理", "小助理", ...(name === "爱弥斯" ? ["艾弥斯", "爱米斯"] : [])])],
-          prompt: personaPrompt(name, this.assistant.persona),
+          prompt: personaPrompt(name, this.assistant.persona, this.assistant.userCall),
         },
         instructions: this.lastInstructions,
         tools: [],

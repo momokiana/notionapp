@@ -17,8 +17,10 @@ import { TERM_BG, TERM_FG } from "../lib/ansi";
 import { TermScreen, type ScreenView, type ShownRow } from "../lib/termscreen";
 import { harnessLook } from "../lib/harness";
 import { parseChoices, type Choice } from "../lib/choices";
+import { formatQuotedMessage, type ReplyQuote } from "../lib/quote";
 import { usePalette } from "../theme/theme";
 import { agentStatusLabel, fonts, radius, space, statusColors } from "../theme/tokens";
+import { QuoteComposerBanner } from "./quote-ui";
 import { RuntimeQuestionPrompt } from "./RuntimeQuestionPrompt";
 import { TermKeyboard } from "./TermKeyboard";
 import { EmptyState, IconTile, SendPill } from "./ui";
@@ -638,7 +640,21 @@ function useDirectTyping(agent: Agent, onError: (message: string, unsupported: b
  * `chat`: a message box (keys behind a toggle). `terminal`: the key bar only, so the screen gets the room;
  * the keyboard button types straight into the terminal (older hosts: a one-line box).
  */
-export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: Agent; bottomInset: number; mode: "chat" | "terminal"; onOpenTerminal?: () => void }) {
+export function Composer({
+  agent,
+  bottomInset,
+  mode,
+  onOpenTerminal,
+  quote,
+  onClearQuote,
+}: {
+  agent: Agent;
+  bottomInset: number;
+  mode: "chat" | "terminal";
+  onOpenTerminal?: () => void;
+  quote?: ReplyQuote | null;
+  onClearQuote?: () => void;
+}) {
   const p = usePalette();
   const qc = useQueryClient();
   const [text, setText] = useState("");
@@ -718,11 +734,14 @@ export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: 
     const t = text.trim();
     const pics = mode === "chat" ? pictures : [];
     if (!t && !pics.length) return;
+    const activeQuote = mode === "chat" ? quote : null;
+    const payload = activeQuote ? formatQuotedMessage(activeQuote, t) : t;
     // The message shows in the conversation at once, with its own state; the box is free for the next one.
     setText("");
+    if (activeQuote) onClearQuote?.();
     if (pics.length) setPictures((cur) => cur.filter((x) => !pics.includes(x)));
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-    void sendOut(agent, t, pics).then((r) => {
+    void sendOut(agent, payload, pics).then((r) => {
       if (r.ok) refreshSoon();
       // Beside the terminal there is no bubble to show the failure on.
       else if (mode === "terminal") setToast(r.message);
@@ -924,6 +943,7 @@ export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: 
           </Text>
         </View>
       ) : null}
+      {showInput && mode === "chat" && quote && onClearQuote ? <QuoteComposerBanner quote={quote} onClear={onClearQuote} /> : null}
       {showInput ? (
       <View
         style={{

@@ -8,6 +8,7 @@ const hook = registerHooks({
   resolve(specifier, context, next) { return next(specifier === "@xiaoaixiaoai/protocol" ? wire : specifier, context); },
 });
 const { dshIntent, FOLLOW_LIMIT, followsFor, observedIdle, updateFollow } = await import("../src/lib/dsh-follows.ts");
+const { effectiveAgentStatus } = await import(wire);
 hook.deregister();
 
 const HOST = "host-1";
@@ -52,13 +53,23 @@ test("assistant shortcut retains a local draft and never binds a send to a title
 });
 
 test("foreground reminder is a live idle transition, not an archive, timeout, first view or duplicate", () => {
-  const entry = (id, state, archived = false) => ({ project: { id: "p", title: "Project" }, session: { id, title: "Example", state, canSend: false }, archived });
+  const entry = (id, state, archived = false, extra = {}) => ({ project: { id: "p", title: "Project" }, session: { id, title: "Example", state, canSend: false, ...extra }, archived });
   const subscribed = new Set(["a", "b"]);
   const first = observedIdle(new Map(), [entry("a", "running"), entry("b", "idle"), entry("c", "running")], subscribed);
   assert.equal(first.count, 0);
-  const next = observedIdle(first.observed, [entry("a", "idle"), entry("b", "idle", true), entry("c", "idle")], subscribed);
+  const subBusy = observedIdle(first.observed, [entry("a", "idle", false, { subagents: 1, subagentsWorking: 1 }), entry("b", "idle", true), entry("c", "idle")], subscribed);
+  assert.equal(subBusy.count, 0);
+  const next = observedIdle(subBusy.observed, [entry("a", "idle", false, { subagents: 1, subagentsWorking: 0 }), entry("b", "idle", true), entry("c", "idle")], subscribed);
   assert.equal(next.count, 1);
   assert.deepEqual([...next.observed], [["a", "idle"]]);
   assert.equal(observedIdle(next.observed, [entry("a", "idle")], subscribed).count, 0);
   assert.equal(observedIdle(new Map(), [entry("a", "idle")], subscribed).count, 0);
+});
+
+test("effectiveAgentStatus promotes paused or done parent with working subagents to working unless blocked", () => {
+  assert.equal(effectiveAgentStatus({ status: "idle", subagentsWorking: 1 }), "working");
+  assert.equal(effectiveAgentStatus({ status: "done", subagentsWorking: 2 }), "working");
+  assert.equal(effectiveAgentStatus({ status: "blocked", subagentsWorking: 2 }), "blocked");
+  assert.equal(effectiveAgentStatus({ status: "done", subagentsWorking: 0 }), "done");
+  assert.equal(effectiveAgentStatus({ status: "idle" }), "idle");
 });

@@ -55,9 +55,13 @@ export const statusLabel: Record<AgentStatus, string> = {
   unknown: "未知",
 };
 
-/** The word on an agent's status chip: an error says so, though its status is `blocked`. */
-export function agentStatusLabel(a: { status: AgentStatus; errored?: boolean }): string {
-  return a.errored ? "出错了" : statusLabel[a.status];
+/** The word on an agent's status chip: an error says so, though its status is `blocked`; active subagents count as working. */
+export function agentStatusLabel(a: { status: AgentStatus; errored?: boolean; subagentsWorking?: number }): string {
+  if (a.errored) return "出错了";
+  if (a.status !== "blocked" && a.status !== "working" && (a.subagentsWorking ?? 0) > 0) {
+    return "子 agent 工作中";
+  }
+  return statusLabel[a.status];
 }
 
 /** Space swatches share the new palette without changing group assignment. */

@@ -183,6 +183,18 @@ test("runtime bridge helpers encode targets, convert events cleanly, and parse a
   assert.equal(s.status, "done");
   assert.equal(s.turn, 1);
 
+  // Idle main + running subagents stays continuously working until subagents reach 0, then flips done.
+  let sub = nextRuntimeState(undefined, "idle", 1000, undefined, 2);
+  assert.equal(sub.status, "idle");
+  assert.equal(sub.since, 1000);
+  assert.equal(sub.turn, 1);
+  assert.equal(sub.subagentsWorking, 2);
+  sub = nextRuntimeState(sub, "idle", 5000, undefined, 1);
+  assert.equal(sub.since, 1000);
+  sub = nextRuntimeState(sub, "idle", 9000, undefined, 0);
+  assert.equal(sub.status, "done");
+  assert.equal(sub.since, 9000);
+
   const tracker = new RuntimeEventSeqTracker();
   const detail = {
     runtime: "dsh" as const,

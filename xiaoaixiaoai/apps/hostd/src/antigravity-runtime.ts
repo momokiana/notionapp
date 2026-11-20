@@ -26,6 +26,7 @@ import {
   type RuntimeSessionSend,
   type RuntimeSessionState,
   type RuntimeTaskEvent,
+  type SubSession,
 } from "@xiaoaixiaoai/protocol";
 import { localAppData, onPath } from "./platform.ts";
 import { RuntimeError } from "./runtime-sessions.ts";
@@ -71,6 +72,7 @@ interface SummaryRow {
   parent_conversation_id: string;
   nesting_depth: number;
   killed: number;
+  not_fully_idle?: number;
 }
 
 interface ParsedStep {
@@ -98,6 +100,20 @@ interface BrainMeta {
   cwd?: string;
   title: string;
   state: RuntimeSessionState;
+  subagents?: number;
+  subagentsWorking?: number;
+}
+
+interface ChildRecord {
+  sessionId: string;
+  parentId: string;
+  transcriptPath?: string;
+  hasLock: boolean;
+  mtimeMs: number;
+  dbStatus?: string;
+  title: string;
+  working: boolean;
+  workspaceUris?: string;
 }
 
 function cleanText(value: unknown, max = MAX_MESSAGE_TEXT): string {
@@ -238,14 +254,27 @@ function readSummaryIndex(brainDir: string, summaryDbPath?: string): Map<string,
   try {
     const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
     try {
+      const cols = db.prepare(`PRAGMA table_info(conversation_summaries)`).all() as Array<{ name?: string }>;
+      const hasNotFullyIdle = cols.some((c) => c.name === "not_fully_idle");
       const rows = db.prepare(`
-        SELECT conversation_id, title, workspace_uris, status, parent_conversation_id, nesting_depth, killed
+        SELECT conversation_id, title, workspace_uris, status, parent_conversation_id, nesting_depth, killed${hasNotFullyIdle ? ", not_fully_idle" : ""}
         FROM conversation_summaries
       `).all() as unknown as SummaryRow[];
       const map = new Map<string, SummaryRow>();
       for (const row of rows) {
         if (row && typeof row.conversation_id === "string" && row.conversation_id) {
           map.set(row.conversation_id, row);
+        }
+      }
+      const hasParentsTable = db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'conversation_parents'`).get();
+      if (hasParentsTable) {
+        const parentRows = db.prepare(`SELECT conversation_id, parent_id FROM conversation_parents`).all() as Array<{ conversation_id?: string; parent_id?: string }>;
+        for (const pr of parentRows) {
+          if (typeof pr.conversation_id !== "string" || typeof pr.parent_id !== "string" || !pr.parent_id) continue;
+          const existing = map.get(pr.conversation_id);
+          if (existing && !existing.parent_conversation_id?.trim()) {
+            existing.parent_conversation_id = pr.parent_id;
+          }
         }
       }
       return map;
@@ -406,39 +435,106 @@ export class AntigravityRuntime {
     return [...seen.values()].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   }
 
-  private scanBrains(): BrainMeta[] {
+  private scanIndex(): {
+    roots: BrainMeta[];
+    parentOf: Map<string, string>;
+    childrenByParent: Map<string, ChildRecord[]>;
+    childrenById: Map<string, ChildRecord>;
+    countsByParent: Map<string, [number, number]>;
+  } {
     this.pruneRecentCreated();
     const out: BrainMeta[] = [];
+    const parentOf = new Map<string, string>();
+    const childrenByParent = new Map<string, ChildRecord[]>();
+    const childrenById = new Map<string, ChildRecord>();
+    const countsByParent = new Map<string, [number, number]>();
+
     if (existsSync(this.brainDir)) {
       const summaryMap = readSummaryIndex(this.brainDir, this.summaryDbPath);
-      const candidates: Array<{ sessionId: string; transcriptPath: string; hasLock: boolean; mtimeMs: number; summary?: SummaryRow }> = [];
+      const disk = new Map<string, { transcriptPath: string; hasLock: boolean; mtimeMs: number }>();
       for (const ent of readdirSync(this.brainDir, { withFileTypes: true })) {
         if (!ent.isDirectory() || !isRuntimeId(ent.name)) continue;
-        const summary = summaryMap?.get(ent.name);
-        if (summary && (
-          (typeof summary.nesting_depth === "number" && summary.nesting_depth > 0) ||
-          (typeof summary.parent_conversation_id === "string" && summary.parent_conversation_id.trim() !== "") ||
-          Number(summary.killed) === 1
-        )) {
-          continue;
-        }
         const base = join(this.brainDir, ent.name);
         const transcriptPath = join(base, ".system_generated", "logs", "transcript.jsonl");
-        if (!existsSync(transcriptPath)) continue;
-        try {
-          const st = statSync(transcriptPath);
-          if (!st.isFile() || st.size === 0) continue;
-          candidates.push({
-            sessionId: ent.name,
-            transcriptPath,
-            hasLock: existsSync(join(base, ".lock")),
-            mtimeMs: st.mtimeMs,
-            summary,
-          });
-        } catch { /* skip unreadable directory */ }
+        let hasTranscript = false;
+        let mtimeMs = 0;
+        if (existsSync(transcriptPath)) {
+          try {
+            const st = statSync(transcriptPath);
+            if (st.isFile() && st.size > 0) {
+              hasTranscript = true;
+              mtimeMs = st.mtimeMs;
+            }
+          } catch { /* skip unreadable transcript */ }
+        }
+        const hasLock = existsSync(join(base, ".lock"));
+        if (hasTranscript || hasLock) {
+          disk.set(ent.name, { transcriptPath: hasTranscript ? transcriptPath : "", hasLock, mtimeMs });
+        }
       }
-      candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-      for (const item of candidates.slice(0, SCAN_SESSION_LIMIT)) {
+
+      if (summaryMap) {
+        for (const [id, s] of summaryMap) {
+          const pid = typeof s.parent_conversation_id === "string" ? s.parent_conversation_id.trim() : "";
+          if (pid && pid !== id) parentOf.set(id, pid);
+        }
+      }
+
+      const rootCandidates: Array<{ sessionId: string; transcriptPath: string; hasLock: boolean; mtimeMs: number; summary?: SummaryRow }> = [];
+      const allIds = new Set<string>([...disk.keys(), ...(summaryMap?.keys() ?? [])]);
+      for (const id of allIds) {
+        const summary = summaryMap?.get(id);
+        if (summary && Number(summary.killed) === 1) continue;
+        const diskEntry = disk.get(id);
+        const pid = parentOf.get(id);
+        const isChild = Boolean(pid || (summary && typeof summary.nesting_depth === "number" && summary.nesting_depth > 0));
+        if (isChild) {
+          if (!pid) continue;
+          const working = this.activeTurns.has(id) || Boolean(diskEntry?.hasLock) || summary?.status === "CASCADE_RUN_STATUS_RUNNING";
+          if (!diskEntry && !working && !summary) continue;
+          const rec: ChildRecord = {
+            sessionId: id,
+            parentId: pid,
+            ...(diskEntry?.transcriptPath ? { transcriptPath: diskEntry.transcriptPath } : {}),
+            hasLock: Boolean(diskEntry?.hasLock),
+            mtimeMs: diskEntry?.mtimeMs || Date.now(),
+            dbStatus: summary?.status,
+            title: cleanLabel(summary?.title, "") || `子任务 ${id.slice(0, 8)}`,
+            working,
+            workspaceUris: summary?.workspace_uris,
+          };
+          childrenById.set(id, rec);
+          const list = childrenByParent.get(pid) ?? [];
+          list.push(rec);
+          childrenByParent.set(pid, list);
+          const direct = countsByParent.get(pid) ?? [0, 0];
+          direct[0]++;
+          countsByParent.set(pid, direct);
+          if (working) {
+            let anc: string | undefined = pid;
+            const seenAnc = new Set<string>([id]);
+            for (let depth = 0; anc && depth < 12 && !seenAnc.has(anc); depth++) {
+              seenAnc.add(anc);
+              const ac = countsByParent.get(anc) ?? [0, 0];
+              ac[1]++;
+              countsByParent.set(anc, ac);
+              anc = parentOf.get(anc);
+            }
+          }
+          continue;
+        }
+        if (!diskEntry?.transcriptPath) continue;
+        rootCandidates.push({
+          sessionId: id,
+          transcriptPath: diskEntry.transcriptPath,
+          hasLock: diskEntry.hasLock,
+          mtimeMs: diskEntry.mtimeMs,
+          summary,
+        });
+      }
+
+      rootCandidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+      for (const item of rootCandidates.slice(0, SCAN_SESSION_LIMIT)) {
         try {
           const headSteps = readWindowLines(item.transcriptPath, 0, HEAD_BYTES, true).map(parseStep).filter((s): s is ParsedStep => s !== null);
           let systemWorkspace: WorkspaceMeta | undefined;
@@ -461,6 +557,7 @@ export class AntigravityRuntime {
           const title = summaryTitle || cleanLabel(transcriptTitle, `Antigravity ${item.sessionId.slice(0, 8)}`);
           const tail = summarizeTail(tailSteps, item.hasLock, item.mtimeMs);
           const state = this.resolveState(tail.state, tail.pendingQuestions.length > 0, item.hasLock, item.summary?.status, item.sessionId);
+          const counts = countsByParent.get(item.sessionId);
           out.push({
             sessionId: item.sessionId,
             transcriptPath: item.transcriptPath,
@@ -471,6 +568,7 @@ export class AntigravityRuntime {
             ...(workspace.cwd ? { cwd: workspace.cwd } : {}),
             title,
             state,
+            ...(counts?.[0] ? { subagents: counts[0], subagentsWorking: counts[1] } : {}),
           });
         } catch { /* ignore unreadable transcript */ }
       }
@@ -481,15 +579,21 @@ export class AntigravityRuntime {
         if (seen.has(id)) {
           this.recentCreated.delete(id);
         } else {
+          const counts = countsByParent.get(id);
           out.unshift({
             ...entry.meta,
             state: this.resolveState("idle", false, false, undefined, id),
+            ...(counts?.[0] ? { subagents: counts[0], subagentsWorking: counts[1] } : {}),
           });
         }
       }
       out.sort((a, b) => b.mtimeMs - a.mtimeMs);
     }
-    return out;
+    return { roots: out, parentOf, childrenByParent, childrenById, countsByParent };
+  }
+
+  private scanBrains(): BrainMeta[] {
+    return this.scanIndex().roots;
   }
 
   private toSession(meta: BrainMeta): RuntimeSession {
@@ -499,7 +603,57 @@ export class AntigravityRuntime {
       state: meta.state,
       canSend: this.canSendMeta(meta, meta.state),
       updatedAt: Math.trunc(meta.mtimeMs),
+      ...(meta.subagents !== undefined ? { subagents: meta.subagents } : {}),
+      ...(meta.subagentsWorking !== undefined ? { subagentsWorking: meta.subagentsWorking } : {}),
     };
+  }
+
+  children(parentSessionId: string): Array<Omit<SubSession, "key"> & { sessionId: string }> {
+    if (!isRuntimeId(parentSessionId)) return [];
+    const { childrenByParent, countsByParent } = this.scanIndex();
+    const list = childrenByParent.get(parentSessionId) ?? [];
+    return list
+      .map((rec) => {
+        let preview: string | undefined;
+        let title = rec.title;
+        if (rec.transcriptPath && existsSync(rec.transcriptPath)) {
+          try {
+            const head = readWindowLines(rec.transcriptPath, 0, 32 * 1024, true).map(parseStep).filter((s): s is ParsedStep => s !== null);
+            const firstUser = head.find((s) => s.type === "USER_INPUT");
+            const req = firstUser ? extractUserRequest(firstUser.content) : "";
+            if (req) {
+              preview = req.slice(0, 300);
+              if (title.startsWith("子任务 ")) title = cleanLabel(req, title);
+            }
+          } catch { /* ignore unreadable subagent preview */ }
+        }
+        const subCounts = countsByParent.get(rec.sessionId);
+        const working = rec.working || (subCounts?.[1] ?? 0) > 0;
+        return {
+          sessionId: rec.sessionId,
+          parent: rec.parentId,
+          harness: "antigravity",
+          title,
+          ...(preview ? { preview } : {}),
+          status: (working ? "working" : "idle") as SubSession["status"],
+          updatedAt: Math.trunc(rec.mtimeMs),
+          children: subCounts?.[0] ?? 0,
+        };
+      })
+      .sort((a, b) => Number(b.status === "working") - Number(a.status === "working") || b.updatedAt - a.updatedAt);
+  }
+
+  descends(sessionId: string, rootSessionId: string): boolean {
+    if (!isRuntimeId(sessionId) || !isRuntimeId(rootSessionId)) return false;
+    const { parentOf } = this.scanIndex();
+    let cur: string | undefined = sessionId;
+    const seen = new Set<string>();
+    for (let i = 0; cur && i < 12 && !seen.has(cur); i++) {
+      if (cur === rootSessionId) return true;
+      seen.add(cur);
+      cur = parentOf.get(cur);
+    }
+    return false;
   }
 
   async list(): Promise<RuntimeProject[]> {
@@ -555,8 +709,37 @@ export class AntigravityRuntime {
 
   async detail(projectId: string, sessionId: string, limit = 60): Promise<RuntimeSessionDetail> {
     if (!isRuntimeId(sessionId)) throw new RuntimeError("not_found", "无效的 Antigravity 会话 ID。");
-    const metas = this.scanBrains();
-    const meta = metas.find((m) => m.sessionId === sessionId);
+    const index = this.scanIndex();
+    let meta = index.roots.find((m) => m.sessionId === sessionId);
+    let isChild = false;
+    if (!meta) {
+      const child = index.childrenById.get(sessionId);
+      if (child) {
+        isChild = true;
+        let rootId = child.parentId;
+        const seenAnc = new Set<string>([sessionId]);
+        for (let i = 0; i < 12 && !seenAnc.has(rootId); i++) {
+          seenAnc.add(rootId);
+          const nextParent = index.parentOf.get(rootId);
+          if (!nextParent) break;
+          rootId = nextParent;
+        }
+        const rootMeta = index.roots.find((m) => m.sessionId === rootId);
+        const childProject = rootMeta?.project ?? workspaceFromUris(child.workspaceUris) ?? { id: "agp_default", title: "Antigravity" };
+        if (childProject.id === projectId) {
+          meta = {
+            sessionId: child.sessionId,
+            transcriptPath: child.transcriptPath ?? "",
+            hasLock: child.hasLock,
+            mtimeMs: child.mtimeMs,
+            dbStatus: child.dbStatus,
+            project: childProject,
+            title: child.title,
+            state: child.working ? "running" : "idle",
+          };
+        }
+      }
+    }
     if (!meta || meta.project.id !== projectId) throw new RuntimeError("not_found", "未找到对应的 Antigravity 会话。");
     const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 60, 1), RUNTIME_DETAIL_LIMIT);
     const steps = meta.transcriptPath && existsSync(meta.transcriptPath)
@@ -590,7 +773,7 @@ export class AntigravityRuntime {
     }
     const tailSummary = summarizeTail(steps, meta.hasLock, meta.mtimeMs);
     const state = this.resolveState(tailSummary.state, tailSummary.pendingQuestions.length > 0, meta.hasLock, meta.dbStatus, meta.sessionId);
-    const canSend = this.canSendMeta(meta, state);
+    const canSend = !isChild && this.canSendMeta(meta, state);
     const pendingQuestions = tailSummary.pendingQuestions.map((pq) => ({
       ...pq,
       state: canSend ? ("open" as const) : ("readonly" as const),
@@ -601,6 +784,8 @@ export class AntigravityRuntime {
       state,
       canSend,
       updatedAt: Math.trunc(meta.mtimeMs),
+      ...(meta.subagents !== undefined ? { subagents: meta.subagents } : {}),
+      ...(meta.subagentsWorking !== undefined ? { subagentsWorking: meta.subagentsWorking } : {}),
     };
     const reply: RuntimeSessionDetail = {
       runtime: "antigravity",
@@ -608,7 +793,7 @@ export class AntigravityRuntime {
       session,
       messages: messages.slice(-boundedLimit),
       pendingQuestions,
-      ...(canSend ? {} : { readOnlyReason: this.readOnlyReasonFor(meta, state) }),
+      ...(canSend ? {} : { readOnlyReason: isChild ? "子 agent 会话仅支持查看，不能直接发消息。" : this.readOnlyReasonFor(meta, state) }),
     };
     while (reply.messages.length > 0 && Buffer.byteLength(JSON.stringify(reply), "utf8") > MAX_DETAIL_BYTES) {
       reply.messages.shift();

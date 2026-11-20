@@ -14,6 +14,7 @@ export interface RuntimeAgentState {
   since: number;
   turn: number;
   seenTurn: number;
+  subagentsWorking?: number;
 }
 
 /** Tracks monotonic stringified numeric `pos` values and stable timestamps for runtime session messages. */
@@ -95,30 +96,38 @@ export function nextRuntimeState(
   state: UnifiedRuntimeEntry["session"]["state"],
   now: number,
   updatedAt?: number,
+  subagentsWorking = 0,
 ): RuntimeAgentState {
   const mapped: AgentStatus = state === "attention" ? "blocked" : state === "running" ? "working" : "idle";
+  const hasWorkingSubs = subagentsWorking > 0;
   if (!prev) {
     return {
       status: mapped,
       since: updatedAt ?? now,
-      turn: mapped === "working" ? 1 : 0,
+      turn: mapped === "working" || hasWorkingSubs ? 1 : 0,
       seenTurn: 0,
+      subagentsWorking,
     };
   }
   let turn = prev.turn;
   const seenTurn = prev.seenTurn;
   let status: AgentStatus = mapped;
-  if (mapped === "working" && prev.status !== "working") {
+  const wasBusy = prev.status === "working" || (prev.subagentsWorking ?? 0) > 0;
+  const nowBusy = mapped === "working" || hasWorkingSubs;
+  if (nowBusy && !wasBusy) {
     turn++;
-  } else if (mapped === "idle" && (prev.status === "working" || prev.status === "done")) {
-    if (prev.status === "working" && turn === 0) turn = 1;
+  } else if (mapped === "idle" && (wasBusy || prev.status === "done")) {
+    if (wasBusy && turn === 0) turn = 1;
     status = seenTurn >= turn ? "idle" : "done";
   }
+  const prevEff: AgentStatus = prev.status === "blocked" ? "blocked" : (prev.subagentsWorking ?? 0) > 0 ? "working" : prev.status;
+  const nextEff: AgentStatus = status === "blocked" ? "blocked" : hasWorkingSubs ? "working" : status;
   return {
     status,
-    since: status === prev.status ? prev.since : now,
+    since: nextEff === prevEff ? prev.since : now,
     turn,
     seenTurn,
+    subagentsWorking,
   };
 }
 

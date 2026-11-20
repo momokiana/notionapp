@@ -2,6 +2,8 @@ package dev.notifier.xiaoaixiaoai.bridge
 
 import android.content.Context
 import android.content.SharedPreferences
+import org.json.JSONArray
+import org.json.JSONObject
 
 /** What the background service needs after the app process is gone (app-private storage). */
 class Prefs(ctx: Context) {
@@ -19,6 +21,65 @@ class Prefs(ctx: Context) {
   val notify: Boolean get() = p.getBoolean("notify", false)
   val kinds: Set<String> get() = p.getStringSet("kinds", setOf("blocked", "done", "reminder")) ?: emptySet()
   val assistantName: String get() = p.getString("assistantName", "爱弥斯") ?: "爱弥斯"
+  var ledgerEnabled: Boolean
+    get() = p.getBoolean("ledgerEnabled", false)
+    set(value) {
+      synchronized(lock) { p.edit().putBoolean("ledgerEnabled", value).apply() }
+    }
+  val ledgerSnapshot: String? get() = p.getString("ledgerSnapshot", null)
+  fun setLedgerSnapshot(json: String?) = synchronized(lock) {
+    p.edit().putString("ledgerSnapshot", json).apply()
+  }
+
+  fun rememberWeChatTx(dedupKey: String, ts: Long): Boolean = synchronized(lock) {
+    val raw = p.getString("wcRecentKeys", "[]") ?: "[]"
+    val arr = try { JSONArray(raw) } catch (_: Throwable) { JSONArray() }
+    val fresh = JSONArray()
+    val cutoff = ts - 120_000L
+    for (i in 0 until arr.length()) {
+      val o = arr.optJSONObject(i) ?: continue
+      if (o.optLong("ts") < cutoff) continue
+      if (o.optString("k") == dedupKey) return false
+      fresh.put(o)
+    }
+    fresh.put(JSONObject().put("k", dedupKey).put("ts", ts))
+    while (fresh.length() > 64) fresh.remove(0)
+    p.edit().putString("wcRecentKeys", fresh.toString()).apply()
+    true
+  }
+
+  fun enqueuePendingLedger(item: JSONObject) = synchronized(lock) {
+    val raw = p.getString("wcPendingQueue", "[]") ?: "[]"
+    val arr = try { JSONArray(raw) } catch (_: Throwable) { JSONArray() }
+    val ext = item.optString("externalId")
+    for (i in 0 until arr.length()) {
+      if (ext.isNotEmpty() && arr.optJSONObject(i)?.optString("externalId") == ext) return@synchronized
+    }
+    arr.put(item)
+    while (arr.length() > 50) arr.remove(0)
+    p.edit().putString("wcPendingQueue", arr.toString()).apply()
+  }
+
+  fun drainPendingLedger(): List<JSONObject> = synchronized(lock) {
+    val raw = p.getString("wcPendingQueue", "[]") ?: "[]"
+    p.edit().remove("wcPendingQueue").apply()
+    val arr = try { JSONArray(raw) } catch (_: Throwable) { return emptyList() }
+    val out = ArrayList<JSONObject>(arr.length())
+    for (i in 0 until arr.length()) arr.optJSONObject(i)?.let(out::add)
+    out
+  }
+
+  fun restorePendingLedger(items: List<JSONObject>) = synchronized(lock) {
+    val existing = drainPendingLedger()
+    val merged = JSONArray()
+    val seen = HashSet<String>()
+    for (item in items + existing) {
+      val ext = item.optString("externalId")
+      if (ext.isEmpty() || seen.add(ext)) merged.put(item)
+      if (merged.length() >= 50) break
+    }
+    p.edit().putString("wcPendingQueue", merged.toString()).apply()
+  }
   private val lastTs: Long get() = p.getLong("lastTs", 0L)
 
   fun configure(server: String?, token: String?, enabled: Boolean, kinds: Set<String>, name: String?) = synchronized(lock) {

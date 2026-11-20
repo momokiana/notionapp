@@ -4,7 +4,18 @@
  * local stand-in answers instead.
  */
 import { create } from "zustand";
-import type { AssistantConfirm, AssistantItem, AssistantReplyMode, AssistantState, Reminder, ServerFrame } from "@xiaoaixiaoai/protocol";
+import {
+  type AssistantConfirm,
+  type AssistantItem,
+  type AssistantMemoryItem,
+  type AssistantPersonaConfig,
+  type AssistantReplyMode,
+  type AssistantState,
+  type MemoryCategory,
+  type PersonaPresetSummary,
+  type Reminder,
+  type ServerFrame,
+} from "@xiaoaixiaoai/protocol";
 import { useSettings } from "./store";
 import { loadToken } from "./auth";
 import { isMockServer, mockAssistant } from "./mock";
@@ -30,6 +41,10 @@ interface AssistantStore {
   error: string | null;
   /** Things the assistant brought up on its own while its screen was not in view. */
   unread: number;
+  profile: AssistantPersonaConfig | null;
+  presets: PersonaPresetSummary[];
+  memories: AssistantMemoryItem[];
+  memoriesTotal: number;
 }
 
 export const useAssistant = create<AssistantStore>()(() => ({
@@ -47,6 +62,10 @@ export const useAssistant = create<AssistantStore>()(() => ({
   loaded: false,
   error: null,
   unread: 0,
+  profile: null,
+  presets: [],
+  memories: [],
+  memoriesTotal: 0,
 }));
 
 let watching = false;
@@ -113,6 +132,15 @@ export function onAssistantFrame(f: ServerFrame): boolean {
       return true;
     case "assistant_reset":
       void loadAssistant();
+      return true;
+    case "assistant_profile":
+      useAssistant.setState({
+        profile: f.profile,
+        name: f.profile.name?.trim() || DEFAULT_ASSISTANT_NAME,
+      });
+      return true;
+    case "assistant_memories":
+      void loadMemories();
       return true;
     default:
       return false;
@@ -257,4 +285,93 @@ export async function requestAssistantSpeak(itemId: string, text?: string): Prom
 export async function stopAssistantSpeakRemote(): Promise<void> {
   if (isMockServer(useSettings.getState().server)) return;
   await api("/v1/assistant/speak/stop", { body: {}, timeoutMs: 10_000 }).catch(() => {});
+}
+
+let lastMemFilter: { category?: MemoryCategory; q?: string } = {};
+
+export async function loadAssistantProfile(): Promise<{ profile: AssistantPersonaConfig; presets: PersonaPresetSummary[] }> {
+  if (isMockServer(useSettings.getState().server)) {
+    const r = mockAssistant.profile();
+    useAssistant.setState({ profile: r.profile, presets: r.presets, name: r.profile.name || DEFAULT_ASSISTANT_NAME });
+    return r;
+  }
+  const r = await api<{ profile: AssistantPersonaConfig; presets: PersonaPresetSummary[] }>("/v1/assistant/profile");
+  useAssistant.setState({ profile: r.profile, presets: r.presets, name: r.profile.name?.trim() || DEFAULT_ASSISTANT_NAME });
+  return r;
+}
+
+export async function saveAssistantProfile(
+  patch: Partial<Pick<AssistantPersonaConfig, "name" | "userCall" | "presetId" | "personaText" | "autoMemory">>,
+): Promise<AssistantPersonaConfig> {
+  if (isMockServer(useSettings.getState().server)) {
+    const r = mockAssistant.setProfile(patch);
+    useAssistant.setState({ profile: r.profile, presets: r.presets, name: r.profile.name || DEFAULT_ASSISTANT_NAME });
+    return r.profile;
+  }
+  const r = await api<{ profile: AssistantPersonaConfig; presets: PersonaPresetSummary[] }>("/v1/assistant/profile", { body: patch });
+  useAssistant.setState({ profile: r.profile, presets: r.presets, name: r.profile.name?.trim() || DEFAULT_ASSISTANT_NAME });
+  return r.profile;
+}
+
+export async function loadMemories(opts?: { category?: MemoryCategory; q?: string }): Promise<{ memories: AssistantMemoryItem[]; total: number }> {
+  const filter = opts ?? lastMemFilter;
+  if (opts) lastMemFilter = opts;
+  if (isMockServer(useSettings.getState().server)) {
+    const r = mockAssistant.memories(filter);
+    useAssistant.setState({ memories: r.memories, memoriesTotal: r.total });
+    return r;
+  }
+  const qs = new URLSearchParams();
+  if (filter.category) qs.set("category", filter.category);
+  if (filter.q?.trim()) qs.set("q", filter.q.trim());
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  const r = await api<{ memories: AssistantMemoryItem[]; total: number }>(`/v1/assistant/memories${suffix}`);
+  useAssistant.setState({ memories: r.memories, memoriesTotal: r.total });
+  return r;
+}
+
+export async function createMemory(input: {
+  category: MemoryCategory;
+  content: string;
+  slotKey?: string;
+  importance?: 1 | 2 | 3;
+  pinned?: boolean;
+  ttlDays?: number;
+}): Promise<{ item: AssistantMemoryItem; replaced: boolean }> {
+  const res = isMockServer(useSettings.getState().server)
+    ? mockAssistant.remember(input)
+    : await api<{ item: AssistantMemoryItem; replaced: boolean }>("/v1/assistant/memories", { body: input });
+  await loadMemories();
+  return res;
+}
+
+export async function updateMemory(
+  id: string,
+  patch: Partial<{ category: MemoryCategory; content: string; slotKey?: string; importance: 1 | 2 | 3; pinned: boolean }>,
+): Promise<AssistantMemoryItem> {
+  const item = isMockServer(useSettings.getState().server)
+    ? mockAssistant.updateMemory(id, patch)
+    : (await api<{ item: AssistantMemoryItem }>(`/v1/assistant/memories/${encodeURIComponent(id)}`, { method: "PATCH", body: patch })).item;
+  await loadMemories();
+  return item;
+}
+
+export async function deleteMemory(id: string): Promise<void> {
+  if (isMockServer(useSettings.getState().server)) mockAssistant.deleteMemory(id);
+  else await api(`/v1/assistant/memories/${encodeURIComponent(id)}`, { method: "DELETE" });
+  await loadMemories();
+}
+
+export async function clearAllMemories(): Promise<number> {
+  const removed = isMockServer(useSettings.getState().server)
+    ? mockAssistant.clearMemories()
+    : (await api<{ ok: boolean; removed: number }>("/v1/assistant/memories", { method: "DELETE" })).removed;
+  await loadMemories();
+  return removed;
+}
+
+export async function exportMemoriesMarkdown(): Promise<string> {
+  if (isMockServer(useSettings.getState().server)) return mockAssistant.exportMemoriesMarkdown();
+  const r = await api<{ markdown: string }>("/v1/assistant/memories/export");
+  return r.markdown;
 }

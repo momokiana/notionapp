@@ -27,9 +27,12 @@ import {
   type NotifyFrame,
   type AssistantConfirm,
   type LogLevel,
+  type LedgerTxDirection,
+  type LedgerTxSource,
 } from "@xiaoaixiaoai/protocol";
 import { VERSION } from "@xiaoaixiaoai/update";
 import { Store } from "./store.ts";
+import { LedgerService } from "./ledger/service.ts";
 import { issueSetupCode, type SetupInfo } from "./setup.ts";
 import { joinLanding, notFoundLanding, pairLanding, type LandingPage } from "./landing.ts";
 import { Assistant, type AssistantOptions } from "./assistant/assistant.ts";
@@ -150,6 +153,7 @@ export class Relay {
   private notifyWss: WebSocketServer;
   private notifySubs = new Set<{ ws: WebSocket; deviceId: string; alive: boolean }>();
   private runtimeTaskUploadRate = new RuntimeTaskUploadRate();
+  readonly ledger: LedgerService;
   readonly assistant: Assistant;
 
   private opts: RelayOptions;
@@ -176,6 +180,7 @@ export class Relay {
     this.http.on("upgrade", (req, socket, head) => this.handleUpgrade(req, socket, head));
     this.notifyWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
     this.heartbeat = setInterval(() => this.sweep(), 30_000);
+    this.ledger = new LedgerService(this.store, () => this.toViewers({ type: "ledger_updated" }));
     const a = opts.assistant;
     const llm =
       opts.llm ??
@@ -201,6 +206,7 @@ export class Relay {
         log: this.log,
         event: (e) => this.events.record(e),
         logs: (q) => this.events.query(q),
+        ledger: this.ledger,
       },
     });
     this.assistant.onNotice((notice) => {
@@ -548,7 +554,138 @@ export class Relay {
       return;
     }
 
+    if (path === "/v1/ledger" || path.startsWith("/v1/ledger/")) {
+      if (!auth || (auth !== "admin" && auth.kind !== "viewer")) {
+        sendError(res, 401, "unauthorized", "需要手机的设备令牌");
+        return;
+      }
+      await this.handleLedger(req, res, path);
+      return;
+    }
+
     sendError(res, 404, "not_found", "not found");
+  }
+
+  private async handleLedger(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    if (path === "/v1/ledger" && req.method === "GET") {
+      sendJson(res, 200, this.ledger.state());
+      return;
+    }
+    if (path === "/v1/ledger" && req.method === "DELETE") {
+      sendJson(res, 200, this.ledger.clearData());
+      return;
+    }
+    if (path === "/v1/ledger/config" && req.method === "POST") {
+      const body = await readJson(req);
+      if (!body) {
+        sendError(res, 400, "bad_request", "需要 JSON 参数");
+        return;
+      }
+      try {
+        const patch: { enabled?: boolean; balanceCents?: number | null; savingsGoalCents?: number } = {};
+        if (body.enabled !== undefined) {
+          if (typeof body.enabled !== "boolean") throw new Error("enabled 需要是布尔值");
+          patch.enabled = body.enabled;
+        }
+        if (body.balanceCents !== undefined) patch.balanceCents = body.balanceCents as number | null;
+        if (body.savingsGoalCents !== undefined) patch.savingsGoalCents = body.savingsGoalCents as number;
+        sendJson(res, 200, this.ledger.updateConfig(patch));
+      } catch (e) {
+        sendError(res, 400, "bad_request", (e as Error).message);
+      }
+      return;
+    }
+    if (path === "/v1/ledger/fixed" && req.method === "POST") {
+      const body = await readJson(req);
+      try {
+        const resFixed = this.ledger.addFixed({
+          name: typeof body?.name === "string" ? body.name : "",
+          amountCents: Number(body?.amountCents),
+          paidThisMonth: body?.paidThisMonth === true,
+        });
+        sendJson(res, 200, resFixed.state);
+      } catch (e) {
+        sendError(res, 400, "bad_request", (e as Error).message);
+      }
+      return;
+    }
+    const fm = /^\/v1\/ledger\/fixed\/([A-Za-z0-9_-]{1,40})$/.exec(path);
+    if (fm) {
+      if (req.method === "PATCH") {
+        const body = await readJson(req);
+        try {
+          const patch: { name?: string; amountCents?: number; paid?: boolean } = {};
+          if (typeof body?.name === "string") patch.name = body.name;
+          if (body?.amountCents !== undefined) patch.amountCents = Number(body.amountCents);
+          if (typeof body?.paid === "boolean") patch.paid = body.paid;
+          sendJson(res, 200, this.ledger.updateFixed(fm[1]!, patch).state);
+        } catch (e) {
+          sendError(res, 400, "bad_request", (e as Error).message);
+        }
+        return;
+      }
+      if (req.method === "DELETE") {
+        try {
+          sendJson(res, 200, this.ledger.deleteFixed(fm[1]!));
+        } catch (e) {
+          sendError(res, 404, "not_found", (e as Error).message);
+        }
+        return;
+      }
+    }
+    if (path === "/v1/ledger/transactions" && req.method === "POST") {
+      const body = await readJson(req);
+      try {
+        const source = body?.source === "wechat_notify" || body?.source === "assistant" ? (body.source as LedgerTxSource) : "manual";
+        if (!this.ledger.isEnabled() && source === "wechat_notify") {
+          sendError(res, 409, "bad_request", "微信账单插件未启用");
+          return;
+        }
+        const out = this.ledger.recordTransaction({
+          direction: body?.direction as LedgerTxDirection,
+          amountCents: Number(body?.amountCents),
+          title: typeof body?.title === "string" ? body.title : "",
+          note: typeof body?.note === "string" ? body.note : undefined,
+          source,
+          externalId: typeof body?.externalId === "string" ? body.externalId : undefined,
+          fixedId: typeof body?.fixedId === "string" ? body.fixedId : undefined,
+          ts: typeof body?.ts === "number" ? body.ts : undefined,
+          adjustBalance: typeof body?.adjustBalance === "boolean" ? body.adjustBalance : true,
+        });
+        sendJson(res, 200, out);
+      } catch (e) {
+        sendError(res, 400, "bad_request", (e as Error).message);
+      }
+      return;
+    }
+    const tm = /^\/v1\/ledger\/transactions\/([A-Za-z0-9_-]{1,40})$/.exec(path);
+    if (tm) {
+      if (req.method === "PATCH") {
+        const body = await readJson(req);
+        try {
+          const patch: { direction?: LedgerTxDirection; amountCents?: number; title?: string; note?: string; fixedId?: string | null } = {};
+          if (body?.direction === "income" || body?.direction === "expense") patch.direction = body.direction;
+          if (body?.amountCents !== undefined) patch.amountCents = Number(body.amountCents);
+          if (typeof body?.title === "string") patch.title = body.title;
+          if (typeof body?.note === "string") patch.note = body.note;
+          if (body?.fixedId !== undefined) patch.fixedId = body.fixedId as string | null;
+          sendJson(res, 200, this.ledger.updateTransaction(tm[1]!, patch));
+        } catch (e) {
+          sendError(res, 400, "bad_request", (e as Error).message);
+        }
+        return;
+      }
+      if (req.method === "DELETE") {
+        const resDel = this.ledger.deleteTransaction(tm[1]!, true);
+        if (!resDel.deleted) {
+          sendError(res, 404, "not_found", "找不到这条账单记录");
+          return;
+        }
+        sendJson(res, 200, resDel.state);
+        return;
+      }
+    }
+    sendError(res, 404, "not_found", "unknown ledger endpoint");
   }
 
   private async handleAssistant(req: IncomingMessage, res: ServerResponse, path: string, auth: Device | "admin"): Promise<void> {
@@ -666,6 +803,114 @@ export class Relay {
       if (!this.assistant.cancelReminder(rm[1]!)) sendError(res, 404, "not_found", "没有这个提醒");
       else sendJson(res, 200, { ok: true });
       return;
+    }
+    if (path === "/v1/assistant/profile") {
+      if (req.method === "GET") {
+        sendJson(res, 200, { profile: this.assistant.profile(), presets: this.assistant.presets() });
+        return;
+      }
+      if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
+        const body = await readJson(req);
+        if (!body || typeof body !== "object") {
+          sendError(res, 400, "bad_request", "需要 JSON 对象");
+          return;
+        }
+        try {
+          const by = auth === "admin" ? "admin" : auth.name;
+          const profile = this.assistant.setProfile(body, by);
+          sendJson(res, 200, { profile, presets: this.assistant.presets() });
+        } catch (e) {
+          sendError(res, 400, "bad_request", (e as Error).message);
+        }
+        return;
+      }
+    }
+    if (req.method === "GET" && path === "/v1/assistant/memories/export") {
+      sendJson(res, 200, { markdown: this.assistant.memory.exportMarkdown(this.assistant.profile()) });
+      return;
+    }
+    if (path === "/v1/assistant/memories") {
+      if (req.method === "GET") {
+        const sp = new URL(req.url ?? path, "http://relay").searchParams;
+        const rawLimit = sp.get("limit");
+        const limit = rawLimit !== null ? Number(rawLimit) : undefined;
+        sendJson(
+          res,
+          200,
+          this.assistant.memory.list({
+            category: sp.get("category") ?? undefined,
+            q: sp.get("q") ?? undefined,
+            limit: Number.isFinite(limit) ? limit : undefined,
+          }),
+        );
+        return;
+      }
+      if (req.method === "POST") {
+        const body = await readJson(req);
+        if (!body || typeof body !== "object") {
+          sendError(res, 400, "bad_request", "需要 JSON 对象");
+          return;
+        }
+        try {
+          const resMem = this.assistant.memory.remember({
+            category: body.category,
+            slotKey: body.slotKey ?? body.slot_key,
+            content: body.content,
+            importance: body.importance,
+            pinned: body.pinned,
+            expiresAt: body.expiresAt,
+            ttlDays: body.ttlDays ?? body.ttl_days,
+            source: "user",
+          });
+          this.assistant.notifyMemoriesChanged();
+          sendJson(res, 200, resMem);
+        } catch (e) {
+          sendError(res, 400, "bad_request", (e as Error).message);
+        }
+        return;
+      }
+      if (req.method === "DELETE") {
+        const removed = this.assistant.memory.clear();
+        this.assistant.notifyMemoriesChanged();
+        sendJson(res, 200, { ok: true, removed });
+        return;
+      }
+    }
+    const mm = /^\/v1\/assistant\/memories\/([A-Za-z0-9_-]{1,64})$/.exec(path);
+    if (mm) {
+      if (req.method === "PATCH" || req.method === "PUT") {
+        const body = await readJson(req);
+        if (!body || typeof body !== "object") {
+          sendError(res, 400, "bad_request", "需要 JSON 对象");
+          return;
+        }
+        try {
+          const item = this.assistant.memory.update(mm[1]!, {
+            ...(Object.hasOwn(body, "category") ? { category: body.category } : {}),
+            ...(Object.hasOwn(body, "slotKey") || Object.hasOwn(body, "slot_key") ? { slotKey: body.slotKey ?? body.slot_key } : {}),
+            ...(Object.hasOwn(body, "content") ? { content: body.content } : {}),
+            ...(Object.hasOwn(body, "importance") ? { importance: body.importance } : {}),
+            ...(Object.hasOwn(body, "pinned") ? { pinned: body.pinned } : {}),
+            ...(Object.hasOwn(body, "expiresAt") ? { expiresAt: body.expiresAt } : {}),
+          });
+          this.assistant.notifyMemoriesChanged();
+          sendJson(res, 200, { item });
+        } catch (e) {
+          const msg = (e as Error).message;
+          sendError(res, msg.includes("没有找到") ? 404 : 400, msg.includes("没有找到") ? "not_found" : "bad_request", msg);
+        }
+        return;
+      }
+      if (req.method === "DELETE") {
+        const out = this.assistant.memory.forget({ id: mm[1]! });
+        if (!out.removed) {
+          sendError(res, 404, "not_found", "没有这条记忆");
+          return;
+        }
+        this.assistant.notifyMemoriesChanged();
+        sendJson(res, 200, { ok: true });
+        return;
+      }
     }
     sendError(res, 404, "not_found", "not found");
   }
@@ -890,21 +1135,29 @@ export class Relay {
 
   /** A phone's background push channel: notices only, never replaces the main socket. */
   private onNotifyConnection(ws: WebSocket, deviceId: string, since: number): void {
+    const devName = this.store.getDevice(deviceId)?.name ?? deviceId;
     const sub = { ws, deviceId, alive: true };
     this.notifySubs.add(sub);
     ws.on("pong", () => (sub.alive = true));
     ws.on("message", () => (sub.alive = true));
-    ws.on("close", () => this.notifySubs.delete(sub));
+    ws.on("close", (code) => {
+      this.notifySubs.delete(sub);
+      if (this.closing) return;
+      this.events.record({ kind: "notify", level: "debug", msg: `notify close "${devName}" code=${code} subs=${this.notifySubs.size}`, device: deviceId });
+    });
     ws.on("error", () => this.notifySubs.delete(sub));
     const send = (f: NotifyFrame) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(f));
     const now = Date.now();
     send({ type: "hello", ts: now });
+    let replayed = 0;
     if (Number.isSafeInteger(since) && since > 0) {
       // Native uses a single time cursor; neither source may leapfrog the other's older notices.
       const notices = [...this.assistant.noticesSince(since), ...this.store.runtimeTaskNoticesSince(deviceId, since, now)];
       notices.sort((a, b) => a.ts - b.ts);
+      replayed = notices.length;
       for (const notice of notices) send({ type: "notice", notice });
     }
+    this.events.record({ kind: "notify", level: "debug", msg: `notify open "${devName}" since=${since > 0 ? "cursor" : "0"} replayed=${replayed} subs=${this.notifySubs.size}`, device: deviceId });
   }
 
   private onConnection(ws: WebSocket, device: Device): void {

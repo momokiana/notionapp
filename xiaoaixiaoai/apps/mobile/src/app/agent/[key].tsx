@@ -5,7 +5,7 @@ import { Stack, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import { useQuery } from "@tanstack/react-query";
-import type { Agent } from "@xiaoaixiaoai/protocol";
+import { effectiveAgentStatus, type Agent } from "@xiaoaixiaoai/protocol";
 import { ChatView } from "../../components/chat";
 import { Composer, InfoView, TerminalView } from "../../components/detail";
 import { Breadcrumb, SubagentList } from "../../components/subagents";
@@ -15,6 +15,7 @@ import { call, pingNow } from "../../lib/relay";
 import { Mascot } from "../../components/Mascot";
 import { CuteIcon } from "../../components/icons";
 import { agentTitle, money, relTime } from "../../lib/format";
+import type { ReplyQuote } from "../../lib/quote";
 import { parseTrail, SUB_STATUS, type Crumb } from "../../lib/subnav";
 import { usePalette } from "../../theme/theme";
 import { agentStatusLabel, fonts, radius, space, statusColors, type Palette } from "../../theme/tokens";
@@ -91,27 +92,31 @@ function MainDetail({ agent, initialTab }: { agent: Agent; initialTab?: Tab }) {
   const requestedTab = !hasTerminal && initialTab === "terminal" ? "chat" : initialTab;
   const [tab, setTab] = useState<Tab>(() => requestedTab ?? (hasTerminal ? (agent.sessionKey ? "chat" : "terminal") : "chat"));
   const [resolvedKey, setResolvedKey] = useState(agent.key);
+  const [quote, setQuote] = useState<ReplyQuote | null>(null);
   const subs = agent.subagents ?? 0;
+  const effStatus = effectiveAgentStatus(agent);
 
   // Apply the fallback only when a different agent resolves, not on every live snapshot.
   // A guarded render adjustment preserves the person's selected tab without a post-render effect.
   if (resolvedKey !== agent.key) {
     setResolvedKey(agent.key);
+    if (quote) setQuote(null);
     if (!hasTerminal && tab === "terminal") setTab("chat");
     else if (hasTerminal && !agent.sessionKey && tab === "chat" && !initialTab) setTab("terminal");
   }
   if (!hasTerminal && tab === "terminal") setTab("chat");
 
   // Opening a finished agent is looking at it: herdr stops counting it as "已完成", on the desktop too.
+  // Keep "done" intact while subagents are still active so we don't clear it prematurely.
   useEffect(() => {
-    if (agent.status !== "done") return;
+    if (effStatus !== "done") return;
     const mark = `${agent.key}:${agent.turn ?? ""}`;
     if (seenSent.has(mark)) return;
     seenSent.add(mark);
     call(agent.deviceId, "agent.seen", { agent: agent.key }).catch(() => {
       /* an older computer does not know this; the list just keeps showing it as done */
     });
-  }, [agent.key, agent.deviceId, agent.status, agent.turn]);
+  }, [agent.key, agent.deviceId, effStatus, agent.turn]);
 
   const meta = [agent.where, money(agent.costUsd)].filter(Boolean).join(" · ");
   const buttons = [
@@ -136,7 +141,7 @@ function MainDetail({ agent, initialTab }: { agent: Agent; initialTab?: Tab }) {
             <Text numberOfLines={1} style={{ flex: 1, color: p.muted, fontSize: 12.5 }}>
               {meta}
             </Text>
-            <StatusPill status={agent.status} label={agentStatusLabel(agent)} compact />
+            <StatusPill status={effStatus} label={agentStatusLabel(agent)} compact />
           </View>
           <SegmentedButtons
             value={tab}
@@ -148,13 +153,22 @@ function MainDetail({ agent, initialTab }: { agent: Agent; initialTab?: Tab }) {
           />
         </View>
         <View style={{ flex: 1 }}>
-          {tab === "chat" ? <ChatView agent={agent} active bottomInset={0} onNoSession={() => { if (hasTerminal) setTab("terminal"); }} childCount={subs} /> : null}
+          {tab === "chat" ? (
+            <ChatView
+              agent={agent}
+              active
+              bottomInset={0}
+              onQuote={agent.source !== "runtime" || agent.canSend !== false ? setQuote : undefined}
+              onNoSession={() => { if (hasTerminal) setTab("terminal"); }}
+              childCount={subs}
+            />
+          ) : null}
           {tab === "terminal" && hasTerminal ? <TerminalView agent={agent} active /> : null}
           {tab === "subs" ? <SubagentList agent={agent} trail={[]} active bottomInset={insets.bottom} /> : null}
           {tab === "info" ? <InfoView agent={agent} bottomInset={0} /> : null}
         </View>
         {tab === "chat" || tab === "terminal" ? (
-          <Composer agent={agent} bottomInset={insets.bottom} mode={tab} onOpenTerminal={() => setTab("terminal")} />
+          <Composer agent={agent} bottomInset={insets.bottom} mode={tab} quote={quote} onClearQuote={() => setQuote(null)} onOpenTerminal={() => setTab("terminal")} />
         ) : (
           <View style={{ height: insets.bottom }} />
         )}

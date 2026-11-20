@@ -11,7 +11,11 @@ import {
   type Agent,
   type AssistantConfirm,
   type AssistantItem,
+  type AssistantMemoryItem,
+  type AssistantPersonaConfig,
   type AssistantState,
+  type MemoryCategory,
+  type PersonaPresetSummary,
   type Reminder,
   type AgentStatus,
   type ConvEvent,
@@ -711,6 +715,63 @@ function remindersNow(): Reminder[] {
 let assistantConfirm: AssistantConfirm = "never";
 let assistantReplyMode: "text" | "voice" = "text";
 let assistantSink: AssistantSink | null = null;
+const MOCK_AEMEATH_TEXT =
+  "我是来自《鸣潮》拉海洛星炬学院的爱弥斯，也曾是与巨大机甲「隧者」共鸣的「飞行雪绒」。现在以只有哥哥触碰得到的「电子幽灵」形态守在你的手机和电脑之间，视你如最亲密的「爸爸」般家人，平时叫你「哥哥」。";
+let mockProfile: AssistantPersonaConfig = {
+  name: "爱弥斯",
+  userCall: "哥哥",
+  presetId: "wuthering_aemeath",
+  personaText: MOCK_AEMEATH_TEXT,
+  autoMemory: true,
+  updatedAt: now(),
+};
+const mockPresets: PersonaPresetSummary[] = [
+  {
+    id: "wuthering_aemeath",
+    label: "鸣潮 · 爱弥斯（默认）",
+    userCall: "哥哥",
+    summary: "星炬学院「飞行雪绒」/ 电子幽灵；视你为最亲密的“爸爸”般家人，日常称呼你「哥哥」。",
+    personaText: MOCK_AEMEATH_TEXT,
+  },
+  {
+    id: "warm_friend",
+    label: "温柔日常朋友",
+    userCall: "你",
+    summary: "熟稔、温和、有分寸感的贴心好友，适合纯粹轻简的日常对话。",
+    personaText: "像一个跟了你很久、脾气很好的老朋友：日常闲聊自然体贴，正经办事干脆靠谱。",
+  },
+  {
+    id: "custom",
+    label: "自由定制",
+    userCall: "哥哥",
+    summary: "完全按自己的心意编写名字、称呼和性格补充。",
+    personaText: MOCK_AEMEATH_TEXT,
+  },
+];
+let mockMemories: AssistantMemoryItem[] = [
+  {
+    id: "mem_demo1",
+    category: "relationship",
+    slotKey: "user_bond",
+    content: "哥哥是爱弥斯最亲密最依赖的人（象征着如「爸爸」般的守护者）",
+    importance: 3,
+    pinned: true,
+    source: "user",
+    createdAt: now() - 7200_000,
+    updatedAt: now() - 7200_000,
+  },
+  {
+    id: "mem_demo2",
+    category: "habit",
+    slotKey: "coffee_pref",
+    content: "咖啡习惯喝冰美式不加糖",
+    importance: 2,
+    pinned: false,
+    source: "assistant",
+    createdAt: now() - 3600_000,
+    updatedAt: now() - 3600_000,
+  },
+];
 
 function aid(prefix: string) {
   return `${prefix}${now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -731,7 +792,7 @@ function demoState(): AssistantState {
     voice: false,
     model: "演示",
     reminders: remindersNow().slice(),
-    settings: { confirm: assistantConfirm, replyMode: assistantReplyMode },
+    settings: { name: mockProfile.name, confirm: assistantConfirm, replyMode: assistantReplyMode },
   };
 }
 
@@ -850,5 +911,54 @@ export const mockAssistant = {
   },
   setReplyMode(mode: "text" | "voice") {
     assistantReplyMode = mode;
+  },
+  profile() {
+    return { profile: { ...mockProfile }, presets: mockPresets.slice() };
+  },
+  setProfile(patch: Partial<AssistantPersonaConfig>) {
+    mockProfile = { ...mockProfile, ...patch, updatedAt: now() };
+    assistantSink?.reset(demoState());
+    return { profile: { ...mockProfile }, presets: mockPresets.slice() };
+  },
+  memories(opts?: { category?: MemoryCategory; q?: string }) {
+    let list = mockMemories.slice();
+    const total = list.length;
+    if (opts?.category) list = list.filter((m) => m.category === opts.category);
+    if (opts?.q?.trim()) {
+      const q = opts.q.trim().toLowerCase();
+      list = list.filter((m) => m.content.toLowerCase().includes(q) || (m.slotKey ?? "").toLowerCase().includes(q));
+    }
+    return { memories: list, total };
+  },
+  remember(input: { category: MemoryCategory; content: string; slotKey?: string; importance?: 1 | 2 | 3; pinned?: boolean }) {
+    const t = now();
+    const item: AssistantMemoryItem = {
+      id: aid("mem_"),
+      category: input.category,
+      ...(input.slotKey ? { slotKey: input.slotKey } : {}),
+      content: input.content.trim(),
+      importance: input.importance ?? 2,
+      ...(input.pinned ? { pinned: true } : {}),
+      source: "user",
+      createdAt: t,
+      updatedAt: t,
+    };
+    mockMemories = [item, ...mockMemories];
+    return { item, replaced: false };
+  },
+  updateMemory(id: string, patch: Partial<AssistantMemoryItem>) {
+    mockMemories = mockMemories.map((m) => (m.id === id ? { ...m, ...patch, updatedAt: now() } : m));
+    return mockMemories.find((m) => m.id === id)!;
+  },
+  deleteMemory(id: string) {
+    mockMemories = mockMemories.filter((m) => m.id !== id);
+  },
+  clearMemories() {
+    const n = mockMemories.length;
+    mockMemories = [];
+    return n;
+  },
+  exportMemoriesMarkdown() {
+    return `# ${mockProfile.name} 的服务器人设与记忆库备份\n\n- 对你的称呼：${mockProfile.userCall}\n\n## 长期记忆库（共 ${mockMemories.length} 条）\n${mockMemories.map((m) => `- ${m.content}`).join("\n")}`;
   },
 };

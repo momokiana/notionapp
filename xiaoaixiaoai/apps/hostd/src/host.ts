@@ -264,7 +264,8 @@ export class Host {
         for (const entry of entries) {
           const localId = encodeRuntimeLocalId(entry.runtime, entry.projectId, entry.session.id);
           seen.add(localId);
-          const state = nextRuntimeState(this.runtimeState.get(localId), entry.session.state, now, entry.session.updatedAt);
+          const subagentsWorking = entry.session.subagentsWorking ?? 0;
+          const state = nextRuntimeState(this.runtimeState.get(localId), entry.session.state, now, entry.session.updatedAt, subagentsWorking);
           this.runtimeState.set(localId, state);
           const canSend = !this.opts.readOnly && entry.sendConfigured;
           const readOnlyReason = this.opts.readOnly
@@ -285,6 +286,8 @@ export class Host {
             status: state.status,
             statusSince: state.since,
             ...(state.turn > 0 ? { turn: state.turn } : {}),
+            ...(entry.session.subagents !== undefined ? { subagents: entry.session.subagents } : {}),
+            ...(entry.session.subagentsWorking !== undefined ? { subagentsWorking: entry.session.subagentsWorking } : {}),
             isShell: false,
             sessionKey: encodeRuntimeSessionKey(entry.runtime, entry.projectId, entry.session.id),
             canSend,
@@ -520,6 +523,20 @@ export class Host {
     return parsed;
   }
 
+  private async resolveRuntimeTarget(a: Agent, sub?: unknown): Promise<{ runtime: SessionRuntime; projectId: string; sessionId: string }> {
+    const main = this.runtimeTargetOf(a);
+    if (sub === undefined || sub === null || sub === "") return main;
+    if (typeof sub !== "string") throw new RpcFailure("bad_request", "sub must be a session key");
+    const parsed = parseRuntimeTarget(sub);
+    const view = this.opts.runtimeSessions;
+    if (!parsed || !view || parsed.runtime !== main.runtime) {
+      throw new RpcFailure("forbidden", "这个子会话不属于这个 agent");
+    }
+    const ok = await view.descends(main.runtime, parsed.sessionId, main.sessionId);
+    if (!ok) throw new RpcFailure("forbidden", "这个子会话不属于这个 agent");
+    return parsed;
+  }
+
   private async runtimeDetailForTarget(
     from: string,
     target: { runtime: SessionRuntime; projectId: string; sessionId: string },
@@ -630,7 +647,7 @@ export class Host {
           this.send({ type: "stream_open", id: f.id, result: { kind: "terminal", agent: a.key } });
           return;
         }
-        if (typeof p.sub === "string" && p.sub) throw new RpcFailure("not_found", "这个会话没有子对话");
+        const readTarget = await this.resolveRuntimeTarget(a, p.sub);
         let stopped = false;
         const seen = new Map<string, string>();
         let busy = false;
@@ -640,7 +657,7 @@ export class Host {
           if (stopped || busy) return;
           busy = true;
           try {
-            const { events } = await this.runtimeDetailForTarget(f.from, target, 60);
+            const { events } = await this.runtimeDetailForTarget(f.from, readTarget, 60);
             if (failing) {
               failing = false;
               this.sendStream(f.id, { kind: "alive", at: Date.now() });
@@ -1134,8 +1151,8 @@ export class Host {
     "session.events": async (p, from) => {
       const a = this.resolve(p.agent);
       if (a.source === "runtime") {
-        if (typeof p.sub === "string" && p.sub) return { sessionKey: null, events: [], more: false, nextBefore: null };
-        const res = await this.runtimeDetailForTarget(from, this.runtimeTargetOf(a), p.limit ?? 60);
+        const readTarget = await this.resolveRuntimeTarget(a, p.sub);
+        const res = await this.runtimeDetailForTarget(from, readTarget, p.limit ?? 60);
         return {
           sessionKey: res.sessionKey,
           events: res.events,
@@ -1151,9 +1168,13 @@ export class Host {
       const r = await this.uniflo.events(key, p.limit ?? 80, p.before);
       return { sessionKey: key, events: r.events, more: r.more, nextBefore: r.nextBefore };
     },
-    "session.children": async (p) => {
+    "session.children": async (p, from) => {
       const a = this.resolve(p.agent);
-      if (a.source === "runtime") return { sessions: [] };
+      if (a.source === "runtime") {
+        const view = this.runtimeAccess(from);
+        const target = this.runtimeTargetOf(a);
+        return { sessions: await view.children({ ...target, ...(typeof p.sub === "string" && p.sub ? { sub: p.sub } : {}) }) };
+      }
       const key = await this.sessionOf(p.agent, p.sub);
       return { sessions: key ? await this.uniflo.children(key) : [] };
     },
@@ -1295,6 +1316,7 @@ export class Host {
     }),
     "agent.seen": async (p, from) => {
       const a = this.resolve(p.agent);
+      if ((a.subagentsWorking ?? 0) > 0) return { ok: true as const };
       if (a.source === "runtime") {
         this.runtimeAccess(from);
         const state = this.runtimeState.get(a.localId);
@@ -1410,7 +1432,7 @@ export class Host {
             harness: entry.runtime,
             title: entry.session.title,
             cwd: entry.projectTitle,
-            status: entry.session.state === "running" || entry.session.state === "attention" ? "working" : "idle",
+            status: (entry.session.state === "running" || entry.session.state === "attention" || (entry.session.subagentsWorking ?? 0) > 0) ? "working" : "idle",
             updatedAt: entry.session.updatedAt ?? Date.now(),
             ...(live.has(key) ? { agent: live.get(key) } : {}),
           };
@@ -1468,7 +1490,7 @@ export class Host {
           harness: target.runtime,
           title: s.title,
           cwd: res.detail.project.title,
-          status: s.state === "running" || s.state === "attention" ? "working" : "idle",
+          status: (s.state === "running" || s.state === "attention" || (s.subagentsWorking ?? 0) > 0) ? "working" : "idle",
           updatedAt: s.updatedAt ?? Date.now(),
           agent: this.agents.find((a) => a.sessionKey === res.sessionKey)?.key,
         };

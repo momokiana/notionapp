@@ -3,7 +3,7 @@ import { Pressable, View } from "react-native";
 import { Text } from "react-native-paper";
 import { router } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import type { Agent, AgentStatus } from "@xiaoaixiaoai/protocol";
+import { effectiveAgentStatus, type Agent, type AgentStatus } from "@xiaoaixiaoai/protocol";
 import { usePalette } from "../theme/theme";
 import { agentStatusLabel, fonts, radius, space, spaceColors, statusColors } from "../theme/tokens";
 import { agentSpace, agentTitle, relTime, stableHash } from "../lib/format";
@@ -52,16 +52,30 @@ export function QueuedChip({ agent }: { agent: Agent }) {
   );
 }
 
-export const AgentRow = memo(function AgentRow({ agent, offline, deviceName }: { agent: Agent; offline?: boolean; deviceName?: string }) {
+export const AgentRow = memo(function AgentRow({
+  agent,
+  offline,
+  deviceName,
+  pinned,
+  onLongPress,
+}: {
+  agent: Agent;
+  offline?: boolean;
+  deviceName?: string;
+  pinned?: boolean;
+  onLongPress?: () => void;
+}) {
   const p = usePalette();
   const sub = [harnessLook(agent.harness, agent.isShell).label, deviceName, agent.turn ? `第 ${agent.turn} 轮` : null]
     .filter(Boolean)
     .join(" · ");
+  const summaryLine = (agent.statusNote || agent.preview || "").replace(/\s+/g, " ").trim();
   const needsYou = agent.status === "blocked" && !offline;
   const c = statusColors("blocked", p.dark);
   return (
     <Card
       onPress={() => openAgent(agent.key)}
+      onLongPress={onLongPress}
       accessibilityLabel={`${spacedTitle(agent)}，${agent.harness}${offline ? "，电脑离线" : ""}`}
       style={{
         flexDirection: "row",
@@ -77,11 +91,24 @@ export const AgentRow = memo(function AgentRow({ agent, offline, deviceName }: {
     >
       <HarnessAvatar harness={agent.harness} isShell={agent.isShell} dim={offline} size={48} />
       <View style={{ flex: 1, gap: 3 }}>
-        <Text numberOfLines={1} style={{ fontFamily: fonts.bodyBold, fontSize: 16, color: offline ? p.muted : p.ink }}>
-          {spacedTitle(agent)}
-        </Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: 13, color: offline ? p.faint : p.muted }}>
+          {pinned ? <MaterialCommunityIcons name="pin" size={14} color={p.accentText} /> : null}
+          <Text numberOfLines={1} style={{ flexShrink: 1, fontFamily: fonts.bodyBold, fontSize: 16, color: offline ? p.muted : p.ink }}>
+            {spacedTitle(agent)}
+          </Text>
+          {agent.canSend === false ? (
+            <View style={{ backgroundColor: p.surface2, borderRadius: radius.pill, paddingHorizontal: 6, paddingVertical: 1 }}>
+              <Text style={{ color: p.faint, fontFamily: fonts.bodySemi, fontSize: 10.5 }}>只读</Text>
+            </View>
+          ) : null}
+        </View>
+        {summaryLine ? (
+          <Text numberOfLines={1} style={{ fontSize: 12.5, color: needsYou ? c.fg : p.muted }}>
+            {summaryLine}
+          </Text>
+        ) : null}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: 12.5, color: offline ? p.faint : p.muted }}>
             {sub}
           </Text>
           {agent.subagents ? (
@@ -90,7 +117,9 @@ export const AgentRow = memo(function AgentRow({ agent, offline, deviceName }: {
               style={{ flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: p.lavenderContainer, borderRadius: radius.pill, paddingHorizontal: 7, paddingVertical: 1 }}
             >
               {agent.subagentsWorking ? <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: statusColors("working", p.dark).fg }} /> : null}
-              <Text style={{ color: p.ink, fontFamily: fonts.bodySemi, fontSize: 11.5 }}>子 agent {agent.subagents}</Text>
+              <Text style={{ color: p.ink, fontFamily: fonts.bodySemi, fontSize: 11.5 }}>
+                {`子 agent ${agent.subagents}${agent.subagentsWorking ? ` · ${agent.subagentsWorking} 在忙` : ""}`}
+              </Text>
             </View>
           ) : null}
           {offline ? null : <QueuedChip agent={agent} />}
@@ -102,7 +131,7 @@ export const AgentRow = memo(function AgentRow({ agent, offline, deviceName }: {
             <Text style={{ color: p.muted, fontFamily: fonts.bodyBold, fontSize: 12 }}>离线</Text>
           </View>
         ) : (
-          <StatusPill status={agent.status} label={agentStatusLabel(agent)} compact />
+          <StatusPill status={effectiveAgentStatus(agent)} label={agentStatusLabel(agent)} compact />
         )}
         <Text style={{ fontSize: 12, color: p.faint }}>{relTime(agent.statusSince ?? agent.updatedAt)}</Text>
       </View>

@@ -45,8 +45,10 @@ export function observedIdle(previous: ReadonlyMap<string, RuntimeSessionState>,
   let count = 0;
   for (const e of entries) {
     if (e.archived || !subscribed.has(e.session.id)) continue;
-    if (previous.get(e.session.id) === "running" && e.session.state === "idle") count++;
-    observed.set(e.session.id, e.session.state);
+    const effState: RuntimeSessionState =
+      e.session.state === "idle" && (e.session.subagentsWorking ?? 0) > 0 ? "running" : e.session.state;
+    if (previous.get(e.session.id) === "running" && effState === "idle") count++;
+    observed.set(e.session.id, effState);
   }
   return { observed, count };
 }

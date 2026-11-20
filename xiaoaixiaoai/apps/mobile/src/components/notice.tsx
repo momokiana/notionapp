@@ -10,11 +10,13 @@ import { router } from "expo-router";
 import Markdown from "react-native-markdown-display";
 import type { AssistantItem, Notice } from "@xiaoaixiaoai/protocol";
 import { findAgent, useSettings } from "../lib/store";
+import type { ReplyQuote } from "../lib/quote";
 import { fixCjkEmphasis } from "../lib/markdown";
 import { usePalette } from "../theme/theme";
 import { fonts, radius, space, statusColors, type Palette } from "../theme/tokens";
 import { mdStyles } from "./chat";
 import { CuteIcon, type CuteIconName } from "./icons";
+import { MessageActions } from "./quote-ui";
 
 /** Icon and colours for what the assistant found; older notices only carry their kind. Same icon family as the agent status chips. */
 export function noticeLook(n: Pick<Notice, "kind" | "verdict">, p: Palette): { icon: CuteIconName; fg: string; bg: string } {
@@ -64,10 +66,14 @@ export const NoticeBubble = memo(function NoticeBubble({
   item,
   speaking,
   onToggleSpeak,
+  onCopy,
+  onQuote,
 }: {
   item: AssistantItem;
   speaking?: boolean;
   onToggleSpeak?: () => void;
+  onCopy?: (text: string) => void;
+  onQuote?: (q: ReplyQuote) => void;
 }) {
   const p = usePalette();
   const scale = useSettings((s) => s.textScale);
@@ -80,6 +86,9 @@ export const NoticeBubble = memo(function NoticeBubble({
   const agent = n.agent ? findAgent(n.agent) : undefined;
   // Shown in full: details are at most 300 characters, and folding them read as broken.
   const details = n.details?.trim();
+  const copyText = [n.title, n.body, details].filter(Boolean).join("\n") || item.text;
+  const quoteText = [n.body || n.title, details].filter(Boolean).join("\n") || item.text;
+  const quoteAuthor = n.title.split(" · ")[0] || "通知";
 
   return (
     // A set width, not maxWidth: sized to its content, the card measured wrapped list
@@ -93,14 +102,14 @@ export const NoticeBubble = memo(function NoticeBubble({
           </Text>
         </View>
         {n.body ? (
-          <Text style={{ color: p.ink, fontSize: 15.5 * scale, lineHeight: 22 * scale }} numberOfLines={details ? undefined : 8}>
+          <Text selectable style={{ color: p.ink, fontSize: 15.5 * scale, lineHeight: 22 * scale }} numberOfLines={details ? undefined : 8}>
             {n.body}
           </Text>
         ) : null}
         {details ? <Markdown style={styles}>{fixCjkEmphasis(details)}</Markdown> : null}
         {agent ? <AgentLink agentKey={agent.key} /> : null}
       </View>
-      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 4 }}>
+      <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, paddingHorizontal: 4 }}>
         <CuteIcon name="bell" size={12} color={p.faint} strokeWidth={2.4} />
         <Text style={{ color: p.faint, fontSize: 11 }}>{clock(item.ts)} · 主动告诉你</Text>
         {onToggleSpeak ? (
@@ -123,6 +132,10 @@ export const NoticeBubble = memo(function NoticeBubble({
             <Text style={{ color: speaking ? p.skyText : p.muted, fontSize: 11, fontFamily: fonts.bodySemi }}>{speaking ? "停止" : "播报"}</Text>
           </Pressable>
         ) : null}
+        <MessageActions
+          onCopy={onCopy && copyText ? () => onCopy(copyText) : undefined}
+          onQuote={onQuote && quoteText ? () => onQuote({ author: quoteAuthor, text: quoteText }) : undefined}
+        />
       </View>
     </View>
   );

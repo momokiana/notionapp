@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, RefreshControl, SectionList, View } from "react-native";
-import { Button, Searchbar, Text } from "react-native-paper";
+import { Pressable, RefreshControl, ScrollView, SectionList, View } from "react-native";
+import { Button, Searchbar, Snackbar, Text } from "react-native-paper";
+import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useNavigation, router } from "expo-router";
-import type { Agent, AgentStatus } from "@xiaoaixiaoai/protocol";
+import { effectiveAgentStatus, type Agent, type AgentStatus } from "@xiaoaixiaoai/protocol";
 import { AgentRow, ConnectionBanner, SpaceBadge } from "../../components/agents";
 import { Card, EmptyState, IconTile, PageBackground } from "../../components/ui";
 import { LiveMascot } from "../../components/LiveMascot";
@@ -12,6 +13,7 @@ import { Sidebar, useSidebar } from "../../components/Sidebar";
 import { CreateAgentSheet, type CreateTarget } from "../../components/CreateAgentSheet";
 import { allAgents, useLive, useSettings } from "../../lib/store";
 import { agentSpace, agentTitle, greeting } from "../../lib/format";
+import { harnessLook } from "../../lib/harness";
 import { pingNow } from "../../lib/relay";
 import { usePalette } from "../../theme/theme";
 import { fonts, radius, space, statusColors } from "../../theme/tokens";
@@ -20,8 +22,9 @@ import { fonts, radius, space, statusColors } from "../../theme/tokens";
 const FAB = 56;
 
 /** Every agent is in exactly one group; all are listed, and a group folds when its header is tapped. */
-type GroupKey = "blocked" | "working" | "done" | "idle" | "offline";
+type GroupKey = "pinned" | "blocked" | "working" | "done" | "idle" | "offline";
 const GROUPS: { key: GroupKey; title: string }[] = [
+  { key: "pinned", title: "置顶" },
   { key: "blocked", title: "需要你" },
   { key: "working", title: "工作中" },
   { key: "done", title: "已完成" },
@@ -31,7 +34,7 @@ const GROUPS: { key: GroupKey; title: string }[] = [
 
 const byRecent = (x: Agent, y: Agent) => (y.statusSince ?? y.updatedAt) - (x.statusSince ?? x.updatedAt);
 
-/** One compact row of three counts (需要你 / 工作中 / 已完成); tap one to filter. */
+/** Compact single-row stat pills (需要你 / 工作中 / 已完成); tap one to filter without eating half the screen. */
 function StatRow({ counts, active, onPick }: { counts: Record<AgentStatus, number>; active: AgentStatus | null; onPick: (s: AgentStatus | null) => void }) {
   const p = usePalette();
   const items: { s: AgentStatus; label: string }[] = [
@@ -51,13 +54,26 @@ function StatRow({ counts, active, onPick }: { counts: Record<AgentStatus, numbe
             accessibilityState={{ selected: on }}
             accessibilityLabel={`${label} ${counts[s]} 个，点按${on ? "取消" : ""}筛选`}
             onPress={() => onPick(on ? null : s)}
-            style={{ flex: 1, minHeight: 74, paddingHorizontal: space.md, paddingVertical: space.sm, borderRadius: radius.card, backgroundColor: c.bg, borderWidth: 2, borderColor: on ? c.fg : "transparent", justifyContent: "space-between" }}
+            style={{
+              flex: 1,
+              minHeight: 48,
+              paddingHorizontal: space.md,
+              paddingVertical: space.xs,
+              borderRadius: radius.card,
+              backgroundColor: c.bg,
+              borderWidth: 2,
+              borderColor: on ? c.fg : "transparent",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 4,
+            }}
           >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 5 }}>
-              <CuteIcon name={s === "blocked" ? "blocked" : s === "working" ? "working" : "done"} size={17} color={c.fg} fill={p.dark ? "transparent" : "#FFFFFF"} strokeWidth={2.3} />
-              <Text numberOfLines={1} style={{ fontFamily: fonts.bodyBold, fontSize: 13, color: c.fg, flexShrink: 1 }}>{label}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 1 }}>
+              <CuteIcon name={s === "blocked" ? "blocked" : s === "working" ? "working" : "done"} size={15} color={c.fg} fill={p.dark ? "transparent" : "#FFFFFF"} strokeWidth={2.3} />
+              <Text numberOfLines={1} style={{ fontFamily: fonts.bodyBold, fontSize: 12.5, color: c.fg, flexShrink: 1 }}>{label}</Text>
             </View>
-            <Text style={{ fontFamily: fonts.cute, fontSize: 28, lineHeight: 34, color: c.fg, alignSelf: "center" }}>{counts[s]}</Text>
+            <Text style={{ fontFamily: fonts.cute, fontSize: 21, lineHeight: 26, color: c.fg }}>{counts[s]}</Text>
           </Pressable>
         );
       })}
@@ -94,6 +110,7 @@ export default function AgentsHub() {
   const showShellsDefault = useSettings((s) => s.showShells);
   const hostFilterSaved = useSettings((s) => s.hostFilter);
   const foldedGroups = useSettings((s) => s.foldedGroups);
+  const pinnedAgents = useSettings((s) => s.pinnedAgents);
   const setSettings = useSettings((s) => s.set);
   const sidebar = useSidebar();
   const navigation = useNavigation();
@@ -104,11 +121,14 @@ export default function AgentsHub() {
 
   const [filter, setFilter] = useState<AgentStatus | null>(null);
   const [spaceFilter, setSpaceFilter] = useState<string | null>(null);
+  const [writableOnly, setWritableOnly] = useState(false);
+  const [harnessFilter, setHarnessFilter] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [showShells, setShowShells] = useState(showShellsDefault);
   const [refreshing, setRefreshing] = useState(false);
   const [create, setCreate] = useState<CreateTarget | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   // "Show this computer" from the devices tab arrives as ?host=; store it as the remembered choice.
   useEffect(() => {
@@ -146,21 +166,44 @@ export default function AgentsHub() {
 
   const counts = useMemo(() => {
     const c: Record<AgentStatus, number> = { blocked: 0, working: 0, done: 0, idle: 0, unknown: 0 };
-    for (const a of inScope) if (isOnline(a)) c[a.status]++;
+    for (const a of inScope) if (isOnline(a)) c[effectiveAgentStatus(a)]++;
     return c;
   }, [inScope, isOnline]);
 
   const q = query.trim().toLowerCase();
+  const harnesses = useMemo(
+    () => [...new Set(inScope.map((a) => a.harness).filter(Boolean))].sort(),
+    [inScope],
+  );
+  const activeHarness = harnessFilter && harnesses.includes(harnessFilter) ? harnessFilter : null;
+  const pinnedSet = useMemo(() => new Set(pinnedAgents), [pinnedAgents]);
+  const togglePin = useCallback(
+    (a: Agent) => {
+      Haptics.selectionAsync().catch(() => undefined);
+      const next = pinnedSet.has(a.key) ? pinnedAgents.filter((k) => k !== a.key) : [a.key, ...pinnedAgents.slice(0, 29)];
+      setSettings({ pinnedAgents: next });
+      setToast(pinnedSet.has(a.key) ? `已取消置顶「${agentTitle(a)}」` : `已置顶「${agentTitle(a)}」`);
+    },
+    [pinnedAgents, pinnedSet, setSettings],
+  );
   const match = useCallback(
-    (a: Agent) => !q || [agentTitle(a), a.harness, a.harness === "antigravity" ? "反重力" : undefined, a.where, a.cwd, a.preview].some((s) => s?.toLowerCase().includes(q)),
-    [q],
+    (a: Agent) =>
+      (!writableOnly || a.canSend !== false) &&
+      (!activeHarness || a.harness === activeHarness) &&
+      (!q || [agentTitle(a), a.harness, a.harness === "antigravity" ? "反重力" : undefined, a.where, a.cwd, a.preview, a.statusNote].some((s) => s?.toLowerCase().includes(q))),
+    [activeHarness, q, writableOnly],
   );
 
   const sections = useMemo(() => {
-    const by: Record<GroupKey, Agent[]> = { blocked: [], working: [], done: [], idle: [], offline: [] };
+    const by: Record<GroupKey, Agent[]> = { pinned: [], blocked: [], working: [], done: [], idle: [], offline: [] };
     for (const a of inScope) {
       if (!match(a)) continue;
-      const g: GroupKey = !isOnline(a) ? "offline" : a.status === "blocked" || a.status === "working" || a.status === "done" ? a.status : "idle";
+      if (!filter && pinnedSet.has(a.key)) {
+        by.pinned.push(a);
+        continue;
+      }
+      const eff = effectiveAgentStatus(a);
+      const g: GroupKey = !isOnline(a) ? "offline" : eff === "blocked" || eff === "working" || eff === "done" ? eff : "idle";
       by[g].push(a);
     }
     return GROUPS.filter((g) => by[g.key].length && (!filter || g.key === filter)).map((g) => {
@@ -168,7 +211,7 @@ export default function AgentsHub() {
       const folded = !q && !filter && foldedGroups.includes(g.key);
       return { key: g.key, title: g.title, count: by[g.key].length, folded, data: folded ? [] : by[g.key].sort(byRecent) };
     });
-  }, [filter, foldedGroups, inScope, isOnline, match, q]);
+  }, [filter, foldedGroups, inScope, isOnline, match, pinnedSet, q]);
 
   const toggleGroup = useCallback(
     (key: GroupKey) => setSettings({ foldedGroups: foldedGroups.includes(key) ? foldedGroups.filter((k) => k !== key) : [...foldedGroups, key] }),
@@ -211,6 +254,51 @@ export default function AgentsHub() {
       </View>
 
       <StatRow counts={counts} active={filter} onPick={setFilter} />
+
+      {harnesses.length > 0 || inScope.some((a) => a.canSend === false) ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+          {inScope.some((a) => a.canSend === false) ? (
+            <Pressable
+              onPress={() => setWritableOnly((v) => !v)}
+              style={({ pressed }) => ({
+                paddingHorizontal: 10,
+                minHeight: 28,
+                justifyContent: "center",
+                borderRadius: radius.pill,
+                backgroundColor: writableOnly ? p.primary : pressed ? p.surface3 : p.surface,
+                borderWidth: 1,
+                borderColor: writableOnly ? p.primary : p.divider,
+              })}
+            >
+              <Text style={{ fontSize: 12, fontFamily: fonts.bodySemi, color: writableOnly ? p.onPrimary : p.muted }}>仅看可回复</Text>
+            </Pressable>
+          ) : null}
+          {harnesses.length > 1
+            ? harnesses.map((h) => {
+                const on = activeHarness === h;
+                return (
+                  <Pressable
+                    key={h}
+                    onPress={() => setHarnessFilter(on ? null : h)}
+                    style={({ pressed }) => ({
+                      paddingHorizontal: 10,
+                      minHeight: 28,
+                      justifyContent: "center",
+                      borderRadius: radius.pill,
+                      backgroundColor: on ? p.accentContainer : pressed ? p.surface3 : p.surface,
+                      borderWidth: 1,
+                      borderColor: on ? p.accentText : p.divider,
+                    })}
+                  >
+                    <Text style={{ fontSize: 12, fontFamily: fonts.bodySemi, color: on ? p.accentText : p.muted }}>
+                      {harnessLook(h, false).label}
+                    </Text>
+                  </Pressable>
+                );
+              })
+            : null}
+        </ScrollView>
+      ) : null}
 
       {legacySessionHosts.length > 0 ? (
         <Card flat style={{ padding: space.md, gap: space.xs }}>
@@ -265,7 +353,15 @@ export default function AgentsHub() {
       <SectionList
         sections={sections}
         keyExtractor={(a) => a.key}
-        renderItem={({ item }) => <AgentRow agent={item} offline={!isOnline(item)} deviceName={multiHost ? devices[item.deviceId]?.name : undefined} />}
+        renderItem={({ item }) => (
+          <AgentRow
+            agent={item}
+            offline={!isOnline(item)}
+            deviceName={multiHost ? devices[item.deviceId]?.name : undefined}
+            pinned={pinnedSet.has(item.key)}
+            onLongPress={() => togglePin(item)}
+          />
+        )}
         renderSectionHeader={({ section }) => {
           // Search and status filters ignore folding, so the header is a plain label there.
           const canFold = !q && !filter;
@@ -345,6 +441,9 @@ export default function AgentsHub() {
         }}
       />
       <CreateAgentSheet visible={!!create} onDismiss={() => setCreate(null)} target={create ?? {}} hosts={hosts} />
+      <Snackbar visible={!!toast} onDismiss={() => setToast(null)} duration={1800}>
+        {toast ?? ""}
+      </Snackbar>
     </PageBackground>
   );
 }
