@@ -108,6 +108,7 @@ test("defaults to Wuthering Waves Aemeath persona, serves server-canonical profi
     assert.doesNotMatch(wokenSys, /不加称呼/);
     assert.match(wokenSys, /保持你上面自定义人设的语气/);
     assert.match(wokenSys, /绝不敷衍|简明但不敷衍/);
+    assert.match(wokenSys, /角色人设与专属说话方式/);
 
     const vp = personaPrompt("爱弥斯", init.json.profile.personaText, "哥哥");
     assert.ok(vp.includes(JSON.stringify("哥哥")));
