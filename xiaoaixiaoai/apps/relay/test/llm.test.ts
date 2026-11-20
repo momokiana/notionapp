@@ -151,10 +151,27 @@ test("fallback: a provider that stays silent past the first-token limit is skipp
   handler = (path, _b, res) => {
     if (path.startsWith("/slow/")) res.writeHead(200, { "content-type": "text/event-stream" }).write(": still thinking\n\n");
     else if (path.startsWith("/empty/")) stream(res, [{ choices: [{ index: 0, delta: { role: "assistant" } }] }]);
+    else if (path.startsWith("/think-cutoff/"))
+      stream(res, [
+        { choices: [{ index: 0, delta: { reasoning_content: "让我仔细想一下……" } }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "length" }] },
+      ]);
+    else if (path.startsWith("/broken-tc/"))
+      stream(res, [
+        { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "c1", function: { name: "read_agent", arguments: "{\"agent\":\"ab" } }] } }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: "length" }] },
+      ]);
     else stream(res, [{ choices: [{ index: 0, delta: { content: "到了" } }] }]);
   };
   const t = (provider: string, path: string): LlmTarget => ({ provider, protocol: "openai", baseUrl: `${base}${path}`, apiKey: "k", model: "m" });
   const ok = await makeLlm({ targets: [t("slow", "/slow"), t("fast", "/fast")], firstByteMs: 150 })({ system: "s", messages: [{ role: "user", content: "hi" }], tools: [] });
   assert.deepEqual(ok.content, [{ type: "text", text: "到了" }]);
+  // Thinking-only cutoff or truncated tool JSON triggers fallback instead of returning empty output or {}.
+  const okThink = await makeLlm({ targets: [t("think", "/think-cutoff"), t("broken", "/broken-tc"), t("fast", "/fast")], firstByteMs: 150 })({
+    system: "s",
+    messages: [{ role: "user", content: "hi" }],
+    tools: [],
+  });
+  assert.deepEqual(okThink.content, [{ type: "text", text: "到了" }]);
   await assert.rejects(makeLlm({ targets: [t("slow", "/slow"), t("empty", "/empty")], firstByteMs: 150 })({ system: "s", messages: [{ role: "user", content: "hi" }], tools: [] }), { message: "empty:m: empty answer" });
 });

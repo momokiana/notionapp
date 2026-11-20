@@ -563,7 +563,7 @@ test("voice calls go through the relay; delegated tasks are done by the text ass
   // The task comes after the recent conversation (and before any tool rounds).
   const asked = lastAsk.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
   assert.match(asked, /\[通话中\] 语音模型转来的，是我刚才的意思：\n看看上线检查的状态\n\n通话里最近几句：\n我：上线检查怎么样了\n\n（按“台词 \/ --- \/ 备查”的格式回。）/);
-  assert.equal(lastAsk.maxTokens, 400);
+  assert.equal(lastAsk.maxTokens, 1600);
 
   // A notice with no task open goes into the voice's instructions, and out again once said.
   publish([agent("t7", "working", "上线检查")]);

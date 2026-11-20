@@ -837,7 +837,7 @@ export class Assistant {
         system,
         messages,
         tools,
-        maxTokens: opts.occasion === "text" ? 1500 : opts.occasion === "call" ? 400 : 300,
+        maxTokens: opts.occasion === "text" ? 6000 : 1600,
         signal: opts.signal,
         onText: (d) => {
           live += d;
@@ -854,7 +854,25 @@ export class Assistant {
         .join("")
         .trim();
       const calls = res.content.filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use");
-      if (!calls.length) return finish(noEmoji(text));
+      if (!calls.length) {
+        const cleaned = noEmoji(text);
+        if (cleaned) return finish(cleaned);
+        if (used.length > 0 && !opts.signal?.aborted) {
+          messages.push({ role: "user", content: "工具已经执行完，请不要再调用工具，直接用自然的话把刚才处理的结果回复给我。" });
+          try {
+            const summary = await this.llm!({ system, messages, tools: [], maxTokens: 1600, signal: opts.signal });
+            const summaryText = summary.content
+              .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
+              .map((b) => b.text)
+              .join("")
+              .trim();
+            if (summaryText) return finish(noEmoji(summaryText));
+          } catch (e) {
+            if (opts.signal?.aborted) throw e;
+          }
+        }
+        return finish("");
+      }
       messages.push({ role: "assistant", content: res.content });
       const results: ContentBlock[] = [];
       for (const call of calls) {
@@ -889,7 +907,7 @@ export class Assistant {
     if (opts.occasion === "woken" && !opts.signal?.aborted && used.length > 0) {
       messages.push({ role: "user", content: "不要再调用工具，直接按格式给出最终判断（如果只是日常小步停顿、不用打扰，回：不用说）。" });
       try {
-        const res = await this.llm!({ system, messages, tools: [], maxTokens: 300, signal: opts.signal });
+        const res = await this.llm!({ system, messages, tools: [], maxTokens: 1600, signal: opts.signal });
         const finalRaw = res.content
           .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
           .map((b) => b.text)

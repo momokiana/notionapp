@@ -167,7 +167,7 @@ async function once(t: HttpLlmTarget, cfg: LlmConfig, req: LlmRequest): Promise<
     }
     const events = sse(res.body as unknown as AsyncIterable<Uint8Array>);
     const r = anthropic ? await readAnthropic(events, t, req, stream) : await readOpenai(events, t, req, stream);
-    if (!gotContent) throw new LlmError(`${label}: empty answer`);
+    if (!gotContent || r.content.length === 0) throw new LlmError(`${label}: empty answer`);
     return r;
   } catch (e) {
     if (e instanceof LlmError) throw e;
@@ -265,7 +265,11 @@ async function readAnthropic(events: AsyncGenerator<any>, t: HttpLlmTarget, req:
   for (const b of blocks) {
     if (!b) continue;
     if (b.type === "text" && b.text) content.push({ type: "text", text: b.text });
-    else if (b.type === "tool_use" && b.id && b.name) content.push({ type: "tool_use", id: b.id, name: b.name, input: parseArgs(b.json) });
+    else if (b.type === "tool_use" && b.id && b.name) {
+      const parsed = parseArgs(b.json);
+      if (!parsed.ok) throw new LlmError(`${t.provider}:${t.model}: truncated tool call (${b.name})`);
+      content.push({ type: "tool_use", id: b.id, name: b.name, input: parsed.value });
+    }
   }
   return { content, stopReason, model: t.model };
 }
@@ -348,18 +352,20 @@ async function readOpenai(events: AsyncGenerator<any>, t: HttpLlmTarget, req: Ll
   if (text) content.push({ type: "text", text });
   calls.forEach((c, n) => {
     if (!c?.name) return;
+    const parsed = parseArgs(c.args);
+    if (!parsed.ok) throw new LlmError(`${t.provider}:${t.model}: truncated tool call (${c.name})`);
     // Ids go back to the model next round; some vendors leave them out.
-    content.push({ type: "tool_use", id: c.id || `call_${Date.now().toString(36)}_${n}`, name: c.name, input: parseArgs(c.args) });
+    content.push({ type: "tool_use", id: c.id || `call_${Date.now().toString(36)}_${n}`, name: c.name, input: parsed.value });
   });
   return { content, stopReason, model: t.model };
 }
 
-function parseArgs(json: string | undefined): unknown {
-  if (!json || !json.trim()) return {};
+function parseArgs(json: string | undefined): { value: unknown; ok: boolean } {
+  if (!json || !json.trim()) return { value: {}, ok: true };
   try {
-    return JSON.parse(json);
+    return { value: JSON.parse(json), ok: true };
   } catch {
-    return {};
+    return { value: {}, ok: false };
   }
 }
 
