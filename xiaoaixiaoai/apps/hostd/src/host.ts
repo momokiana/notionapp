@@ -218,10 +218,12 @@ export class Host {
       this.sources.push("runtime-sessions", "runtime-detail");
       if (this.opts.runtimeSessions.hasDirectory) this.sources.push("dsh-directory");
       if (this.opts.runtimeSessions.publishAgents) {
+        if (this.opts.runtimeSessions.hasCreate && !this.opts.readOnly) this.sources.push("runtime-create");
         await this.refreshRuntimeAgents();
         this.runtimeTimer = setInterval(() => void this.refreshRuntimeAgents(), 4000);
         this.runtimeTimer.unref?.();
       }
+      if (this.opts.runtimeSessions.localVoice?.enabled) this.sources.push("local-voice");
     }
     if (!hc && !herdr && !this.opts.runtimeSessions) this.log("no herdr runtime found: start the herdr app (hc) or `herdr` first. Waiting anyway.");
     this.logTimer = setInterval(() => this.flushLogs(), this.logEveryMs);
@@ -264,14 +266,14 @@ export class Host {
           seen.add(localId);
           const state = nextRuntimeState(this.runtimeState.get(localId), entry.session.state, now, entry.session.updatedAt);
           this.runtimeState.set(localId, state);
-          const canSend = !this.opts.readOnly && entry.runtime !== "antigravity" && entry.sendConfigured;
+          const canSend = !this.opts.readOnly && entry.sendConfigured;
           const readOnlyReason = this.opts.readOnly
             ? "这台电脑当前为只读模式。"
-            : entry.runtime === "antigravity"
-              ? "Antigravity 会话当前仅支持查看，不支持从手机发送消息。"
-              : !canSend
-                ? "当前会话处于只读状态，仅支持查看消息记录。"
-                : undefined;
+            : !canSend
+              ? (entry.runtime === "antigravity"
+                ? "Antigravity 会话当前处于只读状态或运行中，暂不支持发送消息。"
+                : "当前会话处于只读状态，仅支持查看消息记录。")
+              : undefined;
           next.push({
             key: agentKey(this.deviceId, "runtime", localId),
             deviceId: this.deviceId,
@@ -545,10 +547,9 @@ export class Host {
     const events = this.runtimeEventSeq.toConvEvents(sessionKey, detail);
     const canSend =
       !this.opts.readOnly &&
-      target.runtime !== "antigravity" &&
       (detail.session.canSend || detail.pendingQuestions.some((q) => q.state !== "readonly"));
     const readOnlyReason = !canSend
-      ? (detail.readOnlyReason ?? (target.runtime === "antigravity" ? "Antigravity 会话当前仅支持查看，不支持从手机发送消息。" : "当前会话处于只读状态，仅支持查看消息记录。"))
+      ? (detail.readOnlyReason ?? "当前会话处于只读状态，仅支持查看消息记录。")
       : undefined;
     return { sessionKey, detail, events, canSend, ...(readOnlyReason ? { readOnlyReason } : {}) };
   }
@@ -559,12 +560,15 @@ export class Host {
       if (this.opts.runtimeOnly) {
         const baseAllowed = ["runtimeSessions.list", "runtimeSessions.browse", "runtimeSessions.detail", "runtimeSessions.answer", "runtimeSessions.send", "host.info", "agents.list"];
         const publishAllowed = this.opts.runtimeSessions?.publishAgents === true
-          ? ["session.events", "session.children", "agent.seen", "terminal.read", "terminal.send", "spaces.list"]
+          ? ["session.events", "session.children", "agent.seen", "terminal.read", "terminal.send", "terminal.interrupt", "spaces.list", "agent.create"]
           : [];
         const assistantAllowed = f.from === "relay" && this.opts.runtimeSessions?.allowAssistant === true
-          ? ["sessions.list", "sessions.search", "sessions.read", "sessions.usage", "spaces.list"]
+          ? ["sessions.list", "sessions.search", "sessions.read", "sessions.usage", "spaces.list", "agent.create", "terminal.interrupt"]
           : [];
-        if (!baseAllowed.includes(f.method) && !publishAllowed.includes(f.method) && !assistantAllowed.includes(f.method)) {
+        const voiceAllowed = f.from === "relay" && this.opts.runtimeSessions?.localVoice?.enabled === true
+          ? ["voice.warmup", "voice.transcribe", "voice.synthesize", "voice.cancel", "voice.release"]
+          : [];
+        if (!baseAllowed.includes(f.method) && !publishAllowed.includes(f.method) && !assistantAllowed.includes(f.method) && !voiceAllowed.includes(f.method)) {
           throw new RpcFailure("unsupported", "这台电脑仅提供共享的项目会话，不开放终端。");
         }
       }
@@ -817,7 +821,7 @@ export class Host {
       pending = [];
     }
     const actionable = pending.find((pq) => pq.state !== "readonly" && pq.questions.length === 1);
-    if (actionable && target.runtime !== "antigravity") {
+    if (actionable) {
       await view.answer({
         runtime: target.runtime,
         projectId: target.projectId,
@@ -834,7 +838,7 @@ export class Host {
       void this.refreshRuntimeAgents();
       return;
     } catch (e) {
-      if (!(e instanceof RuntimeError && e.code === "not_found" && target.runtime === "codex")) throw e;
+      if (!(e instanceof RuntimeError && e.code === "not_found" && (target.runtime === "codex" || target.runtime === "antigravity"))) throw e;
     }
     // Codex local runtime rejects `thread/resume` writes while an active turn is still in progress: wait briefly until idle.
     const deadline = Date.now() + 180_000;
@@ -1154,13 +1158,27 @@ export class Host {
       return { sessions: key ? await this.uniflo.children(key) : [] };
     },
     "spaces.list": async () => {
-      if (this.opts.runtimeOnly) {
+      if (this.opts.runtimeOnly || (!this.sources.includes("hc") && this.opts.runtimeSessions?.publishAgents)) {
+        const view = this.opts.runtimeSessions;
+        if (!this.opts.readOnly && view?.publishAgents && view.hasCreate) {
+          const opts = await view.createOptions();
+          if (opts.launchers.length > 0) {
+            return {
+              spaces: opts.spaces,
+              launchers: opts.launchers,
+              folders: opts.folders,
+              canCreate: true,
+              typesTask: true,
+              ...(opts.spaces.length === 0 ? { standalone: true } : {}),
+            };
+          }
+        }
         return {
           spaces: [],
           launchers: [],
           folders: [],
           canCreate: false,
-          reason: "当前使用统一会话模式，请在电脑端 DSH、Codex 或 Antigravity 中新建会话，列表会自动同步。",
+          reason: this.opts.readOnly ? "这台电脑开了只读模式" : "当前运行时未开启新建会话授权，可在电脑端 DSH、Codex 或 Antigravity 中直接新建。",
           typesTask: false,
         };
       }
@@ -1187,12 +1205,40 @@ export class Host {
         ...(standalone ? { standalone } : {}),
       };
     },
-    "agent.create": async (p) => {
+    "agent.create": async (p, from) => {
       this.writable();
+      const str = (v: unknown, max: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined);
+      if (this.opts.runtimeOnly || (!this.sources.includes("hc") && this.opts.runtimeSessions?.publishAgents)) {
+        const view = this.runtimeAccess(from);
+        const runtime = p.launcher === "dsh" || p.launcher === "codex" || p.launcher === "antigravity" ? p.launcher : undefined;
+        if (!runtime) throw new RpcFailure("bad_request", "这台电脑当前仅支持新建 DSH、Codex 或 Antigravity 会话。");
+        let folder: string | undefined;
+        try {
+          folder = p.folder === undefined || p.folder === "" ? undefined : checkFolder(p.folder);
+        } catch (e) {
+          throw new RpcFailure("bad_request", (e as Error).message);
+        }
+        const task = str(p.task, 4000);
+        const spaceId = str(p.space, 100);
+        const created = await view.createSession({
+          runtime,
+          ...(spaceId ? { projectId: spaceId } : {}),
+          ...(folder ? { cwd: folder } : {}),
+          ...(task ? { task } : {}),
+        });
+        if (this.runtimeRefreshLock) await this.runtimeRefreshLock;
+        await this.refreshRuntimeAgents();
+        const localId = encodeRuntimeLocalId(created.runtime, created.projectId, created.sessionId);
+        return {
+          agent: agentKey(this.deviceId, "runtime", localId),
+          space: created.projectId,
+          terminal: localId,
+          ...(task ? { task: "started" as const } : {}),
+        };
+      }
       if (!this.sources.includes("hc")) throw new RpcFailure("unsupported", "这台电脑没有装桌面 herdr");
       const launcher = typeof p.launcher === "string" ? (await this.launchers).find((l) => l.id === p.launcher) : undefined;
       if (!launcher) throw new RpcFailure("bad_request", "这台电脑上没有这个程序");
-      const str = (v: unknown, max: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined);
       let folder: string | undefined;
       try {
         folder = p.folder === undefined || p.folder === "" ? undefined : checkFolder(p.folder);
@@ -1271,9 +1317,17 @@ export class Host {
       }
       return { ok: true as const };
     },
-    "terminal.interrupt": async (p) => {
+    "terminal.interrupt": async (p, from) => {
       this.writable();
       const a = this.resolve(p.agent);
+      if (a.source === "runtime") {
+        const view = this.runtimeAccess(from);
+        const target = parseRuntimeTarget(a.localId);
+        if (!target) throw new RpcFailure("not_found", "无法识别对应的运行时会话。");
+        const res = await view.interrupt(target);
+        void this.refreshRuntimeAgents();
+        return { ok: true as const, report: res.interrupted ? "已发送停止信号" : "当前没有正在运行的轮次" };
+      }
       if (a.source !== "hc") {
         await this.herdr.keys(a.localId, ["esc"]);
         return { ok: true as const };
@@ -1467,5 +1521,33 @@ export class Host {
       await Promise.all([this.hc.list(), this.refreshNames()]);
       return { agent: agentKey(this.deviceId, "hc", r.terminal), space: r.space, terminal: r.terminal };
     },
+    "voice.warmup": async (_p, from) => this.voiceAccess(from).warmup(),
+    "voice.transcribe": async (p, from) => {
+      const bridge = this.voiceAccess(from);
+      if (typeof p?.requestId !== "string" || typeof p?.audioBase64 !== "string" || typeof p?.sampleRate !== "number" || !Number.isFinite(p.sampleRate)) {
+        throw new RpcFailure("bad_request", "语音识别参数无效。");
+      }
+      return bridge.transcribe({ requestId: p.requestId, audioBase64: p.audioBase64, sampleRate: p.sampleRate });
+    },
+    "voice.synthesize": async (p, from) => {
+      const bridge = this.voiceAccess(from);
+      if (typeof p?.requestId !== "string" || typeof p?.text !== "string") {
+        throw new RpcFailure("bad_request", "语音合成参数无效。");
+      }
+      return bridge.synthesize({
+        requestId: p.requestId,
+        text: p.text,
+        ...(typeof p.speed === "number" && Number.isFinite(p.speed) ? { speed: p.speed } : {}),
+      });
+    },
+    "voice.cancel": async (p, from) => this.voiceAccess(from).cancel(typeof p?.requestId === "string" ? p.requestId : undefined),
+    "voice.release": async (_p, from) => this.voiceAccess(from).release(),
   };
+
+  private voiceAccess(from: string) {
+    if (from !== "relay") throw new RpcFailure("forbidden", "仅中继语音服务可调用本地语音能力。");
+    const bridge = this.opts.runtimeSessions?.localVoice;
+    if (!bridge || !bridge.enabled) throw new RpcFailure("unsupported", "这台电脑未配置或未启用本地语音服务。");
+    return bridge;
+  }
 }

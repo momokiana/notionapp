@@ -455,6 +455,85 @@ export class Assistant {
     return p;
   }
 
+  /** Finds an online computer offering local ASR/TTS voice service. */
+  findVoiceHost(preferredId?: string): Device | undefined {
+    const hosts = this.host.devices().filter((d) => d.kind === "host" && d.online && d.sources?.includes("local-voice"));
+    if (preferredId) {
+      const exact = hosts.find((d) => d.id === preferredId);
+      if (exact) return exact;
+    }
+    return hosts[0];
+  }
+
+  /** Forwards a voice RPC (`voice.*`) to a host over the existing hostd WebSocket. */
+  callVoiceHost<M extends RpcMethod>(deviceId: string, method: M, params: RpcParams<M>, timeoutMs = 30_000): Promise<RpcResult<M>> {
+    return this.host.call(deviceId, method, params, timeoutMs);
+  }
+
+  /** Answers one transcribed utterance in a local voice call and returns the clean spoken line. */
+  async speakTurn(
+    userText: string,
+    opts: { turnId?: string; signal: AbortSignal; onStep?: (step: string) => void },
+  ): Promise<string> {
+    const cleanIn = userText.trim();
+    if (!cleanIn) return "";
+    this.voiceLine("user", cleanIn, opts.turnId);
+    if (!this.llm) {
+      const msg = "我现在只能陪你聊，后台模型还没配好。";
+      this.voiceLine("assistant", msg, opts.turnId);
+      return msg;
+    }
+    const task = async (): Promise<string> => {
+      if (opts.signal.aborted) return "";
+      const messages = this.messagesFromThread(VOICE_CONTEXT_ITEMS);
+      const last = messages.at(-1);
+      if (!last || last.role !== "user" || !String(last.content).includes(cleanIn)) {
+        pushUser(messages, `[语音] ${cleanIn}`);
+      }
+      this.setBusy(true, "语音通话");
+      const t0 = Date.now();
+      let emittedSteps = 0;
+      const emitSteps = (steps: string[]) => {
+        while (emittedSteps < steps.length) {
+          const step = steps[emittedSteps++];
+          if (step) opts.onStep?.(step);
+        }
+      };
+      try {
+        const run = await this.run(messages, {
+          occasion: "call",
+          signal: opts.signal,
+          onDraft: (_text, steps) => emitSteps(steps),
+        });
+        emitSteps(run.steps);
+        const script = splitScript(run.text || "好了。");
+        const cleanOut = stripMd(noEmoji(filterTalk(script.say))).trim() || "好了。";
+        if (!opts.signal.aborted) this.voiceLine("assistant", cleanOut, opts.turnId);
+        this.event({
+          kind: "assistant.turn",
+          msg: `local call ${Date.now() - t0}ms: "${clip(oneLine(cleanIn), 120)}" -> "${clip(cleanOut, 120)}"`,
+          data: { occasion: "call", ms: Date.now() - t0, tools: run.tools.join(",") || undefined, guard: run.guard.join(",") || undefined },
+        });
+        return cleanOut;
+      } catch (e) {
+        if (!opts.signal.aborted) {
+          this.event({
+            kind: "assistant.turn",
+            level: "error",
+            msg: `local call failed after ${Date.now() - t0}ms: ${(e as Error).message.slice(0, 200)}`,
+            data: { asked: clip(oneLine(cleanIn), 200) },
+          });
+        }
+        throw e;
+      } finally {
+        this.setBusy(false);
+      }
+    };
+    const p = this.chain.then(task, task);
+    this.chain = p.catch(() => undefined);
+    return p;
+  }
+
   private messagesFromThread(limit = CONTEXT_ITEMS): Msg[] {
     const out: Msg[] = [];
     for (const it of this.fresh().slice(-limit)) {

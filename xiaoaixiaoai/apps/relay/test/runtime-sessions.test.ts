@@ -417,5 +417,7 @@ test("unified runtime pool publishes DSH and Antigravity agents to mobile and �
   const agBlocked = await rpc("terminal.send", { agent: agAgent.key, text: "不应该发送" });
   assert.equal(agBlocked.error?.code, "forbidden");
   const spaces = await rpc("spaces.list", {});
-  assert.equal((spaces.result as { canCreate: boolean }).canCreate, false);
+  const spaceData = spaces.result as { canCreate: boolean; launchers: Array<{ id: string }> };
+  assert.equal(spaceData.canCreate, true);
+  assert.deepEqual(spaceData.launchers.map((l) => l.id), ["dsh"]);
 });

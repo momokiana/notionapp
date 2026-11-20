@@ -12,6 +12,7 @@ import { WebSocket, type RawData } from "ws";
 import { LIVE_CLIENT_ACTIONS, type LiveRelayEvent, type Notice } from "@xiaoaixiaoai/protocol";
 import type { Assistant } from "./assistant.ts";
 import { claimCall, releaseCall } from "./calls.ts";
+import { LocalVoiceCall, type LocalLiveConfig } from "./local-call.ts";
 import { personaPrompt, voiceInstructions } from "./prompts.ts";
 import { RealtimeCall, type RealtimeConfig } from "./realtime.ts";
 import { clip } from "./speech.ts";
@@ -20,11 +21,12 @@ import { timeZone } from "./timezone.ts";
 export { endAllCalls } from "./calls.ts";
 
 /** The voice service a call goes through. */
-export type LiveConfig = MossLiveConfig | RealtimeConfig;
+export type LiveConfig = MossLiveConfig | RealtimeConfig | LocalLiveConfig;
 
 /** Opens a call on whichever voice service is configured. */
 export function startCall(phone: WebSocket, deviceId: string, cfg: LiveConfig, assistant: Assistant, log: (m: string) => void): void {
-  if (cfg.provider === "openai-realtime") new RealtimeCall(phone, deviceId, cfg, assistant, log);
+  if (cfg.provider === "local") new LocalVoiceCall(phone, deviceId, cfg, assistant, log);
+  else if (cfg.provider === "openai-realtime") new RealtimeCall(phone, deviceId, cfg, assistant, log);
   else new LiveCall(phone, deviceId, cfg, assistant, log);
 }
 

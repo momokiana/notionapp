@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Readable, Writable } from "node:stream";
@@ -35,6 +36,7 @@ const MAX_DETAIL_BYTES = 460 * 1024;
 const RECENT_ACTIVE_WINDOW_MS = 15 * 60_000;
 const MAX_CONCURRENT_TURNS = 2;
 const BACKGROUND_TURN_TIMEOUT_MS = 10 * 60_000;
+const RECENT_CREATED_TTL_MS = 10 * 60_000;
 const TASK_EVENT_LIMIT = 128;
 const TASK_EVENT_TTL_MS = 15 * 60_000;
 
@@ -58,8 +60,12 @@ interface ThreadRow {
 
 interface ActiveTurn {
   child: ChildProcessByStdio<Writable, Readable, Readable>;
+  projectId: string;
+  turnId: string;
   attention: boolean;
   timer: NodeJS.Timeout;
+  rpc: (method: string, params: unknown, timeoutMs: number) => Promise<Record<string, unknown> | undefined>;
+  emitTerminal: (kind: "completed" | "stopped") => void;
 }
 
 const INJECTED_USER_PREFIXES = [
@@ -249,6 +255,11 @@ function pageAfter<T extends { id: string }>(items: T[], after?: string): { page
 
 const searchKey = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 
+function normalizeCwd(p: string): string {
+  const raw = p.replace(/^\\\\\?\\/, "");
+  try { return realpathSync(raw).toLowerCase(); } catch { return resolve(raw).toLowerCase(); }
+}
+
 function resolveCodexBinary(configured?: string): string | undefined {
   if (configured && existsSync(configured)) return configured;
   if (process.platform === "win32") {
@@ -266,9 +277,30 @@ function resolveCodexBinary(configured?: string): string | undefined {
         return hits[0]!.path;
       }
     }
+    const roaming = process.env.APPDATA || join(homedir(), "AppData", "Roaming");
+    for (const candidate of [
+      join(roaming, "npm", "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe"),
+      join(roaming, "npm", "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-arm64", "vendor", "aarch64-pc-windows-msvc", "bin", "codex.exe"),
+    ]) {
+      if (existsSync(candidate)) return candidate;
+    }
     return onPath("codex");
   }
-  return undefined;
+  return onPath("codex");
+}
+
+function spawnCodexAppServer(exe: string, cwd: string): ChildProcessByStdio<Writable, Readable, Readable> {
+  const opts = { cwd, stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"], windowsHide: true };
+  if (/\.(?:mjs|js|cjs)$/i.test(exe)) {
+    return spawn(process.execPath, [exe, "app-server", "--listen", "stdio://"], opts);
+  }
+  if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(exe)) {
+    return spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", exe, "app-server", "--listen", "stdio://"], opts);
+  }
+  if (process.platform === "win32" && /\.ps1$/i.test(exe)) {
+    return spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", exe, "app-server", "--listen", "stdio://"], opts);
+  }
+  return spawn(exe, ["app-server", "--listen", "stdio://"], opts);
 }
 
 export class CodexLocalRuntime {
@@ -276,6 +308,7 @@ export class CodexLocalRuntime {
   private readonly codexBin?: string;
   private readonly enableSend: boolean;
   private readonly activeTurns = new Map<string, ActiveTurn>();
+  private readonly recentCreated = new Map<string, { row: ThreadRow; expiresAt: number }>();
   private readonly events: Array<{ event: RuntimeTaskEvent; expiresAt: number }> = [];
   private closed = false;
 
@@ -290,6 +323,59 @@ export class CodexLocalRuntime {
 
   get sendEnabled(): boolean {
     return this.enableSend;
+  }
+
+  private pruneRecentCreated(): void {
+    const now = Date.now();
+    for (const [id, entry] of this.recentCreated) {
+      if (entry.expiresAt <= now) this.recentCreated.delete(id);
+    }
+  }
+
+  private listRows(limit: number): ThreadRow[] {
+    this.pruneRecentCreated();
+    const dbPath = findDbPath(this.codexHome);
+    const dbRows = dbPath ? queryThreads(dbPath, limit).filter((r) => isRuntimeId(r.id)) : [];
+    if (this.recentCreated.size === 0) return dbRows;
+    const seen = new Set(dbRows.map((r) => r.id));
+    const extras: ThreadRow[] = [];
+    for (const [id, entry] of this.recentCreated) {
+      if (seen.has(id)) this.recentCreated.delete(id);
+      else extras.push(entry.row);
+    }
+    if (extras.length === 0) return dbRows;
+    const rowTs = (r: ThreadRow) => (typeof r.updated_at_ms === "number" && r.updated_at_ms > 0 ? r.updated_at_ms : r.updated_at * 1000);
+    return [...extras, ...dbRows].sort((a, b) => rowTs(b) - rowTs(a)).slice(0, limit);
+  }
+
+  private findRow(sessionId: string): ThreadRow | undefined {
+    this.pruneRecentCreated();
+    const dbPath = findDbPath(this.codexHome);
+    const dbRow = dbPath ? queryThreadById(dbPath, sessionId) : undefined;
+    if (dbRow && isRuntimeId(dbRow.id)) {
+      this.recentCreated.delete(sessionId);
+      return dbRow;
+    }
+    return this.recentCreated.get(sessionId)?.row;
+  }
+
+  knownFolders(): Array<{ id: string; title: string; path: string; updatedAt?: number }> {
+    const seen = new Map<string, { id: string; title: string; path: string; updatedAt?: number }>();
+    for (const row of this.listRows(THREAD_LIST_LIMIT)) {
+      if (!row.cwd || !existsSync(row.cwd)) continue;
+      const key = normalizeCwd(row.cwd);
+      const updatedAt = typeof row.updated_at_ms === "number" && row.updated_at_ms > 0
+        ? row.updated_at_ms
+        : typeof row.updated_at === "number" && row.updated_at > 0
+          ? row.updated_at * 1000
+          : undefined;
+      const project = projectForCwd(row.cwd);
+      const prev = seen.get(key);
+      if (!prev || ((updatedAt ?? 0) > (prev.updatedAt ?? 0))) {
+        seen.set(key, { id: project.id, title: project.title, path: row.cwd, ...(updatedAt !== undefined ? { updatedAt } : {}) });
+      }
+    }
+    return [...seen.values()].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   }
 
   private toEntry(row: ThreadRow): { project: DshDirectoryProject; session: RuntimeSession; archived: boolean } {
@@ -316,9 +402,8 @@ export class CodexLocalRuntime {
   }
 
   async list(): Promise<RuntimeProject[]> {
-    const dbPath = findDbPath(this.codexHome);
-    if (!dbPath) return [];
-    const rows = queryThreads(dbPath, THREAD_LIST_LIMIT).filter((r) => isRuntimeId(r.id));
+    const rows = this.listRows(THREAD_LIST_LIMIT);
+    if (!rows.length) return [];
     const grouped = new Map<string, RuntimeProject>();
     let sessionCount = 0;
     for (const row of rows) {
@@ -337,8 +422,7 @@ export class CodexLocalRuntime {
   }
 
   async browse(input: DshDirectoryRequest): Promise<DshDirectoryReply> {
-    const dbPath = findDbPath(this.codexHome);
-    const rows = dbPath ? queryThreads(dbPath, input.view === "exact" ? 200 : THREAD_LIST_LIMIT).filter((r) => isRuntimeId(r.id)) : [];
+    const rows = this.listRows(input.view === "exact" ? 200 : THREAD_LIST_LIMIT);
     const items = rows.map((row) => this.toEntry(row));
     if (input.view === "projects") {
       const map = new Map<string, DshDirectoryProject>();
@@ -370,13 +454,15 @@ export class CodexLocalRuntime {
   }
 
   async detail(projectId: string, sessionId: string, limit = 60): Promise<RuntimeSessionDetail> {
-    const dbPath = findDbPath(this.codexHome);
-    const row = dbPath ? queryThreadById(dbPath, sessionId) : undefined;
+    const row = this.findRow(sessionId);
     if (!row || !isRuntimeId(row.id)) throw new RuntimeError("not_found", "未找到对应的本地 Codex 会话。");
     const entry = this.toEntry(row);
     if (entry.project.id !== projectId) throw new RuntimeError("not_found", "该 Codex 会话不属于所选项目。");
     const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 60, 1), RUNTIME_DETAIL_LIMIT);
-    const messages = parseRolloutMessages(row.rollout_path, boundedLimit);
+    let messages = row.rollout_path && existsSync(row.rollout_path) ? parseRolloutMessages(row.rollout_path, boundedLimit) : [];
+    if (messages.length === 0 && row.first_user_message) {
+      messages = [{ id: `cx-init-${row.id}`, role: "user", text: cleanText(row.first_user_message, MAX_MESSAGE_TEXT) || row.first_user_message }];
+    }
     const reply: RuntimeSessionDetail = {
       runtime: "codex",
       project: { id: entry.project.id, title: entry.project.title },
@@ -415,46 +501,28 @@ export class CodexLocalRuntime {
     return this.events.map(({ event }) => event);
   }
 
-  async send({ projectId, sessionId, requestId, text }: RuntimeSessionSend): Promise<RuntimeSessionReceipt> {
-    if (this.closed) throw new RuntimeError("offline", "Codex 本地连接器已停止。");
-    if (!this.enableSend) throw new RuntimeError("forbidden", "本地 Codex 会话未开启发送授权。");
-    const dbPath = findDbPath(this.codexHome);
-    const row = dbPath ? queryThreadById(dbPath, sessionId) : undefined;
-    if (!row || !isRuntimeId(row.id) || projectForCwd(row.cwd).id !== projectId) {
-      throw new RuntimeError("not_found", "未找到对应的本地 Codex 会话。");
-    }
-    if (row.archived || !row.cwd || !existsSync(row.cwd)) {
-      throw new RuntimeError("not_found", "该 Codex 会话已归档或工作目录不可访问。");
-    }
-    if (this.activeTurns.has(sessionId) || probeState(row) === "running") {
-      throw new RuntimeError("not_found", "该 Codex 会话当前正在工作，请稍后再试。");
-    }
-    if (this.activeTurns.size >= MAX_CONCURRENT_TURNS) {
-      throw new RuntimeError("offline", "后台 Codex 任务数已达上限，请等待现有任务完成后再试。");
-    }
+  private async openAppServer(cwd: string) {
     const exe = resolveCodexBinary(this.codexBin);
     if (!exe) throw new RuntimeError("unsupported", "未在本机找到 Codex Desktop 可执行程序。");
-
-    const useNode = /\.(?:mjs|js|cjs)$/i.test(exe);
-    const child = spawn(useNode ? process.execPath : exe, useNode ? [exe, "app-server", "--listen", "stdio://"] : ["app-server", "--listen", "stdio://"], {
-      cwd: row.cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    const child = spawnCodexAppServer(exe, cwd);
 
     let nextRpcId = 1;
-    let settledTurn = false;
     let handoffDone = false;
     let emittedProgress = false;
     let emittedTerminal = false;
-    let activeTurnId = "";
+    let boundProjectId = "";
+    let boundSessionId = "";
+    let boundTurnId = "";
+    let boundRequestId: string | undefined;
     const pendingRpc = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
 
     const cleanupChild = () => {
-      const tracked = this.activeTurns.get(sessionId);
-      if (tracked?.child === child) {
-        clearTimeout(tracked.timer);
-        this.activeTurns.delete(sessionId);
+      if (boundSessionId) {
+        const tracked = this.activeTurns.get(boundSessionId);
+        if (tracked?.child === child) {
+          clearTimeout(tracked.timer);
+          this.activeTurns.delete(boundSessionId);
+        }
       }
       try { child.stdin.end(); } catch {}
       setTimeout(() => { try { child.kill(); } catch {} }, 400).unref();
@@ -471,7 +539,7 @@ export class CodexLocalRuntime {
     const emitTerminal = (kind: "completed" | "stopped") => {
       if (!handoffDone || emittedTerminal) return;
       emittedTerminal = true;
-      this.pushTaskEvent(requestId, kind);
+      if (boundRequestId) this.pushTaskEvent(boundRequestId, kind);
       cleanupChild();
     };
 
@@ -483,10 +551,10 @@ export class CodexLocalRuntime {
       if (typeof method === "string") {
         // Server-initiated interactive approval / user input request cannot complete unattended.
         if (typeof id === "number" || typeof id === "string") {
-          const tracked = this.activeTurns.get(sessionId);
+          const tracked = boundSessionId ? this.activeTurns.get(boundSessionId) : undefined;
           if (tracked) tracked.attention = true;
           if (handoffDone && !emittedTerminal) {
-            this.pushTaskEvent(requestId, "attention");
+            if (boundRequestId) this.pushTaskEvent(boundRequestId, "attention");
             emitTerminal("stopped");
           } else {
             failPendingRpc(new RuntimeError("not_found", "Codex 请求人工交互确认，请在桌面窗口查看。"));
@@ -494,13 +562,13 @@ export class CodexLocalRuntime {
           }
           return;
         }
-        if (handoffDone && method === "item/completed" && !emittedProgress) {
+        if (handoffDone && method === "item/completed" && !emittedProgress && boundRequestId) {
           emittedProgress = true;
-          this.pushTaskEvent(requestId, "progress");
+          this.pushTaskEvent(boundRequestId, "progress");
         } else if (handoffDone && method === "turn/completed") {
           const p = packet.params && typeof packet.params === "object" ? packet.params as Record<string, unknown> : undefined;
           const turn = p?.turn && typeof p.turn === "object" ? p.turn as Record<string, unknown> : undefined;
-          if (p?.threadId === sessionId && (!activeTurnId || turn?.id === activeTurnId)) {
+          if (p?.threadId === boundSessionId && (!boundTurnId || turn?.id === boundTurnId)) {
             emitTerminal(turn?.status === "completed" ? "completed" : "stopped");
           }
         }
@@ -542,43 +610,165 @@ export class CodexLocalRuntime {
         child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
       });
 
-    try {
-      await rpc("initialize", { clientInfo: { name: "xiaoaixiaoai_hostd", title: "小爱小爱", version: VERSION } }, 15_000);
-      child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
+    await rpc("initialize", { clientInfo: { name: "xiaoaixiaoai_hostd", title: "小爱小爱", version: VERSION } }, 15_000);
+    child.stdin.write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
 
+    return {
+      rpc,
+      bindTurn: (projectId: string, sessionId: string, turnId: string, requestId?: string) => {
+        boundProjectId = projectId;
+        boundSessionId = sessionId;
+        boundTurnId = turnId;
+        boundRequestId = requestId;
+        handoffDone = true;
+        const timer = setTimeout(() => emitTerminal("stopped"), BACKGROUND_TURN_TIMEOUT_MS);
+        timer.unref();
+        this.activeTurns.set(sessionId, { child, projectId: boundProjectId, turnId: boundTurnId, attention: false, timer, rpc, emitTerminal });
+      },
+      abort: () => {
+        failPendingRpc(new Error("aborted"));
+        cleanupChild();
+      },
+    };
+  }
+
+  async send({ projectId, sessionId, requestId, text }: RuntimeSessionSend): Promise<RuntimeSessionReceipt> {
+    if (this.closed) throw new RuntimeError("offline", "Codex 本地连接器已停止。");
+    if (!this.enableSend) throw new RuntimeError("forbidden", "本地 Codex 会话未开启发送授权。");
+    const row = this.findRow(sessionId);
+    if (!row || !isRuntimeId(row.id) || projectForCwd(row.cwd).id !== projectId) {
+      throw new RuntimeError("not_found", "未找到对应的本地 Codex 会话。");
+    }
+    if (row.archived || !row.cwd || !existsSync(row.cwd)) {
+      throw new RuntimeError("not_found", "该 Codex 会话已归档或工作目录不可访问。");
+    }
+    if (this.activeTurns.has(sessionId) || probeState(row) === "running") {
+      throw new RuntimeError("not_found", "该 Codex 会话当前正在工作，请稍后再试。");
+    }
+    if (this.activeTurns.size >= MAX_CONCURRENT_TURNS) {
+      throw new RuntimeError("offline", "后台 Codex 任务数已达上限，请等待现有任务完成后再试。");
+    }
+
+    const server = await this.openAppServer(row.cwd);
+    let settledTurn = false;
+    try {
       let resumed: Record<string, unknown> | undefined;
       try {
-        resumed = await rpc("thread/resume", { threadId: sessionId, cwd: row.cwd, excludeTurns: true }, 20_000);
+        resumed = await server.rpc("thread/resume", { threadId: sessionId, cwd: row.cwd, excludeTurns: true }, 20_000);
       } catch {
         throw new RuntimeError("not_found", "该 Codex 会话正被桌面窗口占用或暂时无法续跑。");
       }
       const resumedThread = resumed?.thread && typeof resumed.thread === "object" ? resumed.thread as Record<string, unknown> : undefined;
       const resumedCwd = typeof resumed?.cwd === "string" ? resumed.cwd : "";
-      const norm = (p: string) => {
-        const raw = p.replace(/^\\\\\?\\/, "");
-        try { return realpathSync(raw).toLowerCase(); } catch { return resolve(raw).toLowerCase(); }
-      };
-      if (resumedThread?.id !== sessionId || !resumedCwd || norm(resumedCwd) !== norm(row.cwd)) {
+      if (resumedThread?.id !== sessionId || !resumedCwd || normalizeCwd(resumedCwd) !== normalizeCwd(row.cwd)) {
         throw new RuntimeError("not_found", "Codex 会话工作目录或身份不一致，未发送。");
       }
 
-      const started = await rpc("turn/start", { threadId: sessionId, input: [{ type: "text", text }] }, 20_000);
+      const started = await server.rpc("turn/start", { threadId: sessionId, input: [{ type: "text", text }] }, 20_000);
       const startedTurn = started?.turn && typeof started.turn === "object" ? started.turn as Record<string, unknown> : undefined;
-      activeTurnId = typeof startedTurn?.id === "string" ? startedTurn.id : "";
+      const activeTurnId = typeof startedTurn?.id === "string" ? startedTurn.id : "";
       if (!activeTurnId) throw new RuntimeError("outcome_unknown", "未收到 Codex 轮次确认，请在原会话核对。");
 
       settledTurn = true;
-      handoffDone = true;
-      const timer = setTimeout(() => emitTerminal("stopped"), BACKGROUND_TURN_TIMEOUT_MS);
-      timer.unref();
-      this.activeTurns.set(sessionId, { child, attention: false, timer });
+      server.bindTurn(projectId, sessionId, activeTurnId, requestId);
       return { accepted: true, requestId, ...(isRuntimeId(activeTurnId) ? { receiptId: activeTurnId } : {}) };
     } finally {
-      if (!settledTurn) {
-        failPendingRpc(new Error("aborted"));
-        cleanupChild();
-      }
+      if (!settledTurn) server.abort();
     }
+  }
+
+  async create(input: {
+    cwd?: string;
+    projectId?: string;
+    task?: string;
+    requestId?: string;
+  }): Promise<{ projectId: string; sessionId: string; title: string; cwd: string; state: RuntimeSessionState; receiptId?: string }> {
+    if (this.closed) throw new RuntimeError("offline", "Codex 本地连接器已停止。");
+    if (!this.enableSend) throw new RuntimeError("forbidden", "本地 Codex 会话未开启发送授权。");
+    let rawCwd = input.cwd?.trim() ?? "";
+    if (!rawCwd && input.projectId) {
+      rawCwd = this.knownFolders().find((f) => f.id === input.projectId)?.path ?? "";
+    }
+    if (!rawCwd || !existsSync(rawCwd)) throw new RuntimeError("bad_request", "目标项目目录不存在或不可访问。");
+    const resolvedCwd = (() => {
+      try { return realpathSync(rawCwd); } catch { return resolve(rawCwd); }
+    })();
+    const task = input.task?.trim();
+    if (task && this.activeTurns.size >= MAX_CONCURRENT_TURNS) {
+      throw new RuntimeError("offline", "后台 Codex 任务数已达上限，请等待现有任务完成后再试。");
+    }
+
+    const server = await this.openAppServer(resolvedCwd);
+    let keepRunning = false;
+    try {
+      const startedThreadRes = await server.rpc("thread/start", { cwd: resolvedCwd }, 20_000);
+      const thread = startedThreadRes?.thread && typeof startedThreadRes.thread === "object"
+        ? startedThreadRes.thread as Record<string, unknown>
+        : undefined;
+      const threadId = typeof thread?.id === "string" ? thread.id : "";
+      if (!isRuntimeId(threadId)) throw new RuntimeError("outcome_unknown", "未收到有效的 Codex 会话标识。");
+
+      const project = projectForCwd(resolvedCwd);
+      const nowMs = Date.now();
+      const title = cleanLabel(task || basename(resolvedCwd), `Codex ${threadId.slice(-8)}`);
+      const row: ThreadRow = {
+        id: threadId,
+        rollout_path: typeof thread?.path === "string" ? thread.path : "",
+        cwd: resolvedCwd,
+        title,
+        name: null,
+        first_user_message: task || "",
+        archived: 0,
+        updated_at: Math.floor(nowMs / 1000),
+        updated_at_ms: nowMs,
+      };
+      this.recentCreated.set(threadId, { row, expiresAt: nowMs + RECENT_CREATED_TTL_MS });
+
+      if (!task) {
+        return { projectId: project.id, sessionId: threadId, title, cwd: resolvedCwd, state: "idle" };
+      }
+
+      const started = await server.rpc("turn/start", { threadId, input: [{ type: "text", text: task }] }, 20_000);
+      const startedTurn = started?.turn && typeof started.turn === "object" ? started.turn as Record<string, unknown> : undefined;
+      const activeTurnId = typeof startedTurn?.id === "string" ? startedTurn.id : "";
+      if (!activeTurnId) throw new RuntimeError("outcome_unknown", "已创建 Codex 会话，但未收到首条任务轮次确认。");
+
+      keepRunning = true;
+      server.bindTurn(project.id, threadId, activeTurnId, input.requestId);
+      return {
+        projectId: project.id,
+        sessionId: threadId,
+        title,
+        cwd: resolvedCwd,
+        state: "running",
+        ...(isRuntimeId(activeTurnId) ? { receiptId: activeTurnId } : {}),
+      };
+    } finally {
+      if (!keepRunning) server.abort();
+    }
+  }
+
+  async interrupt(projectId: string, sessionId: string): Promise<{ interrupted: boolean }> {
+    if (this.closed) throw new RuntimeError("offline", "Codex 本地连接器已停止。");
+    const tracked = this.activeTurns.get(sessionId);
+    if (tracked && tracked.projectId === projectId) {
+      try {
+        await tracked.rpc("turn/interrupt", { threadId: sessionId, turnId: tracked.turnId }, 5_000);
+      } catch {
+        // Fall through to terminal cleanup so a hung child is still stopped cleanly.
+      } finally {
+        tracked.emitTerminal("stopped");
+      }
+      return { interrupted: true };
+    }
+    const row = this.findRow(sessionId);
+    if (!row || !isRuntimeId(row.id) || projectForCwd(row.cwd).id !== projectId) {
+      throw new RuntimeError("not_found", "未找到对应的本地 Codex 会话。");
+    }
+    if (probeState(row) === "running") {
+      throw new RuntimeError("unsupported", "该会话正在 Codex 桌面端运行，请在桌面端停止。");
+    }
+    return { interrupted: false };
   }
 
   close(): void {
@@ -588,6 +778,7 @@ export class CodexLocalRuntime {
       try { entry.child.kill(); } catch {}
       this.activeTurns.delete(id);
     }
+    this.recentCreated.clear();
     this.events.length = 0;
   }
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
@@ -226,4 +226,216 @@ test("AntigravityRuntime reads conversation_summaries.db workspaces/titles, skip
   const detail = await rt.detail(mainProj.id, "ag-main-db-1", 20);
   assert.equal(detail.session.state, "running");
   assert.deepEqual(detail.messages.map((m) => m.text), ["真正的用户输入", "处理完成。"]);
+});
+
+test("AntigravityRuntime supports opt-in ACP send, structured answer formatting, active-turn state, and task events", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "xa-ag-send-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const storeRoot = join(root, "antigravity-store");
+  const brainDir = join(storeRoot, "brain");
+  const workDir = join(root, "repo-writable");
+  const missingDir = join(root, "repo-missing");
+  mkdirSync(brainDir, { recursive: true });
+  mkdirSync(workDir, { recursive: true });
+
+  const oldMs = Date.now() - 300_000;
+  const writeSession = (id: string, workspacePath: string, steps: unknown[], opts?: { lock?: boolean }) => {
+    const dir = join(brainDir, id);
+    const logs = join(dir, ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    const tp = join(logs, "transcript.jsonl");
+    const sysStep = {
+      type: "SYSTEM_MESSAGE",
+      content: `<user_information>\nActive Workspaces:\n- ${workspacePath}\nCommand Working Directory: ${workspacePath}\n</user_information>`,
+    };
+    writeFileSync(tp, `${[sysStep, ...steps].map((s) => JSON.stringify(s)).join("\n")}\n`);
+    if (opts?.lock) writeFileSync(join(dir, ".lock"), "");
+    const d = new Date(oldMs);
+    utimesSync(tp, d, d);
+  };
+
+  writeSession("ag-write-attn-1", workDir, [
+    { type: "USER_INPUT", content: "<USER_REQUEST>\n需要确认选项\n</USER_REQUEST>" },
+    {
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      content: "请选择目标。",
+      tool_calls: [{ name: "ask_question", args: { questions: [{ question: "发到哪？", options: ["测试环境", "生产环境"] }] } }],
+    },
+  ]);
+  writeSession("ag-write-idle-2", workDir, [
+    { type: "USER_INPUT", content: "<USER_REQUEST>\n空闲可续跑\n</USER_REQUEST>" },
+    { type: "PLANNER_RESPONSE", status: "DONE", content: "完成。" },
+  ]);
+  writeSession("ag-write-lock-3", workDir, [
+    { type: "USER_INPUT", content: "<USER_REQUEST>\n锁定中\n</USER_REQUEST>" },
+  ], { lock: true });
+  writeSession("ag-missing-cwd-4", missingDir, [
+    { type: "USER_INPUT", content: "<USER_REQUEST>\n目录不存在\n</USER_REQUEST>" },
+    { type: "PLANNER_RESPONSE", status: "DONE", content: "结束。" },
+  ]);
+
+  const recordPath = join(root, "acp-records.jsonl");
+  const mockAgy = join(root, "mock-agy.mjs");
+  writeFileSync(mockAgy, `
+import { appendFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+appendFileSync(${JSON.stringify(recordPath)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");
+const rl = createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  const msg = JSON.parse(line);
+  appendFileSync(${JSON.stringify(recordPath)}, JSON.stringify({ rpc: msg }) + "\\n");
+  if (msg.method === "initialize") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }) + "\\n");
+  } else if (msg.method === "session/resume") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: msg.params.sessionId } }) + "\\n");
+  } else if (msg.method === "session/prompt") {
+    setTimeout(() => {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "收到" } } },
+      }) + "\\n");
+    }, 30);
+    setTimeout(() => {
+      process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } }) + "\\n");
+    }, 90);
+  } else if (msg.method === "session/close") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
+  }
+});
+`);
+
+  const rt = new AntigravityRuntime({ brainDir, agyBin: mockAgy, enableSend: true });
+  t.after(() => rt.close());
+  assert.equal(rt.sendEnabled, true);
+
+  const projects = await rt.list();
+  const writableProj = projects.find((p) => p.title === "repo-writable")!;
+  const missingProj = projects.find((p) => p.title === "repo-missing")!;
+  assert.ok(writableProj);
+  assert.ok(missingProj);
+
+  assert.equal(writableProj.sessions.find((s) => s.id === "ag-write-attn-1")?.canSend, true);
+  assert.equal(writableProj.sessions.find((s) => s.id === "ag-write-idle-2")?.canSend, true);
+  assert.equal(writableProj.sessions.find((s) => s.id === "ag-write-lock-3")?.canSend, false);
+  assert.equal(missingProj.sessions.find((s) => s.id === "ag-missing-cwd-4")?.canSend, false);
+
+  const attnDetail = await rt.detail(writableProj.id, "ag-write-attn-1", 20);
+  assert.equal(attnDetail.session.canSend, true);
+  assert.equal(attnDetail.readOnlyReason, undefined);
+  assert.equal(attnDetail.pendingQuestions[0]!.state, "open");
+
+  const reqId = randomUUID();
+  const receipt = await rt.answer({
+    runtime: "antigravity",
+    projectId: writableProj.id,
+    sessionId: "ag-write-attn-1",
+    requestId: reqId,
+    callId: attnDetail.pendingQuestions[0]!.callId,
+    answers: [{ id: "q1", selected: ["测试环境"], custom: "先走灰度" }],
+  });
+  assert.deepEqual(receipt, { accepted: true, requestId: reqId });
+
+  // While the turn is active, session reports running/non-sendable and concurrent sends reject with not_found.
+  const activeDetail = await rt.detail(writableProj.id, "ag-write-attn-1", 20);
+  assert.equal(activeDetail.session.state, "running");
+  assert.equal(activeDetail.session.canSend, false);
+  await assert.rejects(
+    () => rt.send({ runtime: "antigravity", projectId: writableProj.id, sessionId: "ag-write-attn-1", requestId: randomUUID(), text: "concurrent" }),
+    (err: unknown) => err instanceof RuntimeError && err.code === "not_found",
+  );
+
+  for (let i = 0; i < 40; i++) {
+    if (rt.taskEvents().some((e) => e.requestId === reqId && e.kind === "completed")) break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  const kinds = rt.taskEvents().filter((e) => e.requestId === reqId).map((e) => e.kind);
+  assert.deepEqual(kinds, ["progress", "completed"]);
+
+  const records = readFileSync(recordPath, "utf8").trim().split(/\r?\n/).map((l) => JSON.parse(l) as Record<string, unknown>);
+  assert.deepEqual(records[0]!.argv, ["acp", "--app-data-dir", "antigravity-store", "--stdio"]);
+  const resumeCall = records.find((r) => (r.rpc as { method?: string } | undefined)?.method === "session/resume")?.rpc as { params: { sessionId: string; cwd: string } };
+  assert.equal(resumeCall.params.sessionId, "ag-write-attn-1");
+  const promptCall = records.find((r) => (r.rpc as { method?: string } | undefined)?.method === "session/prompt")?.rpc as { params: { prompt: Array<{ text: string }> } };
+  assert.equal(promptCall.params.prompt[0]!.text, "测试环境（补充：先走灰度）");
+});
+
+test("AntigravityRuntime supports knownFolders, create (session/new), and interrupt (session/cancel)", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "xa-ag-create-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const brainDir = join(root, "antigravity-store", "brain");
+  const workDir = join(root, "repo-new");
+  mkdirSync(brainDir, { recursive: true });
+  mkdirSync(workDir, { recursive: true });
+
+  const seedDir = join(brainDir, "ag-seed-1", ".system_generated", "logs");
+  mkdirSync(seedDir, { recursive: true });
+  writeFileSync(
+    join(seedDir, "transcript.jsonl"),
+    [
+      JSON.stringify({ type: "SYSTEM_MESSAGE", content: `Active Workspaces:\n- ${workDir}\n</user_information>` }),
+      JSON.stringify({ type: "USER_INPUT", content: "<USER_REQUEST>\n种子会话\n</USER_REQUEST>" }),
+      JSON.stringify({ type: "PLANNER_RESPONSE", status: "DONE", content: "好。" }),
+    ].join("\n") + "\n",
+  );
+
+  const recordPath = join(root, "acp-create.jsonl");
+  const counterPath = join(root, "acp-seq.txt");
+  writeFileSync(counterPath, "0");
+  const mockAgy = join(root, "mock-agy-create.mjs");
+  writeFileSync(mockAgy, `
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const rl = createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  const msg = JSON.parse(line);
+  appendFileSync(${JSON.stringify(recordPath)}, JSON.stringify(msg) + "\\n");
+  if (msg.method === "initialize") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }) + "\\n");
+  } else if (msg.method === "session/new") {
+    const next = Number(readFileSync(${JSON.stringify(counterPath)}, "utf8").trim() || "0") + 1;
+    writeFileSync(${JSON.stringify(counterPath)}, String(next));
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "ag-created-" + next } }) + "\\n");
+  } else if (msg.method === "session/close") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
+  } else if (msg.method === "session/cancel") {
+    // Wait briefly then acknowledge prompt cancellation cleanly.
+  }
+});
+`);
+
+  const rt = new AntigravityRuntime({ brainDir, agyBin: mockAgy, enableSend: true });
+  t.after(() => rt.close());
+
+  const folders = rt.knownFolders();
+  assert.equal(folders.length, 1);
+  assert.equal(folders[0]!.path, workDir);
+
+  const reqId = randomUUID();
+  const created = await rt.create({ cwd: workDir, task: "验证 ACP 新建与取消", requestId: reqId });
+  assert.equal(created.sessionId, "ag-created-1");
+  assert.equal(created.state, "running");
+
+  const projects = await rt.list();
+  const listed = projects.flatMap((p) => p.sessions).find((s) => s.id === "ag-created-1");
+  assert.equal(listed?.state, "running");
+  assert.equal((await rt.detail(created.projectId, created.sessionId, 20)).messages[0]?.text, "验证 ACP 新建与取消");
+
+  const cancelled = await rt.interrupt(created.projectId, created.sessionId);
+  assert.equal(cancelled.interrupted, true);
+  assert.equal((await rt.detail(created.projectId, created.sessionId, 20)).session.state, "idle");
+  assert.ok(rt.taskEvents().some((e) => e.requestId === reqId && e.kind === "stopped"));
+
+  const idleCreated = await rt.create({ cwd: workDir });
+  assert.equal(idleCreated.sessionId, "ag-created-2");
+  assert.equal(idleCreated.state, "idle");
+
+  const rpcs = readFileSync(recordPath, "utf8").trim().split(/\r?\n/).map((l) => JSON.parse(l) as { method?: string; params?: Record<string, unknown> });
+  assert.ok(rpcs.some((r) => r.method === "session/new"));
+  assert.ok(rpcs.some((r) => r.method === "session/cancel" && r.params?.sessionId === "ag-created-1"));
 });

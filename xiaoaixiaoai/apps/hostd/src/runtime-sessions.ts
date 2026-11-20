@@ -1,19 +1,21 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, normalize } from "node:path";
 import {
   DSH_ARCHIVE, DSH_UNFILED, DSH_DIRECTORY_PAGE_SIZE, DSH_DIRECTORY_SEARCH_LIMIT,
   isRuntimeId, isRuntimeRequestId, RUNTIME_DETAIL_LIMIT, RUNTIME_SESSION_TEXT_LIMIT,
   RUNTIME_TASK_EVENTS_LIMIT, RUNTIME_TASK_EVENT_KINDS,
   type DshDirectoryProject, type DshDirectoryReply, type DshDirectoryRequest,
-  type RpcErrorCode, type RuntimeCatalog, type RuntimePendingQuestion, type RuntimeProject, type RuntimeQuestionItem,
+  type LaunchOption, type RpcErrorCode, type RuntimeCatalog, type RuntimePendingQuestion, type RuntimeProject, type RuntimeQuestionItem,
   type RuntimeSession, type RuntimeSessionAnswer, type RuntimeSessionDetail, type RuntimeSessionMessage,
-  type RuntimeSessionReceipt, type RuntimeSessionSend, type RuntimeTaskEvent, type SessionRuntime,
+  type RuntimeSessionReceipt, type RuntimeSessionSend, type RuntimeTaskEvent, type SessionRuntime, type SpaceInfo,
 } from "@xiaoaixiaoai/protocol";
 import { AntigravityRuntime } from "./antigravity-runtime.ts";
 import { CodexLocalRuntime } from "./codex-local-runtime.ts";
 import { CodexRuntime, CodexRuntimeError } from "./codex-runtime.ts";
+import { LocalVoiceBridge, type LocalVoiceOptions } from "./local-voice.ts";
 
 const MAX_CONFIG = 48 * 1024;
 const MAX_REPLY = 512 * 1024;
@@ -30,6 +32,30 @@ const UNKNOWN = () => new RuntimeError("outcome_unknown", "没收到明确回执
 const OFFLINE = () => new RuntimeError("offline", "本机连接器不可用，请检查电脑端配置。");
 const INVALID = () => new RuntimeError("bad_request", "会话或请求参数无效。");
 
+export interface RuntimeKnownFolder {
+  id: string;
+  title: string;
+  path?: string;
+  updatedAt?: number;
+}
+
+export interface RuntimeCreateInput {
+  cwd?: string;
+  projectId?: string;
+  task?: string;
+  requestId?: string;
+}
+
+export interface RuntimeCreatedSession {
+  projectId: string;
+  projectTitle?: string;
+  sessionId: string;
+  title: string;
+  cwd?: string;
+  state: RuntimeSession["state"];
+  receiptId?: string;
+}
+
 export interface RuntimeAdapter {
   readonly sendEnabled?: boolean;
   list(): Promise<RuntimeProject[]>;
@@ -38,6 +64,9 @@ export interface RuntimeAdapter {
   detail?(projectId: string, sessionId: string, limit?: number): Promise<RuntimeSessionDetail>;
   answer?(input: RuntimeSessionAnswer): Promise<RuntimeSessionReceipt>;
   taskEvents?(): Promise<RuntimeTaskEvent[]> | RuntimeTaskEvent[];
+  knownFolders?(): Promise<RuntimeKnownFolder[]> | RuntimeKnownFolder[];
+  create?(input: RuntimeCreateInput): Promise<RuntimeCreatedSession>;
+  interrupt?(projectId: string, sessionId: string): Promise<{ interrupted: boolean }>;
   close?(): void;
 }
 
@@ -104,7 +133,7 @@ function readPrivateText(rawPath: string, limit: number): string {
 function readPrivate(path: string, limit: number): unknown { return JSON.parse(readPrivateText(path, limit)); }
 
 /** Never accept paths, history, prompts, or executable values returned by a bridge. */
-function projects(runtime: SessionRuntime, value: unknown): RuntimeProject[] {
+function projects(runtime: SessionRuntime, value: unknown, allowAntigravitySend = false): RuntimeProject[] {
   if (!Array.isArray(value) || value.length > 20) throw OFFLINE();
   const projectIds = new Set<string>();
   let count = 0;
@@ -121,7 +150,7 @@ function projects(runtime: SessionRuntime, value: unknown): RuntimeProject[] {
         id: s.id,
         title: label(s.title, "未命名会话"),
         state: s.state as RuntimeSession["state"],
-        canSend: s.canSend === true,
+        canSend: (runtime !== "antigravity" || allowAntigravitySend) && s.canSend === true,
         ...(typeof s.updatedAt === "number" && Number.isSafeInteger(s.updatedAt) && s.updatedAt > 0 ? { updatedAt: s.updatedAt } : {}),
       };
     });
@@ -159,7 +188,7 @@ function directoryRequest(value: unknown): DshDirectoryRequest {
   return { ...withRt, view: "sessions", ...page, ...(projectId !== undefined && { projectId }), ...(search !== undefined && { search }) };
 }
 
-function directoryReply(value: unknown, input: DshDirectoryRequest): DshDirectoryReply {
+function directoryReply(value: unknown, input: DshDirectoryRequest, allowAntigravitySend = false): DshDirectoryReply {
   const v = row(value);
   if (!v || v.view !== input.view || (v.scope !== "profile" && v.scope !== "selected")) throw OFFLINE();
   if (v.runtime !== undefined && !runtimeOf(v.runtime)) throw OFFLINE();
@@ -203,7 +232,7 @@ function directoryReply(value: unknown, input: DshDirectoryRequest): DshDirector
         (scope === "selected" && (item.archived || project.id === DSH_UNFILED))) throw OFFLINE();
     seen.add(sessionName.id);
     const state = item.archived ? "inactive" : s.state as RuntimeSession["state"];
-    const canSend = !item.archived && s.canSend === true && entryRuntime !== "antigravity" && (
+    const canSend = !item.archived && s.canSend === true && (entryRuntime !== "antigravity" || allowAntigravitySend) && (
       state === "idle" || state === "running" || state === "attention" || (scope === "profile" && entryRuntime !== "codex" && state === "inactive")
     );
     const updatedAt = typeof s.updatedAt === "number" && Number.isSafeInteger(s.updatedAt) && s.updatedAt > 0 ? s.updatedAt : undefined;
@@ -222,15 +251,15 @@ function directoryReply(value: unknown, input: DshDirectoryRequest): DshDirector
   return { ...withReplyRt, view: "sessions", scope, entries, ...paged(entries.map((e) => e.session.id), input.after) };
 }
 
-class DshRuntime implements RuntimeAdapter {
+export class DshRuntime implements RuntimeAdapter {
   private readonly socket: string;
   constructor(socket: string) {
     if (process.platform !== "linux" || !isAbsolute(socket) || normalize(socket) !== socket || Buffer.byteLength(socket) > 103 || /[\x00-\x1f]/.test(socket)) throw INVALID();
     this.socket = socket;
   }
 
-  private exchange(path: "/v1/catalog" | "/v1/send" | "/v2/browse" | "/v3/task-events" | "/v4/detail" | "/v4/answer", body?: string): Promise<unknown> {
-    const mutating = path === "/v1/send" || path === "/v4/answer";
+  private exchange(path: "/v1/catalog" | "/v1/send" | "/v2/browse" | "/v3/task-events" | "/v4/detail" | "/v4/answer" | "/v5/create" | "/v5/cancel", body?: string): Promise<unknown> {
+    const mutating = path === "/v1/send" || path === "/v4/answer" || path === "/v5/create" || path === "/v5/cancel";
     try {
       const s = lstatSync(this.socket);
       if (!s.isSocket() || s.uid !== uid || (s.mode & 0o777) !== 0o600 || !privateDirectory(dirname(this.socket))) throw OFFLINE();
@@ -243,6 +272,30 @@ class DshRuntime implements RuntimeAdapter {
         signal: AbortSignal.timeout(8_000),
       }, (res) => {
         if (res.statusCode !== 200) {
+          const isV5 = path === "/v5/create" || path === "/v5/cancel";
+          if (isV5 && res.statusCode === 501) {
+            res.resume();
+            reject(new RuntimeError("unsupported", "请更新这台电脑的 DSH 连接插件。"));
+            return;
+          }
+          if (isV5 && res.statusCode === 404) {
+            const errChunks: Buffer[] = [];
+            let errLen = 0;
+            res.on("data", (c: Buffer) => {
+              if (errLen < 1024) { errChunks.push(c); errLen += c.length; }
+            });
+            res.on("end", () => {
+              try {
+                const parsed = JSON.parse(Buffer.concat(errChunks).toString("utf8")) as { error?: string };
+                if (parsed?.error === "route_not_found") {
+                  reject(new RuntimeError("unsupported", "请更新这台电脑的 DSH 连接插件。"));
+                  return;
+                }
+              } catch {}
+              reject(new RuntimeError("not_found", "目标不在线、问题已过期或不在允许的项目中。"));
+            });
+            return;
+          }
           res.resume();
           // 4xx responses are explicit refusal by the pinned local bridge, not a delivery receipt.
           if (mutating && res.statusCode === 400) reject(INVALID());
@@ -316,6 +369,40 @@ class DshRuntime implements RuntimeAdapter {
     if (result?.accepted !== true || result.requestId !== requestId) throw UNKNOWN();
     return { accepted: true, requestId };
   }
+
+  async knownFolders(): Promise<RuntimeKnownFolder[]> {
+    const reply = await this.browse({ runtime: "dsh", view: "projects" });
+    if (reply.view !== "projects") return [];
+    return reply.projects
+      .filter((p) => p.id !== DSH_UNFILED && p.id !== DSH_ARCHIVE)
+      .map((p) => ({ id: p.id, title: p.title }));
+  }
+
+  async create({ projectId, cwd, task, requestId }: RuntimeCreateInput): Promise<RuntimeCreatedSession> {
+    const result = row(await this.exchange("/v5/create", JSON.stringify({
+      ...(projectId ? { projectId } : {}),
+      ...(cwd ? { cwd } : {}),
+      ...(task ? { task } : {}),
+      ...(requestId ? { requestId } : {}),
+    })));
+    if (!result || !isRuntimeId(result.projectId) || !isRuntimeId(result.sessionId)) throw UNKNOWN();
+    const stateStr = typeof result.state === "string" && states.has(result.state) ? (result.state as RuntimeSession["state"]) : (task ? "running" : "idle");
+    const projectTitle = typeof result.projectTitle === "string" && result.projectTitle.trim() ? label(result.projectTitle, "DSH") : undefined;
+    return {
+      projectId: result.projectId,
+      ...(projectTitle ? { projectTitle } : {}),
+      sessionId: result.sessionId,
+      title: label(task || projectTitle, `DSH ${result.sessionId.slice(0, 8)}`),
+      state: stateStr,
+      ...(isRuntimeId(result.receiptId) ? { receiptId: result.receiptId } : {}),
+    };
+  }
+
+  async interrupt(projectId: string, sessionId: string): Promise<{ interrupted: boolean }> {
+    const result = row(await this.exchange("/v5/cancel", JSON.stringify({ projectId, sessionId })));
+    if (!result || typeof result.interrupted !== "boolean") throw UNKNOWN();
+    return { interrupted: result.interrupted };
+  }
 }
 
 function clipMessageText(value: unknown, max = 6000): string {
@@ -324,7 +411,7 @@ function clipMessageText(value: unknown, max = 6000): string {
   return (chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join("")).trim();
 }
 
-function sanitizeDetail(runtime: SessionRuntime, raw: Record<string, unknown>): RuntimeSessionDetail {
+function sanitizeDetail(runtime: SessionRuntime, raw: Record<string, unknown>, allowAntigravitySend = false): RuntimeSessionDetail {
   const project = row(raw.project);
   const session = row(raw.session);
   if (!project || !isRuntimeId(project.id) || !session || !isRuntimeId(session.id) ||
@@ -333,6 +420,7 @@ function sanitizeDetail(runtime: SessionRuntime, raw: Record<string, unknown>): 
   }
   const safeProjectTitle = typeof project.title === "string" && !/[/\\\uD800-\uDFFF]/u.test(project.title)
     ? label(project.title, "未命名项目") : "未命名项目";
+  const canSend = (runtime !== "antigravity" || allowAntigravitySend) && session.canSend === true;
   const rawMessages = Array.isArray(raw.messages) ? raw.messages.slice(-RUNTIME_DETAIL_LIMIT) : [];
   const messages: RuntimeSessionMessage[] = [];
   for (const item of rawMessages) {
@@ -385,7 +473,7 @@ function sanitizeDetail(runtime: SessionRuntime, raw: Record<string, unknown>): 
     if (questions.length) {
       pendingQuestions.push({
         callId: qWrap.callId.slice(0, 128),
-        state: runtime === "antigravity" ? "readonly" : qWrap.state,
+        state: runtime === "antigravity" && !canSend ? "readonly" : qWrap.state,
         questions,
       });
     }
@@ -399,7 +487,7 @@ function sanitizeDetail(runtime: SessionRuntime, raw: Record<string, unknown>): 
       id: session.id,
       title: label(session.title, "未命名会话"),
       state: session.state as RuntimeSession["state"],
-      canSend: runtime !== "antigravity" && session.canSend === true,
+      canSend,
       ...(updatedAt !== undefined ? { updatedAt } : {}),
     },
     messages,
@@ -448,18 +536,20 @@ export class RuntimeSessions {
   readonly viewerId: string;
   readonly publishAgents: boolean;
   readonly allowAssistant: boolean;
+  readonly localVoice?: LocalVoiceBridge;
   private readonly adapters: Partial<Record<SessionRuntime, RuntimeAdapter>>;
   constructor(
     viewerId: string,
     adapters: Partial<Record<SessionRuntime, RuntimeAdapter>>,
     ledgerDir: string,
-    options: { publishAgents?: boolean; allowAssistant?: boolean } = {},
+    options: { publishAgents?: boolean; allowAssistant?: boolean; localVoice?: LocalVoiceBridge } = {},
   ) {
     this.viewerId = viewerId;
     this.adapters = { ...adapters };
     this.ledger = new DispatchLedger(ledgerDir);
     this.publishAgents = options.publishAgents === true;
     this.allowAssistant = options.allowAssistant === true;
+    this.localVoice = options.localVoice;
   }
 
   /** Collect non-archived sessions across configured runtimes, prioritized by live state and recency. */
@@ -485,9 +575,10 @@ export class RuntimeSessions {
               for (const entry of page.entries) {
                 if (entry.archived || entry.project.id === DSH_ARCHIVE) continue;
                 const s = entry.session;
+                const allowRtSend = runtime !== "antigravity" || adapter.sendEnabled === true;
                 const sendConfigured =
-                  runtime !== "antigravity" &&
-                  (s.canSend || (runtime === "codex" && adapter.sendEnabled === true && (s.state === "running" || s.state === "attention")));
+                  allowRtSend &&
+                  (s.canSend || ((runtime === "codex" || runtime === "antigravity") && adapter.sendEnabled === true && (s.state === "running" || s.state === "attention")));
                 collected.push({
                   runtime,
                   projectId: entry.project.id,
@@ -500,12 +591,13 @@ export class RuntimeSessions {
               after = page.next;
             }
           } else {
-            const list = projects(runtime, await adapter.list());
+            const allowRtSend = runtime !== "antigravity" || adapter.sendEnabled === true;
+            const list = projects(runtime, await adapter.list(), allowRtSend);
             for (const project of list) {
               for (const s of project.sessions) {
                 const sendConfigured =
-                  runtime !== "antigravity" &&
-                  (s.canSend || (runtime === "codex" && adapter.sendEnabled === true && (s.state === "running" || s.state === "attention")));
+                  allowRtSend &&
+                  (s.canSend || ((runtime === "codex" || runtime === "antigravity") && adapter.sendEnabled === true && (s.state === "running" || s.state === "attention")));
                 collected.push({
                   runtime,
                   projectId: project.id,
@@ -532,15 +624,104 @@ export class RuntimeSessions {
     this.loading = Promise.all(RUNTIMES.flatMap((runtime) => {
       const adapter = this.adapters[runtime];
       if (!adapter) return [];
-      return [Promise.resolve().then(() => adapter.list()).then((ps) => ({ runtime, online: true, projects: projects(runtime, ps) }))
+      const allowRtSend = runtime !== "antigravity" || adapter.sendEnabled === true;
+      return [Promise.resolve().then(() => adapter.list()).then((ps) => ({ runtime, online: true, projects: projects(runtime, ps, allowRtSend) }))
         .catch(() => ({ runtime, online: false, projects: [] as RuntimeProject[] }))];
     })).then((rs) => ({ runtimes: rs.map(({ runtime, online }) => ({ runtime, online })), projects: rs.flatMap((r) => r.projects) }))
       .finally(() => { this.loading = undefined; });
     return this.loading;
   }
   get hasDirectory(): boolean { return this.adapters.dsh instanceof DshRuntime; }
+  get hasCreate(): boolean {
+    return RUNTIMES.some((runtime) => {
+      const adapter = this.adapters[runtime];
+      return adapter !== undefined && typeof adapter.create === "function" && (runtime === "dsh" || adapter.sendEnabled === true);
+    });
+  }
   get hasTaskEvents(): boolean {
     return Object.values(this.adapters).some((adapter) => typeof adapter?.taskEvents === "function");
+  }
+
+  async createOptions(): Promise<{ launchers: LaunchOption[]; spaces: SpaceInfo[]; folders: string[] }> {
+    const LAUNCHER_META: Record<SessionRuntime, LaunchOption> = {
+      dsh: { id: "dsh", label: "DSH", takesTask: true },
+      codex: { id: "codex", label: "Codex", takesTask: true },
+      antigravity: { id: "antigravity", label: "Antigravity（反重力）", takesTask: true },
+    };
+    const launchers: LaunchOption[] = [];
+    const spacesMap = new Map<string, SpaceInfo>();
+    const foldersSet = new Set<string>();
+    await Promise.all(
+      RUNTIMES.map(async (runtime) => {
+        const adapter = this.adapters[runtime];
+        if (!adapter || typeof adapter.create !== "function" || (runtime !== "dsh" && adapter.sendEnabled !== true)) return;
+        launchers.push(LAUNCHER_META[runtime]);
+        if (typeof adapter.knownFolders !== "function") return;
+        let known: RuntimeKnownFolder[] = [];
+        try { known = await adapter.knownFolders(); } catch { known = []; }
+        for (const f of known) {
+          if (!spacesMap.has(f.id)) {
+            spacesMap.set(f.id, { id: f.id, name: f.title, ...(f.path ? { folder: f.path } : {}), tabs: 0, terminals: 0 });
+          }
+          if (f.path) foldersSet.add(f.path);
+        }
+      }),
+    );
+    launchers.sort((a, b) => RUNTIMES.indexOf(a.id as SessionRuntime) - RUNTIMES.indexOf(b.id as SessionRuntime));
+    return { launchers, spaces: [...spacesMap.values()], folders: [...foldersSet] };
+  }
+
+  async createSession(input: { runtime: SessionRuntime; projectId?: string; cwd?: string; task?: string }): Promise<RuntimeCreatedSession & { runtime: SessionRuntime }> {
+    const adapter = this.adapters[input.runtime];
+    if (!adapter) throw OFFLINE();
+    if (typeof adapter.create !== "function" || (input.runtime !== "dsh" && adapter.sendEnabled !== true)) {
+      throw new RuntimeError("forbidden", "当前运行时未开放远程新建会话。");
+    }
+    let cleanTask: string | undefined;
+    if (typeof input.task === "string") {
+      if (input.task.length > RUNTIME_SESSION_TEXT_LIMIT || /[\uD800-\uDFFF]/u.test(input.task) || input.task.includes("\0")) throw INVALID();
+      cleanTask = input.task.trim() || undefined;
+    }
+    let resolvedCwd = typeof input.cwd === "string" && input.cwd.trim() ? input.cwd.trim() : undefined;
+    if (resolvedCwd === "~") resolvedCwd = homedir();
+    if (input.runtime !== "dsh" && !resolvedCwd && input.projectId && typeof adapter.knownFolders === "function") {
+      try {
+        const known = await adapter.knownFolders();
+        resolvedCwd = known.find((f) => f.id === input.projectId)?.path;
+      } catch {}
+    }
+    if (input.runtime !== "dsh" && !resolvedCwd) resolvedCwd = homedir();
+    const requestId = randomUUID().toLowerCase();
+    try {
+      const created = await adapter.create({
+        ...(input.projectId && isRuntimeId(input.projectId) ? { projectId: input.projectId } : {}),
+        ...(resolvedCwd ? { cwd: resolvedCwd } : {}),
+        ...(cleanTask ? { task: cleanTask } : {}),
+        requestId,
+      });
+      return { ...created, runtime: input.runtime };
+    } catch (e) {
+      if (e instanceof RuntimeError) throw e;
+      throw UNKNOWN();
+    }
+  }
+
+  async interrupt(target: { runtime: SessionRuntime; projectId: string; sessionId: string }): Promise<{ interrupted: boolean }> {
+    if (!isRuntimeId(target.projectId) || !isRuntimeId(target.sessionId)) throw INVALID();
+    const adapter = this.adapters[target.runtime];
+    if (!adapter) throw OFFLINE();
+    if (target.runtime === "antigravity" && adapter.sendEnabled !== true) {
+      throw new RuntimeError("forbidden", "Antigravity 会话未开启控制授权。");
+    }
+    if (typeof adapter.interrupt !== "function") {
+      throw new RuntimeError("unsupported", "当前运行时暂不支持远程停止运行中的任务。");
+    }
+    try {
+      return await adapter.interrupt(target.projectId, target.sessionId);
+    } catch (e) {
+      if (e instanceof RuntimeError) throw e;
+      throw UNKNOWN();
+    }
   }
 
   async taskEvents(): Promise<RuntimeTaskEvent[]> {
@@ -559,7 +740,8 @@ export class RuntimeSessions {
     if (!adapter || typeof adapter.browse !== "function") {
       throw new RuntimeError("unsupported", "这台电脑没有配置所选运行时的会话目录。");
     }
-    return Promise.resolve().then(() => adapter.browse!(req)).then((reply) => directoryReply(reply, req));
+    const allowAg = runtime === "antigravity" && adapter.sendEnabled === true;
+    return Promise.resolve().then(() => adapter.browse!(req)).then((reply) => directoryReply(reply, req, allowAg));
   }
 
   async detail(input: unknown): Promise<RuntimeSessionDetail> {
@@ -575,7 +757,7 @@ export class RuntimeSessions {
       throw new RuntimeError("unsupported", "当前运行时暂不支持读取会话详情。");
     }
     const raw = await adapter.detail(p.projectId, p.sessionId, p.limit);
-    return sanitizeDetail(runtime, raw as unknown as Record<string, unknown>);
+    return sanitizeDetail(runtime, raw as unknown as Record<string, unknown>, runtime === "antigravity" && adapter.sendEnabled === true);
   }
 
   async send(input: unknown): Promise<RuntimeSessionReceipt> {
@@ -583,7 +765,7 @@ export class RuntimeSessions {
     const runtime = runtimeOf(p.runtime);
     if (!runtime || !isRuntimeId(p.projectId) || !isRuntimeId(p.sessionId) ||
       !isRuntimeRequestId(p.requestId) || typeof p.input !== "string" || p.input.length > RUNTIME_SESSION_TEXT_LIMIT || /[\uD800-\uDFFF]/u.test(p.input) || !p.input.trim() || p.input.includes("\0")) throw INVALID();
-    if (runtime === "antigravity") throw new RuntimeError("forbidden", "Antigravity 会话当前仅支持查看，不支持从手机发送消息。");
+    if (runtime === "antigravity" && this.adapters.antigravity?.sendEnabled !== true) throw new RuntimeError("forbidden", "Antigravity 会话当前仅支持查看，不支持从手机发送消息。");
     const adapter = this.adapters[runtime];
     if (!adapter) throw OFFLINE();
     // Canonicalize public request IDs and exclude extra input fields from the fence.
@@ -619,7 +801,7 @@ export class RuntimeSessions {
         typeof p.callId !== "string" || !p.callId.length || p.callId.length > 128 || !Array.isArray(p.answers) || p.answers.length === 0 || p.answers.length > 16) {
       throw INVALID();
     }
-    if (runtime === "antigravity") throw new RuntimeError("forbidden", "Antigravity 会话当前仅支持查看，不支持从手机回答问题。");
+    if (runtime === "antigravity" && this.adapters.antigravity?.sendEnabled !== true) throw new RuntimeError("forbidden", "Antigravity 会话当前仅支持查看，不支持从手机回答问题。");
     const answers = p.answers.map((raw) => {
       const a = exact(raw, ["id", "selected", "custom"]);
       if (typeof a.id !== "string" || !a.id.length || a.id.length > 128 || !Array.isArray(a.selected) || a.selected.length > 32 ||
@@ -664,19 +846,23 @@ export class RuntimeSessions {
     try { this.ledger.record(target.requestId, receipt); } catch { /* the claim still prevents a duplicate */ }
     return receipt;
   }
-  close() { for (const adapter of Object.values(this.adapters)) adapter.close?.(); }
+  close() {
+    for (const adapter of Object.values(this.adapters)) adapter.close?.();
+    this.localVoice?.close();
+  }
 }
 
 /** Explicit local config only. Never search DSH/Codex history, sockets or auth files. */
 export function loadRuntimeSessions(path: string | undefined): RuntimeSessions | undefined {
   if (path === undefined) return undefined;
   try {
-    const cfg = exact(readPrivate(path, MAX_CONFIG), ["viewerId", "dsh", "codex", "codexLocal", "antigravity", "publishAgents", "allowAssistant"]);
+    const cfg = exact(readPrivate(path, MAX_CONFIG), ["viewerId", "dsh", "codex", "codexLocal", "antigravity", "publishAgents", "allowAssistant", "localVoice"]);
     if (!isRuntimeId(cfg.viewerId)) throw INVALID();
     if (cfg.publishAgents !== undefined && typeof cfg.publishAgents !== "boolean") throw INVALID();
     if (cfg.allowAssistant !== undefined && typeof cfg.allowAssistant !== "boolean") throw INVALID();
     if (cfg.codex !== undefined && cfg.codexLocal !== undefined) throw INVALID();
     const adapters: Partial<Record<SessionRuntime, RuntimeAdapter>> = {};
+    let localVoice: LocalVoiceBridge | undefined;
     if (cfg.dsh !== undefined) {
       const d = exact(cfg.dsh, ["socketPath"]);
       if (typeof d.socketPath !== "string") throw INVALID();
@@ -702,14 +888,53 @@ export function loadRuntimeSessions(path: string | undefined): RuntimeSessions |
       adapters.codex = new CodexLocalRuntime({ codexHome: c.codexHome, codexBin: c.codexBin, enableSend: c.enableSend === true });
     }
     if (cfg.antigravity !== undefined) {
-      const a = exact(cfg.antigravity, ["brainDir"]);
-      if (typeof a.brainDir !== "string") throw INVALID();
-      adapters.antigravity = new AntigravityRuntime({ brainDir: a.brainDir });
+      const a = exact(cfg.antigravity, ["brainDir", "agyBin", "enableSend"]);
+      if (typeof a.brainDir !== "string" || (a.agyBin !== undefined && typeof a.agyBin !== "string") ||
+          (a.enableSend !== undefined && typeof a.enableSend !== "boolean")) throw INVALID();
+      adapters.antigravity = new AntigravityRuntime({ brainDir: a.brainDir, agyBin: a.agyBin, enableSend: a.enableSend === true });
     }
-    if (!Object.keys(adapters).length) throw INVALID();
+    if (cfg.localVoice !== undefined) {
+      const lv = exact(cfg.localVoice, [
+        "pythonBin", "gptSovitsDir", "sovitsWeightsPath", "gptWeightsPath",
+        "refAudioPath", "refText", "refLang", "textLang", "idleTimeoutMs",
+        "device", "workerScript", "enable", "asrModel", "vadModel", "puncModel",
+      ]);
+      const optStr = (v: unknown) => v === undefined || typeof v === "string";
+      if (typeof lv.pythonBin !== "string" || typeof lv.gptSovitsDir !== "string" ||
+          typeof lv.sovitsWeightsPath !== "string" || typeof lv.gptWeightsPath !== "string" ||
+          typeof lv.refAudioPath !== "string" || typeof lv.refText !== "string" ||
+          !optStr(lv.refLang) || !optStr(lv.textLang) || !optStr(lv.device) ||
+          !optStr(lv.workerScript) || !optStr(lv.asrModel) || !optStr(lv.vadModel) || !optStr(lv.puncModel) ||
+          (lv.enable !== undefined && typeof lv.enable !== "boolean") ||
+          (lv.idleTimeoutMs !== undefined && (typeof lv.idleTimeoutMs !== "number" || !Number.isFinite(lv.idleTimeoutMs) || lv.idleTimeoutMs < 0))) {
+        throw INVALID();
+      }
+      if (lv.enable !== false) {
+        const voiceOpts: LocalVoiceOptions = {
+          pythonBin: lv.pythonBin,
+          gptSovitsDir: lv.gptSovitsDir,
+          sovitsWeightsPath: lv.sovitsWeightsPath,
+          gptWeightsPath: lv.gptWeightsPath,
+          refAudioPath: lv.refAudioPath,
+          refText: lv.refText,
+          ...(typeof lv.refLang === "string" ? { refLang: lv.refLang } : {}),
+          ...(typeof lv.textLang === "string" ? { textLang: lv.textLang } : {}),
+          ...(typeof lv.device === "string" ? { device: lv.device } : {}),
+          ...(typeof lv.idleTimeoutMs === "number" ? { idleTimeoutMs: lv.idleTimeoutMs } : {}),
+          ...(typeof lv.workerScript === "string" ? { workerScript: lv.workerScript } : {}),
+          ...(typeof lv.asrModel === "string" ? { asrModel: lv.asrModel } : {}),
+          ...(typeof lv.vadModel === "string" ? { vadModel: lv.vadModel } : {}),
+          ...(typeof lv.puncModel === "string" ? { puncModel: lv.puncModel } : {}),
+          enable: true,
+        };
+        localVoice = new LocalVoiceBridge(voiceOpts);
+      }
+    }
+    if (!Object.keys(adapters).length && !localVoice) throw INVALID();
     return new RuntimeSessions(cfg.viewerId, adapters, join(dirname(path), "runtime-dispatch"), {
       publishAgents: cfg.publishAgents === true,
       allowAssistant: cfg.allowAssistant === true,
+      ...(localVoice ? { localVoice } : {}),
     });
   } catch {
     throw new RuntimeError("bad_request", "电脑端会话连接配置无效：请检查专用目录权限、允许的手机及连接器设置。");

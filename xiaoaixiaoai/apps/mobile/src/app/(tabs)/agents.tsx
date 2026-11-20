@@ -151,7 +151,10 @@ export default function AgentsHub() {
   }, [inScope, isOnline]);
 
   const q = query.trim().toLowerCase();
-  const match = useCallback((a: Agent) => !q || [agentTitle(a), a.harness, a.where, a.cwd, a.preview].some((s) => s?.toLowerCase().includes(q)), [q]);
+  const match = useCallback(
+    (a: Agent) => !q || [agentTitle(a), a.harness, a.harness === "antigravity" ? "反重力" : undefined, a.where, a.cwd, a.preview].some((s) => s?.toLowerCase().includes(q)),
+    [q],
+  );
 
   const sections = useMemo(() => {
     const by: Record<GroupKey, Agent[]> = { blocked: [], working: [], done: [], idle: [], offline: [] };
@@ -183,7 +186,10 @@ export default function AgentsHub() {
     () => hosts.filter((h) => h.online && h.sources?.includes("runtime-sessions") && !all.some((a) => a.deviceId === h.id && a.source === "runtime")),
     [hosts, all],
   );
-  const canCreateOnAnyHost = useMemo(() => hosts.some((h) => h.online && h.sources?.includes("hc")), [hosts]);
+  const canCreateOnAnyHost = useMemo(
+    () => hosts.some((h) => h.online && (h.sources?.includes("hc") || h.sources?.includes("runtime-create"))),
+    [hosts],
+  );
   const allDone = counts.blocked === 0 && counts.working === 0 && counts.done > 0;
   const headline = counts.blocked ? `有 ${counts.blocked} 个 agent 在等你` : counts.working ? `${counts.working} 个 agent 正在忙` : allDone ? "大家都忙完啦" : "大家都歇着呢";
   const hostName = hostFilter ? hosts.find((h) => h.id === hostFilter)?.name ?? "这台电脑" : null;

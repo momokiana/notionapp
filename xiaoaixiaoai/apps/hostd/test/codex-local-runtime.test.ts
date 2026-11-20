@@ -94,9 +94,21 @@ rl.on("line", (line) => {
     process.stdout.write(JSON.stringify({ id: msg.id, result: { thread: { id: msg.params.threadId }, cwd: cwdOut } }) + "\\n");
     return;
   }
+  if (msg.method === "thread/start") {
+    appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ method: msg.method, cwd: msg.params.cwd }) + "\\n");
+    process.stdout.write(JSON.stringify({ id: msg.id, result: { thread: { id: "thread-codex-created-9", path: "" } } }) + "\\n");
+    return;
+  }
+  if (msg.method === "turn/interrupt") {
+    appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ method: msg.method, ...msg.params }) + "\\n");
+    process.stdout.write(JSON.stringify({ id: msg.id, result: {} }) + "\\n");
+    process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params.threadId, turn: { id: msg.params.turnId, status: "interrupted" } } }) + "\\n");
+    return;
+  }
   if (msg.method === "turn/start") {
     appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(msg.params) + "\\n");
     process.stdout.write(JSON.stringify({ id: msg.id, result: { turn: { id: "turn-codex-1" } } }) + "\\n");
+    if (mode === "slow-turn") return;
     if (mode === "attention-after-start") {
       setTimeout(() => {
         process.stdout.write(JSON.stringify({ id: "srv-req-2", method: "item/tool/requestUserInput", params: {} }) + "\\n");
@@ -251,4 +263,40 @@ test("CodexLocalRuntime accepts verbatim \\\\?\\ cwd on thread/resume and caps >
   const rs = new RuntimeSessions("viewer", { codex: capRt }, join(capDir, "ledger"));
   const list = await rs.list();
   assert.equal(list.projects.length, 20);
+});
+
+test("CodexLocalRuntime supports knownFolders, create (thread/start + turn/start), and interrupt (turn/interrupt)", async (t) => {
+  const fx = setupCodexFixture(t);
+  fx.setMode("slow-turn");
+  const rt = new CodexLocalRuntime({ codexHome: fx.codexHome, codexBin: fx.fakeCodex, enableSend: true });
+  t.after(() => rt.close());
+
+  const folders = rt.knownFolders();
+  assert.equal(folders.length, 1);
+  assert.equal(folders[0]!.path, fx.cwd);
+
+  const reqId = randomUUID();
+  const created = await rt.create({ cwd: fx.cwd, task: "先检查新模块测试", requestId: reqId });
+  assert.equal(created.sessionId, "thread-codex-created-9");
+  assert.equal(created.state, "running");
+
+  const projects = await rt.list();
+  const createdEntry = projects.flatMap((p) => p.sessions).find((s) => s.id === "thread-codex-created-9");
+  assert.equal(createdEntry?.state, "running");
+  assert.equal(createdEntry?.canSend, false);
+
+  const detail = await rt.detail(created.projectId, created.sessionId, 20);
+  assert.equal(detail.messages[0]?.text, "先检查新模块测试");
+
+  const stopped = await rt.interrupt(created.projectId, created.sessionId);
+  assert.equal(stopped.interrupted, true);
+  assert.equal((await rt.detail(created.projectId, created.sessionId, 20)).session.state, "idle");
+  assert.ok(rt.taskEvents().some((e) => e.requestId === reqId && e.kind === "stopped"));
+
+  const idleCreated = await rt.create({ cwd: fx.cwd });
+  assert.equal(idleCreated.state, "idle");
+
+  const logged = readFileSync(fx.logPath, "utf8").trim().split(/\r?\n/).map((l) => JSON.parse(l) as Record<string, unknown>);
+  assert.ok(logged.some((r) => r.method === "thread/start"));
+  assert.ok(logged.some((r) => r.method === "turn/interrupt" && r.threadId === "thread-codex-created-9" && r.turnId === "turn-codex-1"));
 });

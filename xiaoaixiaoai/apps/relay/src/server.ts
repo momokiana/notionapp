@@ -182,13 +182,14 @@ export class Relay {
       (a?.targets.length
         ? makeLlm({ targets: a.targets, firstByteMs: a.firstByteMs, log: (m) => this.events.record({ kind: "model", level: /fail|error|refus/i.test(m) ? "warn" : "info", msg: m }) })
         : undefined);
+    const hasVoice = Boolean(opts.live && (opts.live.provider === "local" || opts.live.apiKey));
     this.assistant = new Assistant({
       store: this.store,
       llm,
       model: opts.llm ? "test" : a?.targets[0]?.model,
       name: a?.name,
       persona: a?.persona,
-      voice: !!opts.live?.apiKey,
+      voice: hasVoice,
       confirm: opts.assistantConfirm,
       ...opts.assistantTiming,
       host: {
@@ -694,7 +695,13 @@ export class Relay {
         confirm: this.assistant.confirmMode(),
         busy: this.assistant.state().busy,
       },
-      voice: live?.apiKey ? { provider: live.provider ?? "moss-live", model: live.model, endpoint: hostOf(live.url) } : null,
+      voice: live
+        ? live.provider === "local"
+          ? { provider: "local", model: live.model, endpoint: "local-host" }
+          : live.apiKey
+            ? { provider: live.provider ?? "moss-live", model: live.model, endpoint: hostOf(live.url) }
+            : null
+        : null,
       last24h: { warn: trouble.filter((e) => e.level === "warn").length, error: trouble.filter((e) => e.level === "error").length },
       actions: this.assistant
         .state()
@@ -807,7 +814,8 @@ export class Relay {
       return;
     }
     const live = this.opts.live;
-    if (!live?.apiKey) {
+    const voiceEnabled = Boolean(live && (live.provider === "local" || live.apiKey));
+    if (!live || !voiceEnabled) {
       socket.end("HTTP/1.1 503 Service Unavailable\r\n\r\n");
       return;
     }

@@ -52,7 +52,7 @@ function readConfig(config) {
     ids.add(pair.sessionId);
   }
   return {
-    socketPath: config.socketPath, workspaceIds, all, profileSend, resumeExisting,
+    socketPath: config.socketPath, workspaceIds, all, enableSend, profileSend, resumeExisting,
     observeSends: enableSend && (profileSend || allow.size > 0),
     canWrite: (projectId, sessionId) => enableSend && (profileSend ? projectId !== ARCHIVE : allow.get(projectId)?.has(sessionId) === true),
   };
@@ -709,6 +709,120 @@ async function answer(ctx, foreground, config, taskEvents, request, signal) {
   return { accepted: true, requestId };
 }
 
+async function createSession(ctx, config, taskEvents, request, signal) {
+  const input = await readJson(request, signal);
+  if (!hasOnly(input, ["projectId", "cwd", "task", "requestId"])) throw new HttpFault(400, "invalid_request");
+  const projectId = input.projectId;
+  const rawCwd = input.cwd;
+  const rawTask = input.task;
+  const rawReqId = input.requestId;
+  if (projectId !== undefined && (!isId(projectId) || synthetic(projectId))) throw new HttpFault(400, "invalid_request");
+  if (rawCwd !== undefined && (typeof rawCwd !== "string" || !rawCwd.trim() || rawCwd.length > 4096 || !rawCwd.isWellFormed() || rawCwd.includes("\0"))) {
+    throw new HttpFault(400, "invalid_request");
+  }
+  if (rawTask !== undefined && (typeof rawTask !== "string" || rawTask.length > 4000 || !rawTask.isWellFormed() || rawTask.includes("\0"))) {
+    throw new HttpFault(400, "invalid_request");
+  }
+  if (rawReqId !== undefined && !isRequestId(rawReqId)) throw new HttpFault(400, "invalid_request");
+  const canCreate = config.enableSend && (config.profileSend || (projectId !== undefined && config.workspaceIds.includes(projectId)));
+  if (!canCreate) throw new HttpFault(403, "not_allowed");
+  if (typeof ctx.sessionController?.create !== "function") throw new HttpFault(501, "unsupported");
+
+  const registry = ctx.workspaceRegistry;
+  if (projectId !== undefined) {
+    const ws = workspaceFor(registry, projectId);
+    if (!ws) throw new HttpFault(404, "target_not_found");
+  }
+  const createArgs = {};
+  if (projectId !== undefined) createArgs.workspaceId = projectId;
+  if (rawCwd !== undefined && rawCwd.trim()) createArgs.cwd = rawCwd.trim();
+  signal.throwIfAborted();
+
+  let created;
+  try {
+    created = await ctx.sessionController.create(createArgs);
+  } catch {
+    throw new HttpFault(503, "unavailable");
+  }
+  const sessionId = created?.sessionId;
+  if (!isId(sessionId)) throw new HttpFault(503, "unavailable");
+  signal.throwIfAborted();
+
+  let resolvedProjectId = projectId;
+  let projectTitle;
+  if (!resolvedProjectId) {
+    for (const [id, row] of directoryWorkspaces(registry, config)) {
+      if (row.sessionIds.includes(sessionId)) {
+        resolvedProjectId = id;
+        projectTitle = row.project.title;
+        break;
+      }
+    }
+    resolvedProjectId = resolvedProjectId || UNFILED;
+  } else {
+    const ws = workspaceFor(registry, resolvedProjectId);
+    projectTitle = title(ws?.title, `工作区 ${resolvedProjectId}`);
+  }
+
+  const task = typeof rawTask === "string" ? rawTask.trim() : "";
+  if (!task) {
+    return {
+      projectId: resolvedProjectId,
+      ...(projectTitle ? { projectTitle } : {}),
+      sessionId,
+      state: "idle",
+    };
+  }
+
+  const requestId = (rawReqId || randomUUID()).toLowerCase();
+  if (!ctx.agents.get(sessionId) && config.resumeExisting) {
+    try { await ctx.sessionController.resolveAgent(sessionId); } catch {}
+    signal.throwIfAborted();
+  }
+  const agent = ctx.agents.get(sessionId);
+  const tracking = agent ? taskEvents?.track(requestId, agent, agent.session) : undefined;
+  if (tracking) signal.addEventListener("abort", tracking.discard, { once: true });
+  try {
+    const result = await ctx.sessionController.prompt({ sessionId, requestId, mode: "queue", content: [{ type: "text", text: task }] }, signal);
+    if (result?.accepted !== true) throw new Error("No admission receipt");
+    signal.throwIfAborted();
+    tracking?.accept();
+  } catch {
+    tracking?.discard();
+    throw new HttpFault(503, "unavailable");
+  } finally {
+    if (tracking) signal.removeEventListener("abort", tracking.discard);
+  }
+  return {
+    projectId: resolvedProjectId,
+    ...(projectTitle ? { projectTitle } : {}),
+    sessionId,
+    state: "running",
+    receiptId: requestId,
+  };
+}
+
+async function cancelSession(ctx, config, request, signal) {
+  const input = await readJson(request, signal);
+  if (!hasOnly(input, ["projectId", "sessionId"]) || Object.keys(input).length !== 2 || !isId(input.projectId) || !isId(input.sessionId)) {
+    throw new HttpFault(400, "invalid_request");
+  }
+  const { projectId, sessionId } = input;
+  const target = writeTarget(ctx, config, projectId, sessionId);
+  if (typeof ctx.sessionController?.cancel !== "function") throw new HttpFault(501, "unsupported");
+  if (!target.agent && target.session === undefined) {
+    return { interrupted: false };
+  }
+  signal.throwIfAborted();
+  let result;
+  try {
+    result = await ctx.sessionController.cancel({ sessionId });
+  } catch {
+    throw new HttpFault(503, "unavailable");
+  }
+  return { interrupted: result?.accepted === true };
+}
+
 export default {
   name: "xiaoaixiaoai-dsh-bridge",
   inject: ["workspaceRegistry", "sessionController", "agents"],
@@ -820,6 +934,14 @@ export default {
           if (request.method !== "POST") throw new HttpFault(405, "method_not_allowed");
           if (!hasOnly(await readJson(request, signal), [])) throw new HttpFault(400, "invalid_request");
           return { events: taskEvents?.read() ?? [] };
+        }
+        if (request.url === "/v5/create") {
+          if (request.method !== "POST") throw new HttpFault(405, "method_not_allowed");
+          return createSession(ctx, config, taskEvents, request, signal);
+        }
+        if (request.url === "/v5/cancel") {
+          if (request.method !== "POST") throw new HttpFault(405, "method_not_allowed");
+          return cancelSession(ctx, config, request, signal);
         }
         throw new HttpFault(404, "route_not_found");
       });

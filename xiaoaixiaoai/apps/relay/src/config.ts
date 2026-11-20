@@ -263,6 +263,19 @@ function voiceSetup(e: (n: string) => string | undefined, file: FileConfig, out:
     return;
   }
   const num = (v: string | number | undefined) => (v === undefined || v === "" ? undefined : Number(v));
+  if (provider === "local") {
+    const v = (name: string) => e(`POCKET_VOICE_${name}`);
+    const speed = num(v("SPEED") ?? fv.speed);
+    const hostId = v("HOST");
+    out.live = {
+      provider: "local",
+      model: v("MODEL") ?? fv.model ?? "aemeath-v2proplus",
+      ...(speed && speed > 0 ? { speed } : { speed: 1.0 }),
+      ...(hostId ? { hostId } : {}),
+    };
+    out.summary.voice = "local";
+    return;
+  }
   if (provider === "moss-live") {
     // POCKET_MOSS_* are the older names of the same settings.
     const v = (name: string) => e(`POCKET_VOICE_${name}`) ?? e(`POCKET_MOSS_${name}`);

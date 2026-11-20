@@ -35,7 +35,7 @@ export const TEXT_PRESETS: Record<string, TextPreset> = {
   ollama: { label: "Ollama (local)", protocol: "openai", baseUrl: "http://localhost:11434/v1", keyless: true },
 };
 
-export const VOICE_PROVIDERS = ["moss-live", "openai-realtime"] as const;
+export const VOICE_PROVIDERS = ["moss-live", "openai-realtime", "local"] as const;
 export type VoiceProvider = (typeof VOICE_PROVIDERS)[number];
 
 export const MOSS_DEFAULTS = { url: "wss://api.mosi.cn/v1/realtime", model: "moss-live-1.0", speed: 1.1 };

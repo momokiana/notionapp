@@ -740,3 +740,45 @@ test("POST /v4/answer coordinates desktop vs mobile NO_PROVIDER waterfall and ba
   assert.equal(bgAns.status, 200, JSON.stringify(bgAns.body));
   assert.deepEqual(answeredCalls, [{ callId: "cont-bg-1", clean: { answers: [{ id: "q1", selected: ["确认"] }] } }]);
 });
+
+fixtureTest("/v5/create and /v5/cancel create sessions and interrupt active agents through RuntimeSessions", async (t) => {
+  const { DshRuntime, RuntimeSessions } = await import("../src/runtime-sessions.ts");
+  const f = await setup(t, { workspaceScope: "all" });
+  const createdCalls: Array<Record<string, unknown>> = [];
+  const cancelledCalls: Array<Record<string, unknown>> = [];
+  (f.ctx.sessionController as Record<string, unknown>).create = async (params: Record<string, unknown>) => {
+    createdCalls.push(params);
+    const id = `created-${createdCalls.length}`;
+    const ws = f.workspaces.get("second")!;
+    ws.sessionIds = [...ws.sessionIds, id];
+    f.items.push(summary(id, "New DSH session"));
+    f.live.set(id, agent(id, "idle"));
+    return { sessionId: id };
+  };
+  (f.ctx.sessionController as Record<string, unknown>).cancel = async (params: Record<string, unknown>) => {
+    cancelledCalls.push(params);
+    return { accepted: true };
+  };
+  delete (f.config as Record<string, unknown>).sendAllowlist;
+  await f.start({ enableSend: true, sendScope: "profile" });
+
+  const rs = new RuntimeSessions("viewer", { dsh: new DshRuntime(f.socketPath) }, join(f.dir, "dispatch"), { publishAgents: true });
+  t.after(() => rs.close());
+  assert.equal(rs.hasCreate, true);
+
+  const opts = await rs.createOptions();
+  assert.equal(opts.launchers[0]?.id, "dsh");
+  assert.ok(opts.spaces.some((s) => s.id === "second"));
+
+  const created = await rs.createSession({ runtime: "dsh", projectId: "second", task: "启动后开始巡检" });
+  assert.equal(created.sessionId, "created-1");
+  assert.equal(created.projectId, "second");
+  assert.equal(created.state, "running");
+  assert.deepEqual(createdCalls, [{ workspaceId: "second" }]);
+  assert.equal(f.prompts.at(-1)?.sessionId, "created-1");
+  assert.equal(f.prompts.at(-1)?.content[0]?.text, "启动后开始巡检");
+
+  const interrupted = await rs.interrupt({ runtime: "dsh", projectId: "second", sessionId: "live" });
+  assert.deepEqual(interrupted, { interrupted: true });
+  assert.deepEqual(cancelledCalls, [{ sessionId: "live" }]);
+});

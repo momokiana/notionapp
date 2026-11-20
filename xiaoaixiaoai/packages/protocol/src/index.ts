@@ -47,7 +47,7 @@ export interface Device {
 /** Where the agent lives on its host. */
 export type AgentSource = "hc" | "herdr" | "uniflo" | "runtime";
 /** Metadata and operations for explicitly shared runtime sessions, not terminal Agents. */
-export type HostSource = AgentSource | "runtime-sessions" | "dsh-directory" | "runtime-detail";
+export type HostSource = AgentSource | "runtime-sessions" | "runtime-create" | "dsh-directory" | "runtime-detail" | "local-voice";
 
 export const RUNTIME_TASK_EVENTS_LIMIT = 128;
 export const RUNTIME_TASK_EVENT_KINDS = ["progress", "attention", "completed", "stopped"] as const;
@@ -650,6 +650,17 @@ export interface RpcMethods {
    * `unsupported`.
    */
   "harness.icons": { params: { ids: string[] }; result: { icons: Record<string, string> } };
+  "voice.warmup": { params: {}; result: { ready: boolean } };
+  "voice.transcribe": {
+    params: { requestId: string; audioBase64: string; sampleRate: number };
+    result: { text: string; cancelled?: boolean };
+  };
+  "voice.synthesize": {
+    params: { requestId: string; text: string; speed?: number };
+    result: { sampleRate: number; chunksBase64: string[]; cancelled?: boolean };
+  };
+  "voice.cancel": { params: { requestId?: string }; result: { cancelled: boolean } };
+  "voice.release": { params: {}; result: { released: boolean } };
 }
 
 export const HARNESS_ICON_MAX = 40;

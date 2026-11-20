@@ -209,8 +209,46 @@ test("runtime bridge helpers encode targets, convert events cleanly, and parse a
   assert.equal(extractSearchHit({ runtime: "codex", projectId: "cx-1", projectTitle: "gamesuperagent", session: { id: "c2", title: "计划", state: "idle", canSend: true, updatedAt: 9000 }, sendConfigured: true }, undefined, q), null);
 
   const cfgPath = join(dir, "runtime.json");
-  writeFileSync(cfgPath, JSON.stringify({ viewerId: "v1", antigravity: { brainDir: dir }, publishAgents: true, allowAssistant: true }), { mode: 0o600 });
+  const mockAgy = join(dir, "agy.mjs");
+  writeFileSync(mockAgy, "// mock");
+  writeFileSync(cfgPath, JSON.stringify({ viewerId: "v1", antigravity: { brainDir: dir, agyBin: mockAgy, enableSend: true }, publishAgents: true, allowAssistant: true }), { mode: 0o600 });
   const loaded = loadRuntimeSessions(cfgPath)!;
   assert.equal(loaded.publishAgents, true);
   assert.equal(loaded.allowAssistant, true);
+
+  let agSendCalls = 0;
+  let agAnswerCalls = 0;
+  const writableAg: RuntimeAdapter = {
+    sendEnabled: true,
+    list: async () => [{ runtime: "antigravity", id: "ag-p1", title: "AG 工程", sessions: [{ id: "ag-s1", title: "AG 可写", state: "attention", canSend: true }] }],
+    browse: async () => ({
+      runtime: "antigravity",
+      view: "sessions",
+      scope: "profile",
+      entries: [{ runtime: "antigravity", project: { runtime: "antigravity", id: "ag-p1", title: "AG 工程" }, session: { id: "ag-s1", title: "AG 可写", state: "attention", canSend: true }, archived: false }],
+    }),
+    detail: async () => ({
+      runtime: "antigravity",
+      project: { id: "ag-p1", title: "AG 工程" },
+      session: { id: "ag-s1", title: "AG 可写", state: "attention", canSend: true },
+      messages: [{ id: "a1", role: "user", text: "hi" }],
+      pendingQuestions: [{ callId: "ag-call-1", state: "open", questions: [{ id: "q1", question: "选项" }] }],
+    }),
+    send: async (arg) => { agSendCalls++; return receipt(arg.requestId); },
+    answer: async (arg) => { agAnswerCalls++; return receipt(arg.requestId); },
+  };
+  const rsWritable = new RuntimeSessions("viewer", { antigravity: writableAg }, join(dir, "dispatch-writable"));
+  const writableBrowse = await rsWritable.browse({ runtime: "antigravity", view: "sessions" });
+  assert.equal(writableBrowse.view, "sessions");
+  assert.equal(writableBrowse.entries[0]!.session.canSend, true);
+  const writableDetail = await rsWritable.detail({ runtime: "antigravity", projectId: "ag-p1", sessionId: "ag-s1" });
+  assert.equal(writableDetail.session.canSend, true);
+  assert.equal(writableDetail.pendingQuestions[0]!.state, "open");
+  const sendReq = randomUUID();
+  assert.deepEqual(await rsWritable.send({ runtime: "antigravity", projectId: "ag-p1", sessionId: "ag-s1", requestId: sendReq, input: "继续" }), receipt(sendReq));
+  assert.deepEqual(await rsWritable.send({ runtime: "antigravity", projectId: "ag-p1", sessionId: "ag-s1", requestId: sendReq, input: "继续" }), receipt(sendReq));
+  assert.equal(agSendCalls, 1);
+  const ansReq = randomUUID();
+  assert.deepEqual(await rsWritable.answer({ runtime: "antigravity", projectId: "ag-p1", sessionId: "ag-s1", requestId: ansReq, callId: "ag-call-1", answers: [{ id: "q1", selected: ["x"] }] }), receipt(ansReq));
+  assert.equal(agAnswerCalls, 1);
 });

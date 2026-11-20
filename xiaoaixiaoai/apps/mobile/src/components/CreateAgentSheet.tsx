@@ -72,7 +72,11 @@ export function CreateAgentSheet({ visible, onDismiss, target, hosts }: { visibl
   const p = usePalette();
   const insets = useSafeAreaInsets();
   const online = hosts.filter((h) => h.online);
-  const pickHost = () => (target.host && hosts.some((h) => h.id === target.host) ? target.host : online.length === 1 ? online[0]!.id : online[0]?.id ?? null);
+  const pickHost = () => {
+    if (target.host && hosts.some((h) => h.id === target.host)) return target.host;
+    const creatable = online.find((h) => h.sources?.includes("hc") || h.sources?.includes("runtime-create"));
+    return creatable?.id ?? online[0]?.id ?? null;
+  };
   const [host, setHost] = useState<string | null>(pickHost);
   const [spaceId, setSpaceId] = useState<string>(NEW);
   const [spaceName, setSpaceName] = useState("");
@@ -115,9 +119,11 @@ export function CreateAgentSheet({ visible, onDismiss, target, hosts }: { visibl
   }, [q.data, visible, target.spaceName]);
 
   const d = q.data;
+  const selectedHost = hosts.find((h) => h.id === host);
+  const isRuntimeHost = !!(selectedHost?.sources?.includes("runtime-create") && !selectedHost?.sources?.includes("hc"));
   // A computer without the desktop herdr (Windows): no spaces, just a terminal in a folder.
   const standalone = !!d?.standalone;
-  const isNew = spaceId === NEW && !standalone;
+  const isNew = spaceId === NEW && !standalone && !isRuntimeHost;
   const chosenSpace = d?.spaces.find((s) => s.id === spaceId);
   const launch = d?.launchers.find((l) => l.id === launcher);
   // Programs that can't take a task at start get it typed in once they're up, where the computer does that.
@@ -141,7 +147,7 @@ export function CreateAgentSheet({ visible, onDismiss, target, hosts }: { visibl
         host,
         "agent.create",
         {
-          ...(standalone ? {} : isNew ? { spaceName: spaceName.trim() || undefined } : { space: spaceId }),
+          ...(standalone ? {} : spaceId !== NEW ? { space: spaceId } : isRuntimeHost ? {} : { spaceName: spaceName.trim() || undefined }),
           folder: folder.trim() || undefined,
           launcher,
           task: first,
@@ -171,7 +177,7 @@ export function CreateAgentSheet({ visible, onDismiss, target, hosts }: { visibl
             <View style={{ width: 40, height: 5, borderRadius: 3, backgroundColor: p.divider }} />
           </View>
           <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: space.lg, paddingTop: space.sm }}>
-            <Text style={{ flex: 1, fontFamily: fonts.cute, fontSize: 22, lineHeight: 30, color: p.ink }}>{standalone ? "新建 agent" : isNew ? "新建空间" : "在这里新建 agent"}</Text>
+            <Text style={{ flex: 1, fontFamily: fonts.cute, fontSize: 22, lineHeight: 30, color: p.ink }}>{isRuntimeHost ? "新建会话" : standalone ? "新建 agent" : isNew ? "新建空间" : "在这里新建 agent"}</Text>
             <Pressable accessibilityRole="button" accessibilityLabel="关闭" onPress={onDismiss} hitSlop={8} style={{ width: 40, height: 40, alignItems: "center", justifyContent: "center" }}>
               <MaterialCommunityIcons name="close" size={22} color={p.muted} />
             </Pressable>
@@ -209,12 +215,12 @@ export function CreateAgentSheet({ visible, onDismiss, target, hosts }: { visibl
                   </View>
                 ) : null}
 
-                {standalone ? null : (
-                  <Field title="空间">
+                {standalone || (isRuntimeHost && !d.spaces.length) ? null : (
+                  <Field title={isRuntimeHost ? "工作区 / 项目" : "空间"}>
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}>
-                      <Chip on={isNew} onPress={() => { setSpaceId(NEW); setFolder(""); }} label="新建空间" lead={<MaterialCommunityIcons name="plus" size={18} color={p.ink} style={{ marginLeft: 4 }} />} />
+                      <Chip on={spaceId === NEW} onPress={() => { setSpaceId(NEW); setFolder(""); }} label={isRuntimeHost ? "默认位置" : "新建空间"} lead={<MaterialCommunityIcons name="plus" size={18} color={p.ink} style={{ marginLeft: 4 }} />} />
                       {d.spaces.map((s) => (
-                        <Chip key={s.id} on={spaceId === s.id} onPress={() => { setSpaceId(s.id); setFolder(s.folder ?? ""); }} label={s.name} lead={<SpaceBadge name={s.name} size={26} />} a11y={`空间 ${s.name}`} />
+                        <Chip key={s.id} on={spaceId === s.id} onPress={() => { setSpaceId(s.id); setFolder(s.folder ?? ""); }} label={s.name} lead={<SpaceBadge name={s.name} size={26} />} a11y={`${isRuntimeHost ? "项目" : "空间"} ${s.name}`} />
                       ))}
                     </View>
                   </Field>
@@ -282,10 +288,16 @@ export function CreateAgentSheet({ visible, onDismiss, target, hosts }: { visibl
 
           <View style={{ paddingHorizontal: space.lg, paddingTop: space.sm, paddingBottom: insets.bottom + space.md, gap: space.xs, borderTopWidth: 1, borderTopColor: p.divider }}>
             <Text style={{ color: p.faint, fontSize: 12, textAlign: "center" }}>
-              {busy && takesTask && task.trim() && !launch?.takesTask ? "等它启动好再把第一句话打进去，可能要半分钟到一分钟" : standalone ? "建好后，在电脑上用 hc attach 可以接手它" : "建好后，电脑上的 herdr 会自动切到这个空间"}
+              {busy && takesTask && task.trim() && !launch?.takesTask
+                ? "等它启动好再把第一句话打进去，可能要半分钟到一分钟"
+                : isRuntimeHost
+                  ? "建好后会自动同步到会话列表，并可在电脑端对应工具中继续查看"
+                  : standalone
+                    ? "建好后，在电脑上用 hc attach 可以接手它"
+                    : "建好后，电脑上的 herdr 会自动切到这个空间"}
             </Text>
             <Button mode="contained" disabled={!canSubmit} loading={busy} onPress={submit} contentStyle={{ height: 50 }} style={{ borderRadius: radius.pill }} labelStyle={{ fontSize: 16 }}>
-              {isNew ? "新建空间并启动" : "新建 agent"}
+              {isNew ? "新建空间并启动" : isRuntimeHost ? "新建会话" : "新建 agent"}
             </Button>
           </View>
         </View>

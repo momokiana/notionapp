@@ -771,6 +771,21 @@ export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: 
     else if (mode === "terminal") setToast(r.message);
   }
 
+  async function interrupt() {
+    if (!online || sending) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined);
+    setSending(true);
+    try {
+      const r = await call(agent.deviceId, "terminal.interrupt", { agent: agent.key });
+      if (r.report) setToast(r.report);
+      refreshSoon();
+    } catch (e) {
+      setToast((e as Error).message);
+    } finally {
+      setSending(false);
+    }
+  }
+
   const keyStyle = { borderRadius: radius.pill, minHeight: 40, minWidth: 48, paddingHorizontal: 14, alignItems: "center" as const, justifyContent: "center" as const };
   const padOpen = mode === "terminal" && pad && online && !boxOnly;
   const closePad = useCallback(() => setPad(false), []);
@@ -969,6 +984,11 @@ export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: 
               </>
             ) : null}
             <View style={{ flex: 1 }} />
+            {agent.status === "working" ? (
+              <Button mode="outlined" compact disabled={!online || sending} loading={sending} onPress={interrupt} style={{ borderRadius: radius.pill, borderColor: p.error }} textColor={p.error}>
+                停止
+              </Button>
+            ) : null}
             <SendPill disabled={(!text.trim() && !pictures.length) || !online} onPress={send} />
           </View>
         ) : (
@@ -988,11 +1008,16 @@ export function Composer({ agent, bottomInset, mode, onOpenTerminal }: { agent: 
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "center",
-            gap: 6,
+            gap: 8,
           }}
         >
           <MaterialCommunityIcons name="eye-outline" size={16} color={p.muted} />
-          <Text style={{ color: p.muted, fontSize: 12.5 }}>{effectiveReadOnlyReason ?? "当前会话仅支持查看消息记录"}</Text>
+          <Text style={{ flex: 1, color: p.muted, fontSize: 12.5 }}>{effectiveReadOnlyReason ?? "当前会话仅支持查看消息记录"}</Text>
+          {agent.status === "working" ? (
+            <Button mode="outlined" compact disabled={!online || sending} loading={sending} onPress={interrupt} style={{ borderRadius: radius.pill, borderColor: p.error }} textColor={p.error}>
+              停止
+            </Button>
+          ) : null}
         </View>
       ) : null}
       <KeyLayoutDialog visible={tuning} onDismiss={() => setTuning(false)} />
