@@ -95,6 +95,12 @@ const SLOW_MS = 8_000;
 
 export class LlmError extends Error {}
 
+/** Drops raw tool-call markup (e.g. DeepSeek `<｜｜DSML｜｜ calls>…`) that a model printed as text. */
+export function stripToolMarkup(text: string): string {
+  const at = text.search(/<[|\uFF5C]+\s*DSML\s*[|\uFF5C]+/);
+  return at < 0 ? text : text.slice(0, at).trimEnd();
+}
+
 export function makeLlm(cfg: LlmConfig): Llm {
   const gpt = makeGptLoginDriver();
   const withLogin = cfg.targets.some((t) => t.protocol === "pi-openai-oauth");
@@ -167,6 +173,10 @@ async function once(t: HttpLlmTarget, cfg: LlmConfig, req: LlmRequest): Promise<
     }
     const events = sse(res.body as unknown as AsyncIterable<Uint8Array>);
     const r = anthropic ? await readAnthropic(events, t, req, stream) : await readOpenai(events, t, req, stream);
+    // Some models (DeepSeek) leak raw tool-call markup as text when called without tools; it is never an answer.
+    r.content = r.content
+      .map((b) => (b.type === "text" ? { ...b, text: stripToolMarkup(b.text) } : b))
+      .filter((b) => b.type !== "text" || b.text.trim().length > 0);
     if (!gotContent || r.content.length === 0) {
       const suffix = r.stopReason === "max_tokens" ? " (exhausted max_tokens)" : "";
       throw new LlmError(`${label}: empty answer${suffix}`);

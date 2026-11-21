@@ -175,3 +175,10 @@ test("fallback: a provider that stays silent past the first-token limit is skipp
   assert.deepEqual(okThink.content, [{ type: "text", text: "到了" }]);
   await assert.rejects(makeLlm({ targets: [t("slow", "/slow"), t("empty", "/empty")], firstByteMs: 150 })({ system: "s", messages: [{ role: "user", content: "hi" }], tools: [] }), { message: "empty:m: empty answer" });
 });
+
+test("stripToolMarkup drops leaked DeepSeek DSML tool-call text and keeps real answers", async () => {
+  const { stripToolMarkup } = await import("../src/assistant/llm.ts");
+  assert.equal(stripToolMarkup("<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"read_agent\">"), "");
+  assert.equal(stripToolMarkup("我先看看。\n<｜DSML｜ calls>x"), "我先看看。");
+  assert.equal(stripToolMarkup("成了\n哥哥，跑完啦。"), "成了\n哥哥，跑完啦。");
+});
