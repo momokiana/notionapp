@@ -293,6 +293,12 @@ export class Assistant {
     return this.reminders.filter((r) => r.agent === agentKey).length;
   }
 
+  /** Hot-swaps the active text LLM chain and primary model name without restarting the relay. */
+  setModelRuntime(llm: Llm | undefined, model?: string): void {
+    this.llm = llm;
+    this.opts.model = model;
+  }
+
   /** Normal chat reply mode: voice (dual-track) by default when local chatVoice is enabled on the relay. */
   replyMode(): AssistantReplyMode {
     const saved = this.store.getSetting<AssistantReplyMode>(SETTING_REPLY_MODE);

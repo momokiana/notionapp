@@ -231,19 +231,52 @@ export function adminPage(): string {
         </section>
 
         <section id="view-models" class="tab-view" hidden>
-          <div class="split-2">
-            <div class="card">
-              <h2><span>文字模型链与连通测速</span><button class="sm" id="probeBtn">一键测速</button></h2>
-              <div id="modelList" style="display:grid;gap:8px"></div>
+          <div class="card">
+            <h2>
+              <span>文字模型服务商 <span class="muted" id="modelRevLine" style="font-size:12px;font-weight:400"></span></span>
+              <span class="row-wrap">
+                <button class="ghost sm" id="resetModelsBtn" hidden>恢复服务器默认</button>
+                <button class="sm" id="addProviderBtn">+ 新增服务商</button>
+              </span>
+            </h2>
+            <div class="agent-grid" id="providerGrid" style="grid-template-columns:repeat(auto-fill, minmax(280px, 1fr))"></div>
+            <div id="fetchedModelsBar" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)" hidden>
+              <div class="row-wrap" style="margin-bottom:8px;justify-content:space-between">
+                <span class="muted" id="fetchedModelsTitle" style="font-size:12px">已拉取模型（点击自动填入下方顺位输入框）</span>
+                <button class="ghost sm" id="closeFetchedBtn">收起</button>
+              </div>
+              <div class="chips-bar" id="fetchedModelsList" style="margin-bottom:0"></div>
             </div>
+          </div>
+
+          <div class="card">
+            <h2>
+              <span>模型顺位与实时测速 <span class="muted" style="font-size:12px;font-weight:400">首位为主模型，改完即刻热切换</span></span>
+              <span class="row-wrap">
+                <span id="modelMsg" class="muted" style="font-size:12px"></span>
+                <button class="sm" id="probeBtn">全部测速</button>
+              </span>
+            </h2>
+            <div class="scroll" style="max-height:340px;margin-bottom:12px">
+              <table id="modelOrderTable"><thead><tr><th>顺位</th><th>模型与服务商</th><th>测速指标</th><th>调整</th></tr></thead><tbody></tbody></table>
+            </div>
+            <div class="row-wrap">
+              <select id="addModelProvider"></select>
+              <input id="addModelId" placeholder="输入模型 ID，比如 deepseek-chat / claude-sonnet-4-6" style="flex:1;min-width:220px">
+              <label class="muted" style="font-size:12.5px"><input type="checkbox" id="addModelPrimary"> 设为主模型</label>
+              <button id="addModelBtn">+ 加入顺位</button>
+            </div>
+          </div>
+
+          <div class="split-2">
             <div class="card">
               <h2><span>实时语音与助理策略</span></h2>
               <div id="voicePanel" style="display:grid;gap:10px"></div>
             </div>
-          </div>
-          <div class="card">
-            <h2><span>助理最近操作（30 条）</span></h2>
-            <div class="scroll"><table id="actions"><thead><tr><th>时间</th><th>类型</th><th>状态</th><th>内容</th><th>结果</th></tr></thead><tbody></tbody></table></div>
+            <div class="card">
+              <h2><span>助理最近操作（30 条）</span></h2>
+              <div class="scroll" style="max-height:300px"><table id="actions"><thead><tr><th>时间</th><th>类型</th><th>状态</th><th>内容</th><th>结果</th></tr></thead><tbody></tbody></table></div>
+            </div>
           </div>
         </section>
 
@@ -336,6 +369,28 @@ export function adminPage(): string {
   </div>
 </div>
 
+<div class="modal-bg" id="providerModal" hidden>
+  <div class="modal" style="width:min(520px,100%)">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <b id="pvTitle">新增服务商</b>
+      <button class="ghost sm" id="pvCloseBtn">关闭</button>
+    </div>
+    <div class="field-grid">
+      <label id="pvPresetWrap">快速填入官方预设<select id="pvPreset"></select></label>
+      <label>服务商 ID（小写字母/数字/-）<input id="pvId" placeholder="如 deepseek / mimo / custom"></label>
+      <label>显示名称<input id="pvLabel" placeholder="可选，比如 小米 MiMo"></label>
+      <label>接口协议<select id="pvProtocol"><option value="openai">OpenAI 兼容（/chat/completions）</option><option value="anthropic">Anthropic（/v1/messages）</option></select></label>
+      <label>Base URL<input id="pvUrl" placeholder="https://api.deepseek.com"></label>
+      <label>API Key<input id="pvKey" type="password" autocomplete="off" placeholder="新增必填；编辑留空则保留原密钥"></label>
+    </div>
+    <p class="error-line" id="pvError" style="margin:0"></p>
+    <div class="row-wrap" style="justify-content:flex-end">
+      <button class="ghost sm" id="pvCancelBtn">取消</button>
+      <button id="pvSaveBtn">保存服务商</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (() => {
   const KEY = "xiaoaixiaoai-admin";
@@ -417,6 +472,7 @@ export function adminPage(): string {
     window.scrollTo(0, 0);
     if (tab === "logs") loadLogs().catch(() => {});
     else if (tab === "data") loadDataTab().catch(() => {});
+    else if (tab === "models") loadModelsConfig().catch(() => {});
   }
 
   for (const b of document.querySelectorAll("[data-tab]")) b.onclick = () => switchTab(b.dataset.tab);
@@ -471,11 +527,6 @@ export function adminPage(): string {
         }
       };
     }
-
-    const targets = o.assistant?.models || [];
-    $("modelList").innerHTML = targets.length
-      ? targets.map((m, idx) => '<div class="probe-row"><div><b>' + (idx === 0 ? "主模型" : "备用 " + idx) + '</b> <span class="mono">' + esc(m) + '</span><div class="muted" style="font-size:12px">' + esc(o.assistant.endpoint || "local") + '</div></div><span class="pill" data-probe-badge="' + idx + '">未测速</span></div>').join("")
-      : '<p class="muted">尚未配置文字模型</p>';
 
     $("voicePanel").innerHTML =
       '<div class="probe-row"><div><b>回复播报模式</b><div class="muted" style="font-size:12px">当前：' + (o.assistant.replyMode === "voice" ? "双轨语音播报" : "纯文字") + '</div></div><button class="ghost sm" id="toggleReplyBtn">切到' + (o.assistant.replyMode === "voice" ? "纯文字" : "双轨语音") + '</button></div>' +
@@ -591,11 +642,165 @@ export function adminPage(): string {
     $("pairResult").textContent = "配对码: " + out.code + " · 链接: " + out.link;
   };
 
-  $("probeBtn").onclick = async () => {
-    $("probeBtn").disabled = true;
-    $("probeBtn").textContent = "测速中…";
+  let lastModels = null;
+
+  function flashModelMsg(txt) {
+    $("modelMsg").textContent = txt;
+    setTimeout(() => { if ($("modelMsg").textContent === txt) $("modelMsg").textContent = ""; }, 2600);
+  }
+
+  function renderModelsConfig(cfg) {
+    lastModels = cfg;
+    $("resetModelsBtn").hidden = !cfg.modified;
+    $("modelRevLine").textContent = cfg.modified
+      ? ("已修改 · rev " + cfg.rev + (cfg.updatedAt ? (" · " + ago(cfg.updatedAt)) : "") + (cfg.updatedBy ? (" · " + cfg.updatedBy) : ""))
+      : "当前使用服务器预设";
+
+    $("providerGrid").innerHTML = (cfg.providers || []).map((p) => {
+      const srcLabel = p.source === "server" ? (p.overridden ? "预设已覆盖" : "服务器预设") : "控制台新增";
+      const protoLabel = p.protocol === "anthropic" ? "Anthropic" : p.protocol === "openai" ? "OpenAI 兼容" : "GPT OAuth";
+      const revertBtn = !p.readOnly && (p.overridden || p.source === "console")
+        ? '<button class="ghost sm" data-pv-del="' + esc(p.id) + '">' + (p.source === "server" ? "还原" : "删除") + "</button>"
+        : "";
+      return '<div class="agent-card">' +
+        '<div class="agent-top"><div><div class="agent-title">' + esc(p.id) + ' <span class="pill">' + esc(protoLabel) + '</span></div><div class="agent-meta mono">' + esc(p.baseUrl) + '</div></div>' +
+        '<span class="pill ' + (p.hasKey ? "on" : "warn") + '">' + esc(p.maskedKey || "无密钥") + '</span></div>' +
+        '<div class="row-wrap" style="justify-content:space-between">' +
+          '<span class="muted" style="font-size:12px">来源：' + esc(srcLabel) + "</span>" +
+          '<span class="row-wrap">' +
+            (p.readOnly ? "" : '<button class="ghost sm" data-pv-edit="' + esc(p.id) + '">编辑</button>') +
+            (p.readOnly ? "" : '<button class="ghost sm" data-pv-fetch="' + esc(p.id) + '">拉取模型</button>') +
+            revertBtn +
+          "</span></div></div>";
+    }).join("") || '<p class="muted">暂无服务商，点右上角“+ 新增服务商”即可添加</p>';
+
+    for (const b of document.querySelectorAll("[data-pv-edit]")) {
+      b.onclick = () => {
+        const p = (lastModels.providers || []).find((x) => x.id === b.dataset.pvEdit);
+        if (p) openProviderModal(p);
+      };
+    }
+    for (const b of document.querySelectorAll("[data-pv-fetch]")) {
+      b.onclick = async () => {
+        const id = b.dataset.pvFetch;
+        b.disabled = true;
+        b.textContent = "拉取中…";
+        try {
+          const res = await api("/v1/admin/models/fetch", { method: "POST", body: JSON.stringify({ provider: id }) });
+          $("fetchedModelsBar").hidden = false;
+          const list = res.models || [];
+          $("fetchedModelsTitle").textContent = id + " 可用模型（共 " + list.length + " 个，点选自动填入下方）" + (res.note ? (" · " + res.note) : "");
+          $("fetchedModelsList").innerHTML = list.length
+            ? list.slice(0, 80).map((m) => '<button class="chip-btn" data-pick-pv="' + esc(id) + '" data-pick-md="' + esc(m) + '">' + esc(m) + "</button>").join("")
+            : '<span class="muted">接口返回空列表，请在下方直接输入模型 ID</span>';
+          for (const chip of document.querySelectorAll("[data-pick-md]")) {
+            chip.onclick = () => {
+              $("addModelProvider").value = chip.dataset.pickPv;
+              $("addModelId").value = chip.dataset.pickMd;
+              $("addModelId").focus();
+            };
+          }
+        } catch (e) {
+          alert(e.message);
+        } finally {
+          b.disabled = false;
+          b.textContent = "拉取模型";
+        }
+      };
+    }
+    for (const b of document.querySelectorAll("[data-pv-del]")) {
+      b.onclick = async () => {
+        const id = b.dataset.pvDel;
+        const next = await api("/v1/admin/models/provider/" + encodeURIComponent(id), { method: "DELETE" });
+        renderModelsConfig(next);
+        await loadOverview();
+        flashModelMsg("已更新并生效");
+      };
+    }
+
+    const sel = $("addModelProvider");
+    const keepSel = sel.value;
+    sel.innerHTML = (cfg.providers || []).map((p) => '<option value="' + esc(p.id) + '">' + esc(p.id + " (" + p.label + ")") + "</option>").join("");
+    if ([...sel.options].some((o) => o.value === keepSel)) sel.value = keepSel;
+
+    const order = cfg.order || [];
+    $("modelOrderTable").querySelector("tbody").innerHTML = order.map((item, idx) =>
+      "<tr>" +
+        '<td><span class="pill ' + (idx === 0 ? "pink" : "") + '">' + (idx === 0 ? "主模型" : ("备用 " + idx)) + "</span></td>" +
+        '<td><b>' + esc(item.model) + '</b><div class="muted" style="font-size:12px">' + esc(item.provider) + " · " + esc(item.protocol) + (item.endpointHost ? (" · " + esc(item.endpointHost)) : "") + "</div></td>" +
+        '<td><span class="pill" data-probe-badge="' + idx + '">尚未测速</span></td>' +
+        '<td><div class="row-wrap">' +
+          (idx > 0 ? '<button class="sm" data-md-primary="' + idx + '">设为主模型</button>' : "") +
+          '<button class="ghost sm" data-md-probe="' + item.index + '">测速</button>' +
+          '<button class="ghost sm" data-md-up="' + idx + '"' + (idx === 0 ? " disabled" : "") + ">↑</button>" +
+          '<button class="ghost sm" data-md-down="' + idx + '"' + (idx === order.length - 1 ? " disabled" : "") + ">↓</button>" +
+          '<button class="ghost sm" data-md-rm="' + idx + '"' + (order.length <= 1 ? " disabled" : "") + ">移除</button>" +
+        "</div></td>" +
+      "</tr>"
+    ).join("") || '<tr><td colspan="4" class="muted">当前没有启用模型，请在下方添加</td></tr>';
+
+    const saveOrder = async (nextItems, tip) => {
+      const payload = nextItems.map((x) => ({ provider: x.provider, model: x.model }));
+      const next = await api("/v1/admin/models/order", { method: "POST", body: JSON.stringify({ order: payload }) });
+      renderModelsConfig(next);
+      await loadOverview();
+      flashModelMsg(tip || "已切换到新顺位");
+    };
+    for (const b of document.querySelectorAll("[data-md-primary]")) {
+      b.onclick = () => {
+        const i = Number(b.dataset.mdPrimary);
+        const next = [...order];
+        const [picked] = next.splice(i, 1);
+        next.unshift(picked);
+        saveOrder(next, "已切换主模型：" + picked.model).catch((e) => alert(e.message));
+      };
+    }
+    for (const b of document.querySelectorAll("[data-md-up]")) {
+      b.onclick = () => {
+        const i = Number(b.dataset.mdUp);
+        if (i <= 0) return;
+        const next = [...order];
+        [next[i - 1], next[i]] = [next[i], next[i - 1]];
+        saveOrder(next).catch((e) => alert(e.message));
+      };
+    }
+    for (const b of document.querySelectorAll("[data-md-down]")) {
+      b.onclick = () => {
+        const i = Number(b.dataset.mdDown);
+        if (i >= order.length - 1) return;
+        const next = [...order];
+        [next[i], next[i + 1]] = [next[i + 1], next[i]];
+        saveOrder(next).catch((e) => alert(e.message));
+      };
+    }
+    for (const b of document.querySelectorAll("[data-md-rm]")) {
+      b.onclick = () => {
+        const i = Number(b.dataset.mdRm);
+        if (order.length <= 1) return;
+        const next = order.filter((_, idx) => idx !== i);
+        saveOrder(next, "已移除").catch((e) => alert(e.message));
+      };
+    }
+    for (const b of document.querySelectorAll("[data-md-probe]")) {
+      b.onclick = () => runProbe(Number(b.dataset.mdProbe), b);
+    }
+  }
+
+  async function loadModelsConfig() {
+    const cfg = await api("/v1/admin/models");
+    renderModelsConfig(cfg);
+  }
+
+  async function runProbe(onlyIndex, btnEl) {
+    const targetBtn = btnEl || $("probeBtn");
+    const origText = targetBtn.textContent;
+    targetBtn.disabled = true;
+    targetBtn.textContent = "测速中…";
     try {
-      const { results } = await api("/v1/admin/probe", { method: "POST", body: "{}" });
+      const { results } = await api("/v1/admin/probe", {
+        method: "POST",
+        body: JSON.stringify(onlyIndex ? { index: onlyIndex } : {}),
+      });
       for (const r of results || []) {
         const badge = document.querySelector('[data-probe-badge="' + (r.index - 1) + '"]');
         if (badge) {
@@ -604,10 +809,86 @@ export function adminPage(): string {
         }
       }
     } finally {
-      $("probeBtn").disabled = false;
-      $("probeBtn").textContent = "一键测速";
+      targetBtn.disabled = false;
+      targetBtn.textContent = origText;
+    }
+  }
+
+  function openProviderModal(existing) {
+    const presets = lastModels?.presets || [];
+    $("pvPreset").innerHTML = '<option value="">选择预设自动填入…</option>' + presets.map((p) => '<option value="' + esc(p.id) + '">' + esc(p.label + " (" + p.id + ")") + "</option>").join("");
+    $("pvPresetWrap").hidden = Boolean(existing);
+    $("pvTitle").textContent = existing ? ("编辑服务商 · " + existing.id) : "新增文字模型服务商";
+    $("pvId").value = existing ? existing.id : "";
+    $("pvId").disabled = Boolean(existing);
+    $("pvLabel").value = existing ? (existing.label || "") : "";
+    $("pvProtocol").value = existing ? (existing.protocol === "anthropic" ? "anthropic" : "openai") : "openai";
+    $("pvUrl").value = existing ? (existing.baseUrl || "") : "";
+    $("pvKey").value = "";
+    $("pvKey").placeholder = existing ? "留空则继续使用原密钥" : "输入服务商 API Key";
+    $("pvError").textContent = "";
+    $("providerModal").hidden = false;
+  }
+
+  $("pvPreset").onchange = () => {
+    const p = (lastModels?.presets || []).find((x) => x.id === $("pvPreset").value);
+    if (!p) return;
+    $("pvId").value = p.id;
+    $("pvLabel").value = p.label;
+    $("pvProtocol").value = p.protocol;
+    $("pvUrl").value = p.baseUrl;
+  };
+  $("addProviderBtn").onclick = () => openProviderModal(null);
+  $("pvCloseBtn").onclick = () => { $("providerModal").hidden = true; };
+  $("pvCancelBtn").onclick = () => { $("providerModal").hidden = true; };
+  $("pvSaveBtn").onclick = async () => {
+    $("pvError").textContent = "";
+    try {
+      const next = await api("/v1/admin/models/provider", {
+        method: "POST",
+        body: JSON.stringify({
+          id: $("pvId").value.trim(),
+          label: $("pvLabel").value.trim() || undefined,
+          protocol: $("pvProtocol").value,
+          baseUrl: $("pvUrl").value.trim(),
+          apiKey: $("pvKey").value.trim() || undefined,
+        }),
+      });
+      $("providerModal").hidden = true;
+      renderModelsConfig(next);
+      await loadOverview();
+      flashModelMsg("服务商已保存并生效");
+    } catch (e) {
+      $("pvError").textContent = e.message;
     }
   };
+  $("closeFetchedBtn").onclick = () => { $("fetchedModelsBar").hidden = true; };
+  $("resetModelsBtn").onclick = async () => {
+    if (!confirm("恢复为中转服启动预设的模型与服务商？")) return;
+    const next = await api("/v1/admin/models/reset", { method: "POST", body: "{}" });
+    renderModelsConfig(next);
+    await loadOverview();
+    flashModelMsg("已恢复服务器默认配置");
+  };
+  $("addModelBtn").onclick = async () => {
+    const provider = $("addModelProvider").value;
+    const model = $("addModelId").value.trim();
+    if (!provider || !model) { alert("请选择服务商并输入模型 ID"); return; }
+    const baseOrder = (lastModels?.order || []).map((x) => ({ provider: x.provider, model: x.model })).filter((x) => !(x.provider === provider && x.model === model));
+    if ($("addModelPrimary").checked) baseOrder.unshift({ provider, model });
+    else baseOrder.push({ provider, model });
+    try {
+      const next = await api("/v1/admin/models/order", { method: "POST", body: JSON.stringify({ order: baseOrder }) });
+      $("addModelId").value = "";
+      $("addModelPrimary").checked = false;
+      renderModelsConfig(next);
+      await loadOverview();
+      flashModelMsg("已加入顺位并热切换生效");
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  $("probeBtn").onclick = () => runProbe();
 
   async function loadDataTab() {
     const [pf, mem, led] = await Promise.all([
@@ -808,11 +1089,11 @@ export function adminPage(): string {
   $("quickInput").oninput = renderQuickList;
   document.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openQuick(); }
-    if (e.key === "Escape") { $("quickModal").hidden = true; $("diagModal").hidden = true; }
+    if (e.key === "Escape") { $("quickModal").hidden = true; $("diagModal").hidden = true; $("providerModal").hidden = true; }
   });
 
   async function loadAll() {
-    await Promise.all([loadOverview(), loadDevices(), loadAgents()]);
+    await Promise.all([loadOverview(), loadDevices(), loadAgents(), loadModelsConfig()]);
     if (activeTab === "logs") await loadLogs();
     else if (activeTab === "data") await loadDataTab();
   }

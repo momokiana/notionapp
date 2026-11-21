@@ -75,7 +75,7 @@ test("adminPage HTML serves valid CSP and syntax-clean inline script", async () 
   assert.match(res.text, /\[hidden\]\s*\{\s*display:\s*none\s*!important;/);
   assert.doesNotMatch(res.text, /class="tab-view"[^>]*style="[^"]*display:/);
   assert.match(res.text, /导出 AI 排障包/);
-  assert.match(res.text, /一键测速/);
+  assert.match(res.text, /全部测速/);
 });
 
 test("diagnostics endpoints enforce auth boundaries, probe models, capture tri-tier logs, and redact secrets", async () => {
@@ -176,4 +176,110 @@ test("diagnostics endpoints enforce auth boundaries, probe models, capture tri-t
   assert.ok(jb.json.summary.bySource.viewer >= 1);
 
   ws.close();
+});
+
+test("runtime model/provider overrides persist across restarts, mask keys, fetch upstream models, and hot-swap active models", async () => {
+  const { createServer } = await import("node:http");
+  const upstreamCalls: string[] = [];
+  const fakeUpstream = createServer((req, res) => {
+    upstreamCalls.push(`${req.method} ${req.url} ${req.headers.authorization ?? ""}`);
+    if (req.url === "/models") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "alpha-fast" }, { id: "alpha-pro" }] }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise<void>((r) => fakeUpstream.listen(0, "127.0.0.1", r));
+  const addr = fakeUpstream.address() as { port: number };
+  const fakeBase = `http://127.0.0.1:${addr.port}`;
+
+  const d2 = mkdtempSync(join(tmpdir(), "xa-modelcfg-test-"));
+  const dbPath = join(d2, "relay.db");
+  const baseTargets = [
+    { provider: "deepseek", protocol: "openai" as const, baseUrl: "https://api.deepseek.com", apiKey: "sk-server-key-9876", model: "deepseek-flash" },
+    { provider: "deepseek", protocol: "openai" as const, baseUrl: "https://api.deepseek.com", apiKey: "sk-server-key-9876", model: "deepseek-v4-pro" },
+  ];
+  let r1: Relay | undefined;
+  let r2: Relay | undefined;
+  try {
+    r1 = new Relay({ dbPath, adminToken: ADMIN, assistant: { targets: baseTargets }, log: () => {} });
+    const p1 = await r1.listen(0, "127.0.0.1");
+    const u1 = `http://127.0.0.1:${p1}`;
+    const hdr = { authorization: `Bearer ${ADMIN}`, "content-type": "application/json" };
+
+    // Pair viewer to confirm admin-only guard.
+    const pc = await (await fetch(`${u1}/v1/pair/codes`, { method: "POST", headers: hdr, body: JSON.stringify({ kind: "viewer" }) })).json() as any;
+    const phone = await (await fetch(`${u1}/v1/pair`, { method: "POST", headers: hdr, body: JSON.stringify({ kind: "viewer", code: pc.code, name: "P" }) })).json() as any;
+    assert.equal((await fetch(`${u1}/v1/admin/models`, { headers: { authorization: `Bearer ${phone.token}` } })).status, 401);
+
+    // Initial view masks server key and reflects defaults.
+    const init = await (await fetch(`${u1}/v1/admin/models`, { headers: hdr })).json() as any;
+    assert.equal(init.modified, false);
+    assert.equal(init.providers.length, 1);
+    assert.equal(init.providers[0].maskedKey, "…9876");
+    assert.doesNotMatch(JSON.stringify(init), /sk-server-key-9876/);
+    assert.equal(init.order[0].model, "deepseek-flash");
+
+    // Add console provider, fetch its models, and promote alpha-pro to primary.
+    const up = await fetch(`${u1}/v1/admin/models/provider`, {
+      method: "POST",
+      headers: hdr,
+      body: JSON.stringify({ id: "alpha", label: "Alpha Gateway", protocol: "openai", baseUrl: fakeBase, apiKey: "sk-alpha-secret-4321" }),
+    });
+    assert.equal(up.status, 200);
+    const upJson = await up.json() as any;
+    assert.equal(upJson.modified, true);
+    assert.equal(upJson.providers.find((x: any) => x.id === "alpha").maskedKey, "…4321");
+    assert.doesNotMatch(JSON.stringify(upJson), /sk-alpha-secret-4321/);
+
+    const fetched = await (await fetch(`${u1}/v1/admin/models/fetch`, {
+      method: "POST",
+      headers: hdr,
+      body: JSON.stringify({ provider: "alpha" }),
+    })).json() as any;
+    assert.deepEqual(fetched.models, ["alpha-fast", "alpha-pro"]);
+    assert.match(upstreamCalls[0] ?? "", /Bearer sk-alpha-secret-4321/);
+
+    const reordered = await (await fetch(`${u1}/v1/admin/models/order`, {
+      method: "POST",
+      headers: hdr,
+      body: JSON.stringify({
+        order: [
+          { provider: "alpha", model: "alpha-pro" },
+          { provider: "deepseek", model: "deepseek-flash" },
+        ],
+      }),
+    })).json() as any;
+    assert.equal(reordered.order[0].model, "alpha-pro");
+    assert.equal(reordered.order[0].isPrimary, true);
+
+    const ov1 = await (await fetch(`${u1}/v1/admin/overview`, { headers: hdr })).json() as any;
+    assert.deepEqual(ov1.assistant.models, ["alpha:alpha-pro", "deepseek:deepseek-flash"]);
+    assert.equal(r1.assistant.state().model, "alpha-pro");
+
+    await r1.close();
+    r1 = undefined;
+
+    // Restart relay with same DB + env defaults: SQLite override persists!
+    r2 = new Relay({ dbPath, adminToken: ADMIN, assistant: { targets: baseTargets }, log: () => {} });
+    const p2 = await r2.listen(0, "127.0.0.1");
+    const u2 = `http://127.0.0.1:${p2}`;
+    assert.equal(r2.assistant.state().model, "alpha-pro");
+    const afterRestart = await (await fetch(`${u2}/v1/admin/models`, { headers: hdr })).json() as any;
+    assert.equal(afterRestart.modified, true);
+    assert.equal(afterRestart.order[0].model, "alpha-pro");
+
+    // Reset back to server defaults.
+    const reset = await (await fetch(`${u2}/v1/admin/models/reset`, { method: "POST", headers: hdr, body: "{}" })).json() as any;
+    assert.equal(reset.modified, false);
+    assert.equal(reset.order[0].model, "deepseek-flash");
+    assert.equal(r2.assistant.state().model, "deepseek-flash");
+  } finally {
+    if (r1) await r1.close();
+    if (r2) await r2.close();
+    fakeUpstream.close();
+    rmSync(d2, { recursive: true, force: true });
+  }
 });

@@ -38,6 +38,7 @@ import { issueSetupCode, type SetupInfo } from "./setup.ts";
 import { joinLanding, notFoundLanding, pairLanding, type LandingPage } from "./landing.ts";
 import { Assistant, type AssistantOptions } from "./assistant/assistant.ts";
 import { makeLlm, type Llm, type LlmTarget } from "./assistant/llm.ts";
+import { ModelConfigService } from "./assistant/model-config.ts";
 import { startCall, endAllCalls, type LiveConfig } from "./assistant/live.ts";
 import { EventLog, levelsFrom, parseSince, redact, type EventInput } from "./eventlog.ts";
 import { adminPage } from "./admin.ts";
@@ -162,6 +163,7 @@ export class Relay {
   private runtimeTaskUploadRate = new RuntimeTaskUploadRate();
   readonly ledger: LedgerService;
   readonly assistant: Assistant;
+  readonly modelConfig: ModelConfigService;
 
   private opts: RelayOptions;
 
@@ -189,16 +191,18 @@ export class Relay {
     this.heartbeat = setInterval(() => this.sweep(), 30_000);
     this.ledger = new LedgerService(this.store, () => this.toViewers({ type: "ledger_updated" }));
     const a = opts.assistant;
+    this.modelConfig = new ModelConfigService(this.store, a?.targets ?? []);
+    const initialTargets = this.modelConfig.targets();
     const llm =
       opts.llm ??
-      (a?.targets.length
-        ? makeLlm({ targets: a.targets, firstByteMs: a.firstByteMs, log: (m) => this.events.record({ kind: "model", level: /fail|error|refus/i.test(m) ? "warn" : "info", msg: m }) })
+      (initialTargets.length
+        ? this.buildLlm(initialTargets)
         : undefined);
     const hasVoice = Boolean(opts.live && (opts.live.provider === "local" || opts.live.apiKey));
     this.assistant = new Assistant({
       store: this.store,
       llm,
-      model: opts.llm ? "test" : a?.targets[0]?.model,
+      model: opts.llm ? "test" : initialTargets[0]?.model,
       name: a?.name,
       persona: a?.persona,
       voice: hasVoice,
@@ -297,6 +301,7 @@ export class Relay {
     }
 
     if (req.method === "GET" && (path === "/v1/health" || path === "/")) {
+      const activeTargets = this.modelConfig.targets();
       sendJson(res, 200, {
         ok: true,
         name: "xiaoaixiaoai-relay",
@@ -305,7 +310,7 @@ export class Relay {
         devices: this.store.listDevices().length,
         online: this.conns.size,
         // Which services are configured (names only, never keys or addresses).
-        assistant: [...new Set((this.opts.assistant?.targets ?? []).map((t) => t.provider))],
+        assistant: [...new Set(activeTargets.map((t) => t.provider))],
         voice: this.opts.live ? (this.opts.live.provider ?? "moss-live") : null,
       });
       return;
@@ -575,7 +580,18 @@ export class Relay {
         sendError(res, 401, "unauthorized", "需要管理员令牌");
         return;
       }
-      sendJson(res, 200, { results: await this.probeModels() });
+      const body = await readJson(req);
+      const onlyIndex = typeof body?.index === "number" && Number.isInteger(body.index) ? body.index : undefined;
+      sendJson(res, 200, { results: await this.probeModels(onlyIndex) });
+      return;
+    }
+
+    if (path === "/v1/admin/models" || path.startsWith("/v1/admin/models/")) {
+      if (auth !== "admin") {
+        sendError(res, 401, "unauthorized", "需要管理员令牌");
+        return;
+      }
+      await this.handleAdminModels(req, res, path);
       return;
     }
 
@@ -1039,7 +1055,7 @@ export class Relay {
   /** What the control panel shows at the top: health and how the relay is set up (never keys). */
   private overview() {
     const devices = this.devices();
-    const a = this.opts.assistant;
+    const activeTargets = this.modelConfig.targets();
     const live = this.opts.live;
     const dayAgo = Date.now() - 86_400_000;
     const trouble = this.events.query({ since: dayAgo, levels: ["warn", "error"], limit: 5000 });
@@ -1050,7 +1066,7 @@ export class Relay {
         return "";
       }
     };
-    const host = [...new Set((a?.targets ?? []).map((t) => hostOf(t.baseUrl)).filter(Boolean))].join(", ");
+    const host = [...new Set(activeTargets.map((t) => hostOf(t.baseUrl)).filter(Boolean))].join(", ");
     const nonShell = this.allAgents().filter((x) => !x.isShell);
     const board = { blocked: 0, working: 0, done: 0, idle: 0 };
     for (const ag of nonShell) {
@@ -1073,7 +1089,7 @@ export class Relay {
         ready: assistantState.ready,
         name: profile.name,
         userCall: profile.userCall,
-        models: this.opts.llm ? ["test"] : (a?.targets ?? []).map((t) => `${t.provider}:${t.model}`),
+        models: this.opts.llm ? ["test"] : activeTargets.map((t) => `${t.provider}:${t.model}`),
         endpoint: host,
         confirm: this.assistant.confirmMode(),
         replyMode: this.assistant.replyMode(),
@@ -1151,10 +1167,113 @@ export class Relay {
     });
   }
 
-  private async probeModels(): Promise<
+  private buildLlm(targets: LlmTarget[]): Llm {
+    return makeLlm({
+      targets,
+      firstByteMs: this.opts.assistant?.firstByteMs,
+      log: (m) => this.events.record({ kind: "model", level: /fail|error|refus/i.test(m) ? "warn" : "info", msg: m }),
+    });
+  }
+
+  private applyModelRuntime(summary: string): void {
+    const targets = this.modelConfig.targets();
+    if (!this.opts.llm) {
+      const nextLlm = targets.length ? this.buildLlm(targets) : undefined;
+      this.assistant.setModelRuntime(nextLlm, targets[0]?.model);
+    }
+    this.events.record({
+      kind: "config",
+      level: "info",
+      msg: summary,
+      data: { primary: targets[0] ? `${targets[0].provider}:${targets[0].model}` : "none", count: targets.length },
+    });
+  }
+
+  private async handleAdminModels(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
+    if (req.method === "GET" && path === "/v1/admin/models") {
+      sendJson(res, 200, this.modelConfig.view());
+      return;
+    }
+    if (req.method === "POST" && path === "/v1/admin/models/provider") {
+      const body = await readJson(req);
+      if (!body || typeof body !== "object") {
+        sendError(res, 400, "bad_request", "需要 JSON 对象");
+        return;
+      }
+      try {
+        const view = this.modelConfig.upsertProvider(
+          {
+            id: typeof body.id === "string" ? body.id : "",
+            label: typeof body.label === "string" ? body.label : undefined,
+            protocol: typeof body.protocol === "string" ? body.protocol : "",
+            baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : "",
+            apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
+            auth: typeof body.auth === "string" ? body.auth : undefined,
+            maxTokensField: typeof body.maxTokensField === "string" ? body.maxTokensField : undefined,
+          },
+          "admin",
+        );
+        this.applyModelRuntime(`provider updated (${String(body.id).toLowerCase()})`);
+        sendJson(res, 200, view);
+      } catch (e) {
+        sendError(res, 400, "bad_request", (e as Error).message);
+      }
+      return;
+    }
+    const pm = /^\/v1\/admin\/models\/provider\/([a-z0-9-]{1,32})$/i.exec(path);
+    if (pm && req.method === "DELETE") {
+      try {
+        const view = this.modelConfig.removeProvider(pm[1]!, "admin");
+        this.applyModelRuntime(`provider reverted/removed (${pm[1]!.toLowerCase()})`);
+        sendJson(res, 200, view);
+      } catch (e) {
+        sendError(res, 400, "bad_request", (e as Error).message);
+      }
+      return;
+    }
+    if (req.method === "POST" && path === "/v1/admin/models/order") {
+      const body = await readJson(req);
+      if (!body || !Array.isArray(body.order)) {
+        sendError(res, 400, "bad_request", "需要 order 数组");
+        return;
+      }
+      try {
+        const view = this.modelConfig.setOrder(body.order as Array<{ provider: string; model: string }>, "admin");
+        const primary = view.order[0];
+        this.applyModelRuntime(`model order updated -> primary=${primary ? `${primary.provider}:${primary.model}` : "none"}`);
+        sendJson(res, 200, view);
+      } catch (e) {
+        sendError(res, 400, "bad_request", (e as Error).message);
+      }
+      return;
+    }
+    if (req.method === "POST" && path === "/v1/admin/models/reset") {
+      const view = this.modelConfig.reset();
+      this.applyModelRuntime("models & providers reset to server defaults");
+      sendJson(res, 200, view);
+      return;
+    }
+    if (req.method === "POST" && path === "/v1/admin/models/fetch") {
+      const body = await readJson(req);
+      const provider = typeof body?.provider === "string" ? body.provider : "";
+      if (!provider) {
+        sendError(res, 400, "bad_request", "需要 provider");
+        return;
+      }
+      try {
+        sendJson(res, 200, await this.modelConfig.fetchProviderModels(provider));
+      } catch (e) {
+        sendError(res, 502, "internal", `拉取模型失败：${(e as Error).message}`);
+      }
+      return;
+    }
+    sendError(res, 404, "not_found", "not found");
+  }
+
+  private async probeModels(onlyIndex?: number): Promise<
     Array<{ index: number; provider: string; model: string; protocol: string; endpointHost: string; ok: boolean; latencyMs: number; reply?: string; error?: string }>
   > {
-    const targets: Array<{ label: string; provider: string; model: string; protocol: string; endpointHost: string; llm: Llm }> = [];
+    const targets: Array<{ index: number; label: string; provider: string; model: string; protocol: string; endpointHost: string; llm: Llm }> = [];
     const hostOf = (u: string) => {
       try {
         return new URL(u).host;
@@ -1162,23 +1281,29 @@ export class Relay {
         return "";
       }
     };
-    if (this.opts.llm) {
-      targets.push({ label: "test:test", provider: "test", model: "test", protocol: "mock", endpointHost: "local", llm: this.opts.llm });
-    } else {
-      for (const t of this.opts.assistant?.targets ?? []) {
+    const configured = this.modelConfig.targets();
+    if (this.opts.llm && (!configured.length || onlyIndex === undefined)) {
+      if (!configured.length) {
+        targets.push({ index: 1, label: "test:test", provider: "test", model: "test", protocol: "mock", endpointHost: "local", llm: this.opts.llm });
+      }
+    }
+    if (!targets.length) {
+      configured.forEach((t, idx) => {
+        const index = idx + 1;
+        if (onlyIndex !== undefined && onlyIndex !== index) return;
         targets.push({
+          index,
           label: `${t.provider}:${t.model}`,
           provider: t.provider,
           model: t.model,
           protocol: t.protocol,
           endpointHost: hostOf(t.baseUrl),
-          llm: makeLlm({ targets: [t], firstByteMs: 12_000, totalMs: 15_000 }),
+          llm: this.opts.llm ?? makeLlm({ targets: [t], firstByteMs: 12_000, totalMs: 15_000 }),
         });
-      }
+      });
     }
     const results: Array<{ index: number; provider: string; model: string; protocol: string; endpointHost: string; ok: boolean; latencyMs: number; reply?: string; error?: string }> = [];
-    for (let i = 0; i < targets.length; i++) {
-      const target = targets[i]!;
+    for (const target of targets) {
       const t0 = Date.now();
       try {
         const res = await target.llm({
@@ -1194,12 +1319,12 @@ export class Relay {
           .join(" ")
           .slice(0, 60);
         this.events.record({ kind: "model", level: "info", msg: `probe ${target.label} ok ${latencyMs}ms` });
-        results.push({ index: i + 1, provider: target.provider, model: target.model, protocol: target.protocol, endpointHost: target.endpointHost, ok: true, latencyMs, reply: reply || "ok" });
+        results.push({ index: target.index, provider: target.provider, model: target.model, protocol: target.protocol, endpointHost: target.endpointHost, ok: true, latencyMs, reply: reply || "ok" });
       } catch (e) {
         const latencyMs = Date.now() - t0;
         const error = redact((e instanceof Error ? e.message : String(e)).slice(0, 180));
         this.events.record({ kind: "model", level: "warn", msg: `probe ${target.label} failed ${latencyMs}ms: ${error}` });
-        results.push({ index: i + 1, provider: target.provider, model: target.model, protocol: target.protocol, endpointHost: target.endpointHost, ok: false, latencyMs, error });
+        results.push({ index: target.index, provider: target.provider, model: target.model, protocol: target.protocol, endpointHost: target.endpointHost, ok: false, latencyMs, error });
       }
     }
     return results;
