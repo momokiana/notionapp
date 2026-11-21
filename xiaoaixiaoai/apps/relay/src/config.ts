@@ -10,7 +10,7 @@ import type { AuthStyle, LlmProvider, LlmTarget, Protocol } from "./assistant/ll
 import type { LiveConfig } from "./assistant/live.ts";
 import { MOSS_DEFAULTS, REALTIME_DEFAULTS, TEXT_PRESETS, VOICE_PROVIDERS, type VoiceProvider } from "./assistant/providers.ts";
 import { DEFAULT_TIME_ZONE, validTimeZone } from "./assistant/timezone.ts";
-import { DEFAULT_ASSISTANT_NAME, type AssistantProfile } from "./assistant/persona.ts";
+import { DEFAULT_ASSISTANT_NAME, PERSONA_MAX_CHARS, type AssistantProfile } from "./assistant/persona.ts";
 
 export interface AssistantSetup {
   targets: LlmTarget[];
@@ -136,8 +136,8 @@ function assistantProfile(e: (n: string) => string | undefined, file: FileConfig
     } else if (name.trim()) out.assistantProfile.name = name.trim();
   }
   if (persona !== undefined) {
-    if (typeof persona !== "string" || Array.from(persona.trim()).length > 2000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\p{Cf}\p{Zl}\p{Zp}]/u.test(persona)) {
-      out.errors.push("POCKET_ASSISTANT_PERSONA / assistant.persona must be text of at most 2000 characters, without control or format characters (except line breaks and tabs).");
+    if (typeof persona !== "string" || Array.from(persona.trim()).length > PERSONA_MAX_CHARS || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\p{Cf}\p{Zl}\p{Zp}]/u.test(persona)) {
+      out.errors.push(`POCKET_ASSISTANT_PERSONA / assistant.persona must be text of at most ${PERSONA_MAX_CHARS} characters, without control or format characters (except line breaks and tabs).`);
     } else if (persona.trim()) out.assistantProfile.persona = persona.trim();
   }
 }

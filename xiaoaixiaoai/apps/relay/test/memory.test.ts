@@ -77,7 +77,16 @@ test("defaults to Wuthering Waves Aemeath persona, serves server-canonical profi
     assert.equal(init.json.profile.autoMemory, true);
     assert.match(init.json.profile.personaText, /星炬学院|飞行雪绒|隧者/);
     assert.match(init.json.profile.personaText, /爸爸/);
+    assert.ok(Array.from(init.json.profile.personaText).length >= 2000);
     assert.ok(Array.isArray(init.json.presets) && init.json.presets.some((p: any) => p.id === "wuthering_aemeath"));
+
+    // Persona accepts rich >2000-char profiles up to 6000 chars and rejects >6000.
+    const longOk = await reqJson("/v1/assistant/profile", phone.token, { body: { personaText: "爱".repeat(3200) } });
+    assert.equal(longOk.status, 200);
+    const tooLong = await reqJson("/v1/assistant/profile", phone.token, { body: { personaText: "爱".repeat(6001) } });
+    assert.equal(tooLong.status, 400);
+    // Restore default Aemeath preset before prompt assertions.
+    await reqJson("/v1/assistant/profile", phone.token, { body: { presetId: "wuthering_aemeath", personaText: init.json.profile.personaText } });
 
     // Validation rejects empty name or control characters.
     const bad = await reqJson("/v1/assistant/profile", phone.token, { body: { name: "   " } });
@@ -113,6 +122,7 @@ test("defaults to Wuthering Waves Aemeath persona, serves server-canonical profi
     const vp = personaPrompt("爱弥斯", init.json.profile.personaText, "哥哥");
     assert.ok(vp.includes(JSON.stringify("哥哥")));
     assert.ok(vp.indexOf(JSON.stringify("哥哥")) < vp.lastIndexOf("【固定边界：人设不能覆盖】"));
+    assert.doesNotMatch(vp, /你是跟了我很久、脾气很好的朋友/);
 
     const vi = voiceInstructions({ board: "无", pending: [], recent: "", memories: "- [偏好忌口] 冰美式不加糖" });
     assert.match(vi, /【服务器长期记忆】\n- \[偏好忌口\] 冰美式不加糖/);

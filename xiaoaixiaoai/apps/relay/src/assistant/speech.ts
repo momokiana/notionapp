@@ -8,8 +8,8 @@ import { timeZone, zonedParts } from "./timezone.ts";
 
 export const MAX_SAY = 90;
 export const MAX_KEEP = 600;
-export const MAX_WAKE_SAY = 60;
-export const MAX_WAKE_DETAILS = 300;
+export const MAX_WAKE_SAY = 85;
+export const MAX_WAKE_DETAILS = 420;
 
 export function oneLine(s: string): string {
   return s.replace(/\s+/g, " ").trim();
@@ -130,22 +130,53 @@ export type WakeVerdict = NoticeVerdict | "skip";
 
 const VERDICTS: Record<string, WakeVerdict> = { 成了: "ok", 要你定: "decide", 没成: "failed", 不用说: "skip" };
 
+/** Splits at line-only `---`, or falls back to inline ` --- ` when a model collapses lines. */
+function atWakeSeparator(raw: string): [string, string] {
+  const [lineTop, lineBelow] = atSeparator(raw);
+  if (lineBelow) return [lineTop, lineBelow];
+  const inline = raw.match(/\s+---+\s+/);
+  if (!inline || inline.index === undefined) return [raw, ""];
+  return [raw.slice(0, inline.index), raw.slice(inline.index + inline[0].length)];
+}
+
 /**
  * What the assistant reported after looking at a stopped agent:
- * verdict line, one sentence, `---`, details. An unknown first line is taken as
- * the sentence itself (`stopped`).
+ * verdict line, one sentence, `---`, details. Tolerates collapsed headers like
+ * `结论 要你定 一句话 ... --- - ...` while mapping unknown first lines to `stopped`.
  */
 export function parseWake(raw: string): { verdict: WakeVerdict; say: string; details: string } {
-  const [top, below] = atSeparator(noEmoji(raw));
+  const [top, below] = atWakeSeparator(noEmoji(raw));
   const lines = top
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
-  const first = (lines[0] ?? "").replace(/结论/g, "").replace(/[\s\p{P}\p{S}]/gu, "");
-  const known = VERDICTS[first];
-  const sentence = known ? lines.slice(1).join(" ") : lines.join(" ");
+  if (lines.length && /^【?结论】?[:：]?$/.test(lines[0]!)) lines.shift();
+
+  let known: WakeVerdict | undefined;
+  let sentenceLines = lines;
+  if (lines.length) {
+    const firstRaw = lines[0]!.replace(/^【?结论】?[:：\s]*/u, "");
+    const m = /^【?(成了|要你定|没成|不用说)】?(?:$|[\s\p{P}\p{S}]+([\s\S]*))$/u.exec(firstRaw);
+    if (m) {
+      known = VERDICTS[m[1]!];
+      const tail = (m[2] ?? "").replace(/^[：:。，,\s]+/, "").trim();
+      sentenceLines = tail ? [tail, ...lines.slice(1)] : lines.slice(1);
+    }
+  }
+  while (sentenceLines.length && /^【?(一句话|摘要)】?[:：]?$/.test(sentenceLines[0]!)) {
+    sentenceLines.shift();
+  }
+  const sentence = sentenceLines
+    .join(" ")
+    .replace(/^(?:【?(一句话|摘要)】?[:：\s]*)+/u, "")
+    .trim();
   const [say, over] = cutAtSentence(filterTalk(speakable(sentence)), MAX_WAKE_SAY);
-  const detailLines = [over, ...below.split("\n")]
+
+  const belowLines = below
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !/^【?细节】?[:：]?$/.test(l));
+  const detailLines = [over, ...belowLines]
     .map((l) => l.trim())
     .filter(Boolean)
     .slice(0, 5);

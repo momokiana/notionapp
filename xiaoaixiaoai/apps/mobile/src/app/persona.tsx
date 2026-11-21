@@ -306,7 +306,7 @@ export default function PersonaMemoryScreen() {
           <View style={{ gap: 4 }}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
               <Text style={{ color: p.muted, fontSize: 12.5, fontFamily: fonts.bodySemi }}>人设与相处细节</Text>
-              <Text style={{ color: personaLen > 1900 ? p.error : p.faint, fontSize: 11.5 }}>{personaLen} / 2000</Text>
+              <Text style={{ color: personaLen > 5700 ? p.error : p.faint, fontSize: 11.5 }}>{personaLen} / 6000</Text>
             </View>
             <TextInput
               mode="outlined"

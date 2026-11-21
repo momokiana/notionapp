@@ -806,9 +806,19 @@ test("what the assistant found when woken: four verdicts, an unknown first line,
   assert.equal(parseWake("【没成】\n登录页没跑成，依赖装不上。").verdict, "failed");
   assert.deepEqual(parseWake("不用说"), { verdict: "skip", say: "", details: "" });
   assert.deepEqual(parseWake("它停在一半。\n---\n- 没跑测试"), { verdict: "stopped", say: "它停在一半。", details: "- 没跑测试" });
-  // The sentence is capped at 60 characters, at a sentence end; what is cut joins the details.
-  const out = parseWake(`成了\n${"前半句说了很多很多的话".repeat(4)}。${"后半句".repeat(8)}。`);
-  assert.ok(Array.from(out.say).length <= 60);
+  assert.deepEqual(parseWake("结论 要你定 一句话 哥哥，日志后台的方案它列好了。 --- - 核查细节"), {
+    verdict: "decide",
+    say: "哥哥，日志后台的方案它列好了。",
+    details: "- 核查细节",
+  });
+  assert.deepEqual(parseWake("结论\n要你定\n一句话\n哥哥，迁移方案先停在这了。"), {
+    verdict: "decide",
+    say: "哥哥，迁移方案先停在这了。",
+    details: "",
+  });
+  // The sentence is capped at 85 characters, at a sentence end; what is cut joins the details.
+  const out = parseWake(`成了\n${"前半句说了很多很多的话".repeat(7)}。${"后半句".repeat(8)}。`);
+  assert.ok(Array.from(out.say).length <= 85);
   assert.match(out.details, /后半句/);
 });
 
