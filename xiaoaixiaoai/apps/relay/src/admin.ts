@@ -287,7 +287,7 @@ export function adminPage(): string {
               <div class="field-grid">
                 <label>助理名字<input id="pfName" maxlength="20"></label>
                 <label>对你的称呼<input id="pfCall" maxlength="20" placeholder="比如：哥哥"></label>
-                <label>人设补充说明<textarea id="pfPersona" rows="4"></textarea></label>
+                <label>人设补充说明<textarea id="pfPersona" rows="12"></textarea></label>
                 <div class="row-wrap"><button id="saveProfileBtn">保存人设</button><span id="profileMsg" class="muted" style="font-size:12px"></span></div>
               </div>
             </div>

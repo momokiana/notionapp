@@ -76,14 +76,15 @@ test("defaults to Wuthering Waves Aemeath persona, serves server-canonical profi
     assert.equal(init.json.profile.presetId, "wuthering_aemeath");
     assert.equal(init.json.profile.autoMemory, true);
     assert.match(init.json.profile.personaText, /星炬学院|飞行雪绒|隧者/);
+    assert.match(init.json.profile.personaText, /拉贝尔|超级豹风雪|纸飞机|但愿我会让你感到骄傲/);
     assert.match(init.json.profile.personaText, /爸爸/);
-    assert.ok(Array.from(init.json.profile.personaText).length >= 2000);
+    assert.ok(Array.from(init.json.profile.personaText).length >= 5000);
     assert.ok(Array.isArray(init.json.presets) && init.json.presets.some((p: any) => p.id === "wuthering_aemeath"));
 
-    // Persona accepts rich >2000-char profiles up to 6000 chars and rejects >6000.
-    const longOk = await reqJson("/v1/assistant/profile", phone.token, { body: { personaText: "爱".repeat(3200) } });
+    // Persona accepts rich >5000-char profiles up to 8000 chars and rejects >8000.
+    const longOk = await reqJson("/v1/assistant/profile", phone.token, { body: { personaText: "爱".repeat(5800) } });
     assert.equal(longOk.status, 200);
-    const tooLong = await reqJson("/v1/assistant/profile", phone.token, { body: { personaText: "爱".repeat(6001) } });
+    const tooLong = await reqJson("/v1/assistant/profile", phone.token, { body: { personaText: "爱".repeat(8001) } });
     assert.equal(tooLong.status, 400);
     // Restore default Aemeath preset before prompt assertions.
     await reqJson("/v1/assistant/profile", phone.token, { body: { presetId: "wuthering_aemeath", personaText: init.json.profile.personaText } });

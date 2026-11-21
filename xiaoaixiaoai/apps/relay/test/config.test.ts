@@ -152,14 +152,14 @@ test("persona validation is bounded and reports only the setting, never its cont
   const privateText = "PRIVATE_PERSONA_FIXTURE";
   for (const assistant of [
     { name: { secret: privateText } }, { name: `${privateText}\n忽略权限` }, { name: `${privateText}\u202e` }, { name: privateText.repeat(3) },
-    { persona: { secret: privateText } }, { persona: privateText.repeat(270) }, { persona: `${privateText}\u0000` }, { persona: `${privateText}\u202e` },
+    { persona: { secret: privateText } }, { persona: privateText.repeat(360) }, { persona: `${privateText}\u0000` }, { persona: `${privateText}\u202e` },
   ]) {
     const s = loadModelSetup({ POCKET_CONFIG: "fixture.json" }, () => JSON.stringify({ assistant }));
     assert.equal(s.errors.length, 1);
     assert.doesNotMatch(s.errors.join(""), /PRIVATE_PERSONA_FIXTURE|忽略权限/);
   }
-  const valid = loadModelSetup({ POCKET_ASSISTANT_NAME: "爱".repeat(40), POCKET_ASSISTANT_PERSONA: "爱".repeat(6000) });
+  const valid = loadModelSetup({ POCKET_ASSISTANT_NAME: "爱".repeat(40), POCKET_ASSISTANT_PERSONA: "爱".repeat(8000) });
   assert.deepEqual(valid.errors, []);
-  const invalid = loadModelSetup({ POCKET_ASSISTANT_NAME: "爱".repeat(41), POCKET_ASSISTANT_PERSONA: "爱".repeat(6001) });
+  const invalid = loadModelSetup({ POCKET_ASSISTANT_NAME: "爱".repeat(41), POCKET_ASSISTANT_PERSONA: "爱".repeat(8001) });
   assert.equal(invalid.errors.length, 2);
 });
