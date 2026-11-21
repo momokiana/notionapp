@@ -80,7 +80,7 @@ export function guardClaims(text: string, facts: RunFacts): { text: string; fixe
 
 /** A line the voice model said on its own: does it claim a delivery or a reply? */
 export function claimsDelivery(text: string): boolean {
-  return DELIVERED.test(text) || (REPLIED.test(text) && !NO_REPLY_YET.test(text));
+  return (DELIVERED.test(text) && !NOT_DELIVERED.test(text)) || (REPLIED.test(text) && !NO_REPLY_YET.test(text));
 }
 
 function clip(s: string): string {

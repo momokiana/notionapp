@@ -170,12 +170,13 @@ export class LedgerService {
       fixedId,
     };
     const res = this.store.insertLedgerTransactionAtomic(tx, input.adjustBalance !== false);
+    const liveNow = this.now();
     if (res.duplicate && res.existing) {
-      const s = this.state(ts);
+      const s = this.state(liveNow);
       return { duplicate: true, transaction: res.existing, state: s, alert: formatBudgetAlert(res.existing, s.plan) };
     }
     this.onChanged();
-    const s = this.state(ts);
+    const s = this.state(liveNow);
     return { duplicate: false, transaction: tx, state: s, alert: formatBudgetAlert(tx, s.plan) };
   }
 

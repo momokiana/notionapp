@@ -109,6 +109,7 @@ export class Store {
         ts INTEGER NOT NULL,
         json TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS assistant_notices_ts ON assistant_notices (ts);
       CREATE TABLE IF NOT EXISTS runtime_task_claims (
         host_id TEXT NOT NULL REFERENCES devices (id) ON DELETE CASCADE,
         request_hash TEXT NOT NULL,
@@ -562,6 +563,16 @@ export class Store {
     return row ? (JSON.parse(row.json) as LedgerTransaction) : undefined;
   }
 
+  private hasFixedTransactionInMonth(fixedId: string, ym: string, excludeId?: string): boolean {
+    const rows = this.db.prepare("SELECT id, json FROM ledger_transactions WHERE ym = ?").all(ym) as Array<{ id: string; json: string }>;
+    for (const r of rows) {
+      if (excludeId && r.id === excludeId) continue;
+      const tx = JSON.parse(r.json) as LedgerTransaction;
+      if (tx.fixedId === fixedId && tx.direction === "expense") return true;
+    }
+    return false;
+  }
+
   insertLedgerTransactionAtomic(tx: LedgerTransaction, adjustBalance: boolean): { duplicate: boolean; existing?: LedgerTransaction } {
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -584,7 +595,9 @@ export class Store {
       }
       if (tx.fixedId && tx.direction === "expense") {
         const fixed = this.getLedgerFixed(tx.fixedId);
-        if (fixed && fixed.paidYm !== tx.ym) this.putLedgerFixed({ ...fixed, paidYm: tx.ym });
+        if (fixed && (!fixed.paidYm || tx.ym >= fixed.paidYm) && fixed.paidYm !== tx.ym) {
+          this.putLedgerFixed({ ...fixed, paidYm: tx.ym });
+        }
       }
       this.db.exec("COMMIT");
       return { duplicate: false };
@@ -611,11 +624,15 @@ export class Store {
       }
       if (prev.fixedId && prev.fixedId !== next.fixedId) {
         const oldFixed = this.getLedgerFixed(prev.fixedId);
-        if (oldFixed && oldFixed.paidYm === prev.ym) this.putLedgerFixed({ ...oldFixed, paidYm: null });
+        if (oldFixed && oldFixed.paidYm === prev.ym && !this.hasFixedTransactionInMonth(prev.fixedId, prev.ym, next.id)) {
+          this.putLedgerFixed({ ...oldFixed, paidYm: null });
+        }
       }
       if (next.fixedId && next.direction === "expense") {
         const newFixed = this.getLedgerFixed(next.fixedId);
-        if (newFixed && newFixed.paidYm !== next.ym) this.putLedgerFixed({ ...newFixed, paidYm: next.ym });
+        if (newFixed && (!newFixed.paidYm || next.ym >= newFixed.paidYm) && newFixed.paidYm !== next.ym) {
+          this.putLedgerFixed({ ...newFixed, paidYm: next.ym });
+        }
       }
       this.db.exec("COMMIT");
     } catch (e) {
@@ -642,7 +659,9 @@ export class Store {
       }
       if (existing.fixedId) {
         const fixed = this.getLedgerFixed(existing.fixedId);
-        if (fixed && fixed.paidYm === existing.ym) this.putLedgerFixed({ ...fixed, paidYm: null });
+        if (fixed && fixed.paidYm === existing.ym && !this.hasFixedTransactionInMonth(existing.fixedId, existing.ym, existing.id)) {
+          this.putLedgerFixed({ ...fixed, paidYm: null });
+        }
       }
       this.db.exec("COMMIT");
       return existing;

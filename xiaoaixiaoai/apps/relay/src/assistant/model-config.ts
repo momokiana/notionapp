@@ -356,7 +356,8 @@ export class ModelConfigService {
     let order = cur.order;
     if (isConsoleOnly) {
       const baseOrder = order ?? this.serverTargets.map((t) => ({ provider: t.provider, model: t.model }));
-      order = baseOrder.filter((m) => m.provider !== id);
+      const filtered = baseOrder.filter((m) => m.provider !== id);
+      order = filtered.length ? filtered : undefined;
     }
     if (!Object.keys(providers).length && order === undefined) {
       this.store.putSetting(SETTING_MODELS, null);

@@ -272,6 +272,16 @@ test("runtime model/provider overrides persist across restarts, mask keys, fetch
     assert.equal(afterRestart.modified, true);
     assert.equal(afterRestart.order[0].model, "alpha-pro");
 
+    // Removing the sole provider in custom order safely reverts to server default targets instead of stranding order=[].
+    await fetch(`${u2}/v1/admin/models/order`, {
+      method: "POST",
+      headers: hdr,
+      body: JSON.stringify({ order: [{ provider: "alpha", model: "alpha-pro" }] }),
+    });
+    const afterDel = await (await fetch(`${u2}/v1/admin/models/provider/alpha`, { method: "DELETE", headers: hdr })).json() as any;
+    assert.equal(afterDel.order[0].model, "deepseek-flash");
+    assert.equal(r2.assistant.state().model, "deepseek-flash");
+
     // Reset back to server defaults.
     const reset = await (await fetch(`${u2}/v1/admin/models/reset`, { method: "POST", headers: hdr, body: "{}" })).json() as any;
     assert.equal(reset.modified, false);

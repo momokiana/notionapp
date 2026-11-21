@@ -124,7 +124,7 @@ export function nameScore(needle: string, values: Array<string | undefined>): nu
 export function agentNames(a: Agent, handle: string | undefined, deviceName: string): Array<string | undefined> {
   const [space, ...tabParts] = (a.where ?? "").split(" / ");
   const tab = tabParts.join(" / ").trim();
-  const folder = a.cwd?.split("/").filter(Boolean).pop();
+  const folder = a.cwd?.split(/[\\/]/).filter(Boolean).pop();
   return [
     handle,
     a.name,

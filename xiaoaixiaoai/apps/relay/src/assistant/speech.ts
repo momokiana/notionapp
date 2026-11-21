@@ -132,9 +132,10 @@ const VERDICTS: Record<string, WakeVerdict> = { 成了: "ok", 要你定: "decide
 
 /** Splits at line-only `---`, or falls back to inline ` --- ` when a model collapses lines. */
 function atWakeSeparator(raw: string): [string, string] {
-  const [lineTop, lineBelow] = atSeparator(raw);
-  if (lineBelow) return [lineTop, lineBelow];
-  const inline = raw.match(/\s+---+\s+/);
+  const lines = raw.replace(/\r/g, "").split("\n");
+  const idx = lines.findIndex((l) => l.trim() === "---");
+  if (idx >= 0) return [lines.slice(0, idx).join("\n"), lines.slice(idx + 1).join("\n")];
+  const inline = raw.match(/\s+---+(?:\s+|$)/);
   if (!inline || inline.index === undefined) return [raw, ""];
   return [raw.slice(0, inline.index), raw.slice(inline.index + inline[0].length)];
 }
@@ -156,10 +157,10 @@ export function parseWake(raw: string): { verdict: WakeVerdict; say: string; det
   let sentenceLines = lines;
   if (lines.length) {
     const firstRaw = lines[0]!.replace(/^【?结论】?[:：\s]*/u, "");
-    const m = /^【?(成了|要你定|没成|不用说)】?(?:$|[\s\p{P}\p{S}]+([\s\S]*))$/u.exec(firstRaw);
+    const m = /^【?(成了|要你定|没成|不用说)】?(?:$|[\s\p{P}\p{S}]+([\s\S]*)|((?:哥哥|哥|你|我|这|那|刚|它|喂|哼|哎|呀)[\s\S]*))$/u.exec(firstRaw);
     if (m) {
       known = VERDICTS[m[1]!];
-      const tail = (m[2] ?? "").replace(/^[：:。，,\s]+/, "").trim();
+      const tail = (m[2] ?? m[3] ?? "").replace(/^[：:。，,\s]+/, "").trim();
       sentenceLines = tail ? [tail, ...lines.slice(1)] : lines.slice(1);
     }
   }

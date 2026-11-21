@@ -559,9 +559,9 @@ test("voice calls go through the relay; delegated tasks are done by the text ass
   assert.ok(!up.sock.frames.some((f) => f.action === "session.thinking.append"));
   const lastAsk = seenRequests[seenRequests.length - 1]!;
   assert.match(String(lastAsk.system), /# 现在：通话中/);
-  assert.match(String(lastAsk.system), /# 现况（.+的快照）[\s\S]*等我的：\n(- .+\n)*- 上线检查 \| Claude Code \| Mac F \| 等了 .+ \| key=.+\/hc:t7/);
-  // The task comes after the recent conversation (and before any tool rounds).
+  // The task and live board snapshot ride in messages so the system prompt stays static for KV prefix caching.
   const asked = lastAsk.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
+  assert.match(asked, /# 现况（.+的快照）[\s\S]*等我的：\n(- .+\n)*- 上线检查 \| Claude Code \| Mac F \| 等了 .+ \| key=.+\/hc:t7/);
   assert.match(asked, /\[通话中\] 语音模型转来的，是我刚才的意思：\n看看上线检查的状态\n\n通话里最近几句：\n我：上线检查怎么样了\n\n（按“台词 \/ --- \/ 备查”的格式回。）/);
   assert.equal(lastAsk.maxTokens, 1600);
 
@@ -816,6 +816,11 @@ test("what the assistant found when woken: four verdicts, an unknown first line,
     say: "哥哥，迁移方案先停在这了。",
     details: "",
   });
+  assert.deepEqual(parseWake("成了哥哥，全部测试全绿过关啦。\n---"), {
+    verdict: "ok",
+    say: "哥哥，全部测试全绿过关啦。",
+    details: "",
+  });
   // The sentence is capped at 85 characters, at a sentence end; what is cut joins the details.
   const out = parseWake(`成了\n${"前半句说了很多很多的话".repeat(7)}。${"后半句".repeat(8)}。`);
   assert.ok(Array.from(out.say).length <= 85);
@@ -829,7 +834,7 @@ test("short names: herdr's name first, then a space of its own, never two agents
       a("t1", { name: "v050-ui", title: "v050-ui", where: "博客平台 / 2" }),
       a("t2", { title: "修复支付回调重复入账的问题", where: "支付 / 1" }),
       a("t3", { title: "同一个标题的两个任务甲", where: "博客平台 / 评审" }),
-      a("t4", { title: "同一个标题的两个任务乙", where: "博客平台 / 3", cwd: "/u/work/pocket" }),
+      a("t4", { title: "同一个标题的两个任务乙", where: "博客平台 / 3", cwd: "C:\\Work\\MyProject\\pocket" }),
       a("t5", { title: "zsh", isShell: true }),
     ],
     () => "MacBook",

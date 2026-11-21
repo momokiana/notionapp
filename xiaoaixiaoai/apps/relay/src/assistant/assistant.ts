@@ -295,20 +295,21 @@ export class Assistant {
 
   /** Hot-swaps the active text LLM chain and primary model name without restarting the relay. */
   setModelRuntime(llm: Llm | undefined, model?: string): void {
+    const changed = this.llm !== llm || this.opts.model !== model;
     this.llm = llm;
     this.opts.model = model;
+    if (changed && !this.closed) this.host.toViewers({ type: "assistant_reset" });
   }
 
   /** Normal chat reply mode: voice (dual-track) by default when local chatVoice is enabled on the relay. */
   replyMode(): AssistantReplyMode {
+    if (!this.opts.chatVoice) return "text";
     const saved = this.store.getSetting<AssistantReplyMode>(SETTING_REPLY_MODE);
-    return saved === "voice" || saved === "text" ? saved : (this.opts.chatVoice ? "voice" : "text");
+    return saved === "voice" || saved === "text" ? saved : "voice";
   }
 
   settings(): AssistantSettings {
-    const saved = this.store.getSetting<AssistantReplyMode>(SETTING_REPLY_MODE);
-    const includeReply = !!this.opts.chatVoice || saved === "voice" || saved === "text";
-    return includeReply
+    return this.opts.chatVoice
       ? { name: this.name, confirm: this.confirmMode(), replyMode: this.replyMode() }
       : { name: this.name, confirm: this.confirmMode() };
   }
@@ -555,7 +556,7 @@ export class Assistant {
         id: draftId,
         ts: this.now(),
         role: "assistant",
-        text: "我还没接上模型，现在回不了话。服务器上配好 POCKET_ASSISTANT_KEY 再重启就行。",
+        text: "我还没接上模型，现在回不了话。可以在管理后台「模型与语音」里配置服务商，或在服务器上配好密钥再重启。",
         error: true,
       });
       return;
@@ -574,6 +575,7 @@ export class Assistant {
       });
       const cleanAsked = asked.trim();
       if (
+        this.opts.chatVoice &&
         !run.tools.includes("set_reply_mode") &&
         !run.tools.some((t) => t.includes("agent") || t.includes("session")) &&
         !/agent|codex|claude|dsh|antigravity|反重力|发给|发送|新建|停掉/i.test(cleanAsked)
@@ -865,18 +867,26 @@ export class Assistant {
           .join(" ")
       : "";
     const recalled = memoryOn ? this.memory.buildPromptContext(queryText, 1600) : "";
-    const system =
-      systemPrompt(prof.name, opts.occasion, this.backendBoard(), {
-        confirm: !this.direct(turn),
-        persona: prof.personaText.trim() || undefined,
-        userCall: prof.userCall.trim() || undefined,
-        replyMode: this.replyMode(),
-      }) +
-      (memoryOn ? `\n\n${memoryPromptSnippet(prof, recalled)}` : "") +
-      (ledgerOn ? ledgerPromptSnippet(this.host.ledger!) : "");
+    // Keep `system` byte-for-byte static across turns so LLM prefix caches (e.g. DeepSeek KV cache)
+    // stay warm for BASE + persona + occasion; attach volatile board/memory/ledger snapshot to the latest user turn.
+    const system = systemPrompt(prof.name, opts.occasion, "", {
+      confirm: !this.direct(turn),
+      persona: prof.personaText.trim() || undefined,
+      userCall: prof.userCall.trim() || undefined,
+      replyMode: this.replyMode(),
+    });
+    const dynamicContext = [
+      this.backendBoard(),
+      memoryOn ? memoryPromptSnippet(prof, recalled) : "",
+      ledgerOn ? ledgerPromptSnippet(this.host.ledger!).trim() : "",
+    ]
+      .filter((x) => x.trim())
+      .join("\n\n");
+    const runMessages = attachDynamicContext(messages, dynamicContext);
+    const baseTools = this.opts.chatVoice ? TOOLS : TOOLS.filter((t) => t.name !== "set_reply_mode");
     const tools = opts.allow
       ? TOOLS.filter((t) => opts.allow!.has(t.name))
-      : [...TOOLS, ...MEMORY_TOOLS, ...(ledgerOn ? LEDGER_TOOLS : [])];
+      : [...baseTools, ...MEMORY_TOOLS, ...(ledgerOn ? LEDGER_TOOLS : [])];
     const rounds = opts.maxRounds ?? MAX_TOOL_ROUNDS;
     /** What is said must match what was done in this run (the guard), and the log says when it did not. */
     const finish = (raw: string) => {
@@ -892,7 +902,7 @@ export class Assistant {
       let lastDraft = 0;
       const res = await this.llm!({
         system,
-        messages,
+        messages: runMessages,
         tools,
         maxTokens: opts.occasion === "text" ? 6000 : opts.occasion === "woken" ? 4000 : 1600,
         signal: opts.signal,
@@ -915,9 +925,9 @@ export class Assistant {
         const cleaned = noEmoji(text);
         if (cleaned) return finish(cleaned);
         if (used.length > 0 && !opts.signal?.aborted) {
-          messages.push({ role: "user", content: "工具已经执行完，请不要再调用工具，直接用自然的话把刚才处理的结果回复给我。" });
+          runMessages.push({ role: "user", content: "工具已经执行完，请不要再调用工具，直接用自然的话把刚才处理的结果回复给我。" });
           try {
-            const summary = await this.llm!({ system, messages, tools: [], maxTokens: opts.occasion === "woken" ? 4000 : 1600, signal: opts.signal });
+            const summary = await this.llm!({ system, messages: runMessages, tools: [], maxTokens: opts.occasion === "woken" ? 4000 : 1600, signal: opts.signal });
             const summaryText = summary.content
               .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
               .map((b) => b.text)
@@ -930,7 +940,7 @@ export class Assistant {
         }
         return finish("");
       }
-      messages.push({ role: "assistant", content: res.content });
+      runMessages.push({ role: "assistant", content: res.content });
       const results: ContentBlock[] = [];
       for (const call of calls) {
         let out: string;
@@ -957,14 +967,18 @@ export class Assistant {
       }
       // The round after next does not exist: say so, so the answer comes instead of another look.
       if (opts.maxRounds && round === rounds - 2) results.push({ type: "text", text: "（这是最后一次查看，下一条直接按格式回。）" });
-      messages.push({ role: "user", content: results });
+      runMessages.push({ role: "user", content: results });
       opts.onDraft?.(text, steps);
     }
-    // Woken look exhausted its tool budget without emitting text: force one tool-free decision turn.
-    if (opts.occasion === "woken" && !opts.signal?.aborted && used.length > 0) {
-      messages.push({ role: "user", content: "不要再调用工具，直接按格式给出最终判断（如果只是日常小步停顿、不用打扰，回：不用说）。" });
+    // Exhausted tool budget without emitting text: force one tool-free summary/decision turn.
+    if (!opts.signal?.aborted && used.length > 0) {
+      const prompt =
+        opts.occasion === "woken"
+          ? "不要再调用工具，直接按格式给出最终判断（如果只是日常小步停顿、不用打扰，回：不用说）。"
+          : "工具轮次已到上限，不要再调用工具，直接用自然的话把你目前查到的关键进展和结论告诉我。";
+      runMessages.push({ role: "user", content: prompt });
       try {
-        const res = await this.llm!({ system, messages, tools: [], maxTokens: 4000, signal: opts.signal });
+        const res = await this.llm!({ system, messages: runMessages, tools: [], maxTokens: opts.occasion === "woken" ? 4000 : 1600, signal: opts.signal });
         const finalRaw = res.content
           .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
           .map((b) => b.text)
@@ -1022,7 +1036,7 @@ export class Assistant {
           : STATUS_ZH[eff];
     const since = a.statusSince ? `（${ago(this.now() - a.statusSince)}）` : "";
     const where = [this.deviceName(a.deviceId), a.where].filter(Boolean).join(" / ");
-    const folder = a.cwd ? a.cwd.split("/").filter(Boolean).pop() : "";
+    const folder = a.cwd ? a.cwd.split(/[\\/]/).filter(Boolean).pop() : "";
     const modelQuota = this.formatQuota(a.modelQuota);
     const sharedQuota = a.harness === "codex" && a.modelQuota?.available && !modelQuota.includes("账号") ? `账号共享实时额度：${modelQuota}` : modelQuota;
     const modelPart = [a.model ? `模型 ${a.model}` : "", sharedQuota].filter(Boolean).join(" · ");
@@ -1103,7 +1117,7 @@ export class Assistant {
   }
 
   private sessionLine(deviceId: string, s: SessionInfo): string {
-    const folder = s.cwd ? s.cwd.split("/").filter(Boolean).pop() : "";
+    const folder = s.cwd ? s.cwd.split(/[\\/]/).filter(Boolean).pop() : "";
     const open = s.agent ? this.host.agents().find((a) => a.key === s.agent) : undefined;
     return [
       this.deviceName(deviceId),
@@ -1482,7 +1496,7 @@ export class Assistant {
         for (const { id, value } of got) {
           if (!value.total) continue;
           lines.push(`${this.deviceName(id)}（${since} 以来）：共 $${value.total.costUsd.toFixed(2)}，${value.total.sessions} 个会话，${value.total.prompts} 次提问，输出 ${tokens(value.total.output)} tokens`);
-          for (const r of (value.rows ?? []).slice(0, 10)) lines.push(`  ${clip(groupBy === "cwd" ? r.label.split("/").filter(Boolean).slice(-2).join("/") : r.label, 40)} | $${r.costUsd.toFixed(2)} | ${r.sessions} 个会话 | 输出 ${tokens(r.output)}`);
+          for (const r of (value.rows ?? []).slice(0, 10)) lines.push(`  ${clip(groupBy === "cwd" ? r.label.split(/[\\/]/).filter(Boolean).slice(-2).join("/") : r.label, 40)} | $${r.costUsd.toFixed(2)} | ${r.sessions} 个会话 | 输出 ${tokens(r.output)}`);
         }
         return { out: [...lines, ...failed.map((f) => `没查成：${f}`)].join("\n"), step: "看了花费" };
       }
@@ -1503,7 +1517,7 @@ export class Assistant {
             deviceName: this.deviceName(id),
             session,
             space: space?.id,
-            summary: `在「${this.deviceName(id)}」${space ? `的空间「${space.name}」里` : ""}重新打开会话「${title}」（${s.harness}${s.cwd ? `，${s.cwd.split("/").filter(Boolean).pop()}` : ""}）`,
+            summary: `在「${this.deviceName(id)}」${space ? `的空间「${space.name}」里` : ""}重新打开会话「${title}」（${s.harness}${s.cwd ? `，${s.cwd.split(/[\\/]/).filter(Boolean).pop()}` : ""}）`,
           },
           turn,
           "先用一句话问要不要重新打开；得到明确同意后再调用 confirm_action。",
@@ -1568,6 +1582,7 @@ export class Assistant {
         };
       }
       case "set_reply_mode": {
+        if (!this.opts.chatVoice) throw new Error("当前服务器未开启本地语音双轨播报");
         if (input.mode !== "voice" && input.mode !== "text") throw new Error("mode 需要是 voice 或 text");
         const s = this.setReplyMode(input.mode, "assistant");
         return {
@@ -1589,8 +1604,9 @@ export class Assistant {
         const minutes = Number(input.in_minutes);
         if (Number.isFinite(minutes) && minutes > 0) r.dueAt = this.now() + Math.min(minutes, 60 * 24 * 14) * 60_000;
         else if (typeof input.at === "string" && input.at) {
-          const t = Date.parse(input.at);
+          const t = parseReminderAt(input.at, this.now());
           if (!Number.isFinite(t)) throw new Error(`at 不是合法时间，用 ISO 格式并带时区，例如 2026-11-13T18:30:00${utcOffset(this.now())}`);
+          if (t <= this.now()) throw new Error("提醒时间已经过去了，请指定一个将来的时间");
           r.dueAt = t;
         }
         if (!r.dueAt && !r.agent) throw new Error("需要 in_minutes / at，或者要盯的 agent");
@@ -1851,28 +1867,30 @@ export class Assistant {
       !!this.findVoiceHost() &&
       this.host.devices().some((d) => d.kind === "viewer" && d.online);
 
+    const noticeTs = this.now();
     const item = this.put({
       id: itemId,
-      ts: this.now(),
+      ts: noticeTs,
       role: "assistant",
       text,
       via: "text",
       ...(willSpeak ? { spoken: true } : {}),
     });
     if (willSpeak) this.speakItem(itemId, text);
-    for (const v of this.voices) {
-      v.notice({
-        id: newId("n"),
-        kind: "reminder",
-        title: input.alert.title,
-        body: text,
-        ts: this.now(),
-      });
-    }
+    const notice: Notice = {
+      id: newId("n"),
+      kind: "reminder",
+      title: input.alert.title,
+      body: text,
+      ts: noticeTs,
+    };
+    this.store.putNotice(notice.id, notice.ts, notice);
+    for (const s of this.sinks) s(notice);
+    for (const v of this.voices) v.notice(notice);
     this.event({
       kind: "ledger",
       msg: `wechat_notify announced ${tx.direction} ${amt}y (${tx.title})`,
-      data: { txId: tx.id, spoke: willSpeak },
+      data: { txId: tx.id, spoke: willSpeak, phones: this.sinks.size },
     });
     return item;
   }
@@ -2285,7 +2303,18 @@ export class Assistant {
       if (!r.dueAt || r.dueAt > t) continue;
       this.cancelReminder(r.id);
       // A reminder at a time is the person's own sentence: said as it is, nobody looks at anything.
-      void this.emit({ kind: "reminder", title: "提醒", body: `到点了：${clip(r.text, 52)}`, details: r.agent ? `关于 ${this.handleByKey(r.agent)}` : undefined, agent: r.agent });
+      const clipped = clip(r.text, 52);
+      const detailParts = [
+        Array.from(r.text).length > 52 ? r.text : "",
+        r.agent ? `关于 ${this.handleByKey(r.agent)}` : "",
+      ].filter(Boolean);
+      void this.emit({
+        kind: "reminder",
+        title: "提醒",
+        body: `到点了：${clipped}`,
+        details: detailParts.length ? detailParts.join("\n") : undefined,
+        agent: r.agent,
+      });
     }
   }
 
@@ -2744,7 +2773,7 @@ export function handlesFor(agents: Agent[], deviceName: (id: string) => string):
     if (space && tab && !/^\d+$/.test(tab)) list.push(`${space} ${tab}`);
     const title = oneLine(a.title || a.preview || "");
     if (title) list.push(Array.from(title).slice(0, 8).join(""));
-    const folder = a.cwd?.split("/").filter(Boolean).pop();
+    const folder = a.cwd?.split(/[\\/]/).filter(Boolean).pop();
     const program = HARNESS_NAMES[a.harness] ?? a.harness;
     list.push(folder ? `${folder} 的 ${program}` : `${program} ${a.localId}`);
     candidates.set(a.key, [...new Set(list)]);
@@ -2771,7 +2800,7 @@ function pickSpace<S extends { id: string; name: string; folder?: string }>(spac
   const r = ref.trim();
   const byId = spaces.find((s) => s.id === r) ?? spaces.find((s) => s.name === r);
   if (byId) return byId;
-  const pick = pickOne(r, spaces, (s) => [s.name, s.folder?.split("/").filter(Boolean).pop()]);
+  const pick = pickOne(r, spaces, (s) => [s.name, s.folder?.split(/[\\/]/).filter(Boolean).pop()]);
   if ("hit" in pick) return pick.hit;
   if ("several" in pick) throw new Error(`有 ${pick.several.length} 个空间都对得上「${r}」：${pick.several.map((s) => `${s.item.id}=${s.item.name}`).join("、")}，用 id 指定`);
   const all = spaces.map((s) => s.name).join("、") || "一个空间都没有";
@@ -2834,6 +2863,36 @@ function pushUser(out: Msg[], text: string): void {
   else out.push({ role: "user", content: text });
 }
 
+function attachDynamicContext(messages: Msg[], dynamicContext: string): Msg[] {
+  const out = messages.map((m) => ({
+    role: m.role,
+    content: Array.isArray(m.content) ? [...m.content] : m.content,
+  }));
+  const ctx = dynamicContext.trim();
+  if (!ctx) return out;
+  const block = `[当前实时快照与记忆参考（系统附带，非用户输入）]\n\n${ctx}`;
+  for (let i = out.length - 1; i >= 0; i--) {
+    const m = out[i]!;
+    if (m.role !== "user") continue;
+    if (typeof m.content === "string") {
+      m.content = `${m.content}\n\n---\n${block}`;
+    } else {
+      m.content = [...m.content, { type: "text", text: `\n\n---\n${block}` }];
+    }
+    return out;
+  }
+  out.push({ role: "user", content: block });
+  return out;
+}
+
+function parseReminderAt(raw: string, now: number): number {
+  const s = raw.trim();
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(s)) {
+    return Date.parse(`${s.replace(" ", "T")}${utcOffset(now)}`);
+  }
+  return Date.parse(s);
+}
+
 function pushAssistant(out: Msg[], text: string): void {
   const last = out[out.length - 1];
   if (last && last.role === "assistant" && typeof last.content === "string") last.content += `\n\n${text}`;
@@ -2847,7 +2906,7 @@ function actionState(s: AssistantAction["state"]): string {
 export function titleOf(a: Agent): string {
   const t = (a.title || a.preview || "").trim();
   if (t) return clip(oneLine(t), 40);
-  const folder = a.cwd?.split("/").filter(Boolean).pop();
+  const folder = a.cwd?.split(/[\\/]/).filter(Boolean).pop();
   return folder ? `${a.harness} @ ${folder}` : `${a.harness} ${a.localId}`;
 }
 

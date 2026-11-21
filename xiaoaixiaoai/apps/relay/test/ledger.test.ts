@@ -156,4 +156,24 @@ test("wechat_notify capture proactively announces transaction in assistant threa
   assert.equal(dup.json.duplicate, true);
   items = (await reqJson("/v1/assistant", phone.token)).json.items as Array<{ id: string; role: string; text: string }>;
   assert.equal(items.filter((it) => it.id.startsWith("ledger-") && !beforeIds.has(it.id)).length, 1);
+
+  // Also verify wechat_notify emits a phone push notice stored for /v1/notify replay.
+  const notices = relay.assistant.noticesSince(Date.now() - 60_000);
+  assert.ok(notices.some((n) => n.kind === "reminder" && /微信消费 23 元/.test(n.body)));
+
+  // Offline-synced transaction from an earlier month must still return live current-month budget and not clobber current paidYm.
+  const fixedNow = await reqJson("/v1/ledger/fixed", phone.token, { body: { name: "宽带", amountCents: 100_00 } });
+  const fxId = fixedNow.json.fixedExpenses.find((x: any) => x.name === "宽带").id as string;
+  const curPaid = await reqJson("/v1/ledger/transactions", phone.token, {
+    body: { direction: "expense", amountCents: 100_00, title: "本月宽带", fixedId: fxId, source: "manual" },
+  });
+  const currentYm = curPaid.json.state.plan.ym as string;
+  const oldTs = Date.now() - 45 * 86_400_000;
+  const backdated = await reqJson("/v1/ledger/transactions", phone.token, {
+    body: { direction: "expense", amountCents: 100_00, title: "上月宽带补录", fixedId: fxId, source: "manual", ts: oldTs },
+  });
+  assert.equal(backdated.status, 200);
+  assert.equal(backdated.json.state.plan.ym, currentYm);
+  const fxAfter = backdated.json.state.fixedExpenses.find((x: any) => x.id === fxId);
+  assert.equal(fxAfter.paidYm, currentYm);
 });

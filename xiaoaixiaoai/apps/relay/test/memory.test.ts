@@ -223,14 +223,29 @@ test("server memory bank persists across thread clear, supersedes slots, prunes 
   await new Promise((r) => setTimeout(r, 60));
 
   assert.ok(seenReqs.length >= 2);
-  assert.match(seenReqs[0]!.system, /哥哥对花粉轻微过敏/);
-  assert.match(seenReqs[0]!.system, /现在早上喝冰美式不加糖/);
+  // Static system prompt stays byte-for-byte stable for prefix caching while dynamic memory/board context rides on the user turn.
+  assert.equal(seenReqs[0]!.system, seenReqs[1]!.system);
+  assert.doesNotMatch(seenReqs[0]!.system, /# 现况/);
+  const injectedTurn = JSON.stringify(seenReqs[0]!.messages);
+  assert.match(injectedTurn, /哥哥对花粉轻微过敏/);
+  assert.match(injectedTurn, /现在早上喝冰美式不加糖/);
 
   // Confirm coffee_pref was removed while allergy memory stays.
   const finalMems = await reqJson("/v1/assistant/memories", phone.token);
   assert.equal(finalMems.status, 200);
   assert.equal(finalMems.json.total, 1);
   assert.equal(finalMems.json.memories[0].slotKey, "bond");
+
+  // Verify unpinning and clearing slotKey / expiresAt actually persists instead of keeping stale fields.
+  const bondId = finalMems.json.memories[0].id as string;
+  const unpinned = await reqJson(`/v1/assistant/memories/${bondId}`, phone.token, {
+    method: "PATCH",
+    body: { pinned: false, slotKey: "", expiresAt: null, importance: 2 },
+  });
+  assert.equal(unpinned.status, 200);
+  assert.equal(unpinned.json.item.pinned, undefined);
+  assert.equal(unpinned.json.item.slotKey, undefined);
+  assert.equal(unpinned.json.item.expiresAt, undefined);
 
   // Clear all memories endpoint removes remaining entries.
   const clearMem = await reqJson("/v1/assistant/memories", phone.token, { method: "DELETE" });

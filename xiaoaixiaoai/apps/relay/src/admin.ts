@@ -98,7 +98,7 @@ export function adminPage(): string {
   .pill.done { background:var(--info-bg); color:var(--info); }
   .pill.pink { background:var(--pink-soft); color:var(--pink-dark); }
 
-  .agent-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(310px, 1fr)); gap:12px; }
+  .agent-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(310px, 100%), 1fr)); gap:12px; }
   .agent-card { background:var(--subcard); border:1px solid var(--line); border-radius:14px; padding:13px 14px; display:flex; flex-direction:column; gap:8px; }
   .agent-top { display:flex; justify-content:space-between; gap:8px; align-items:flex-start; }
   .agent-title { font-weight:600; font-size:14px; word-break:break-word; }
@@ -123,7 +123,7 @@ export function adminPage(): string {
   .data-chip { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:11px; padding:1px 6px; border-radius:6px; background:var(--chip); color:var(--chip-ink); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .scroll { max-height:62vh; overflow:auto; border:1px solid var(--line); border-radius:11px; }
 
-  .split-2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:14px; }
+  .split-2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap:14px; }
   .field-grid { display:grid; gap:10px; }
   .field-grid label { display:grid; gap:4px; font-size:12.5px; color:var(--muted); }
   .probe-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 11px; border:1px solid var(--line); border-radius:11px; background:var(--subcard); }
@@ -239,11 +239,14 @@ export function adminPage(): string {
                 <button class="sm" id="addProviderBtn">+ 新增服务商</button>
               </span>
             </h2>
-            <div class="agent-grid" id="providerGrid" style="grid-template-columns:repeat(auto-fill, minmax(280px, 1fr))"></div>
+            <div class="agent-grid" id="providerGrid" style="grid-template-columns:repeat(auto-fill, minmax(min(280px, 100%), 1fr))"></div>
             <div id="fetchedModelsBar" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)" hidden>
               <div class="row-wrap" style="margin-bottom:8px;justify-content:space-between">
                 <span class="muted" id="fetchedModelsTitle" style="font-size:12px">已拉取模型（点击自动填入下方顺位输入框）</span>
-                <button class="ghost sm" id="closeFetchedBtn">收起</button>
+                <span class="row-wrap">
+                  <input id="fetchedModelsFilter" placeholder="筛选模型 ID…" style="width:160px;padding:4px 8px;font-size:12px">
+                  <button class="ghost sm" id="closeFetchedBtn">收起</button>
+                </span>
               </div>
               <div class="chips-bar" id="fetchedModelsList" style="margin-bottom:0"></div>
             </div>
@@ -262,7 +265,7 @@ export function adminPage(): string {
             </div>
             <div class="row-wrap">
               <select id="addModelProvider"></select>
-              <input id="addModelId" placeholder="输入模型 ID，比如 deepseek-chat / claude-sonnet-4-6" style="flex:1;min-width:220px">
+              <input id="addModelId" placeholder="输入模型 ID，比如 deepseek-chat / claude-sonnet-4-6" style="flex:1;min-width:min(220px,100%)">
               <label class="muted" style="font-size:12.5px"><input type="checkbox" id="addModelPrimary"> 设为主模型</label>
               <button id="addModelBtn">+ 加入顺位</button>
             </div>
@@ -285,9 +288,11 @@ export function adminPage(): string {
             <div class="card">
               <h2><span>助理人设配置</span><span class="muted" id="profileHint" style="font-size:12px"></span></h2>
               <div class="field-grid">
-                <label>助理名字<input id="pfName" maxlength="20"></label>
-                <label>对你的称呼<input id="pfCall" maxlength="20" placeholder="比如：哥哥"></label>
-                <label>人设补充说明<textarea id="pfPersona" rows="12"></textarea></label>
+                <label>人设预设方案<div class="row-wrap"><select id="pfPreset" style="flex:1"></select><button class="ghost sm" id="applyPresetBtn" type="button">套用选中预设</button></div></label>
+                <label>助理名字<input id="pfName" maxlength="40"></label>
+                <label>对你的称呼<input id="pfCall" maxlength="24" placeholder="比如：哥哥"></label>
+                <label><span>人设补充说明 <span class="muted" id="pfLenHint" style="font-weight:400"></span></span><textarea id="pfPersona" rows="12" maxlength="8000"></textarea></label>
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="pfAutoMem"> 对话中自动记住偏好、习惯与重要事实</label>
                 <div class="row-wrap"><button id="saveProfileBtn">保存人设</button><span id="profileMsg" class="muted" style="font-size:12px"></span></div>
               </div>
             </div>
@@ -381,7 +386,9 @@ export function adminPage(): string {
       <label>显示名称<input id="pvLabel" placeholder="可选，比如 小米 MiMo"></label>
       <label>接口协议<select id="pvProtocol"><option value="openai">OpenAI 兼容（/chat/completions）</option><option value="anthropic">Anthropic（/v1/messages）</option></select></label>
       <label>Base URL<input id="pvUrl" placeholder="https://api.deepseek.com"></label>
-      <label>API Key<input id="pvKey" type="password" autocomplete="off" placeholder="新增必填；编辑留空则保留原密钥"></label>
+      <label>认证方式<select id="pvAuth"><option value="">自动（按协议默认）</option><option value="bearer">Bearer Token</option><option value="x-api-key">x-api-key</option><option value="api-key">api-key</option><option value="none">无密钥（本地/内网服务）</option></select></label>
+      <label>Token 上限字段<select id="pvMaxTokensField"><option value="">默认（max_tokens）</option><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens（推理/新模型）</option></select></label>
+      <label>API Key<input id="pvKey" type="password" autocomplete="off" placeholder="新增必填（无密钥选 none）；编辑留空则保留原密钥"></label>
     </div>
     <p class="error-line" id="pvError" style="margin:0"></p>
     <div class="row-wrap" style="justify-content:flex-end">
@@ -443,7 +450,9 @@ export function adminPage(): string {
   const statusLabel = (s) => ({ blocked: "需要你", working: "工作中", done: "已完成", idle: "空闲" }[s] || s || "未知");
 
   async function api(path, init = {}, raw = false) {
-    const res = await fetch(base + path, { ...init, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", ...(init.headers || {}) } });
+    const headers = { Authorization: "Bearer " + token, ...(init.headers || {}) };
+    if (init.body !== undefined && !("Content-Type" in headers)) headers["Content-Type"] = "application/json";
+    const res = await fetch(base + path, { ...init, headers });
     if (res.status === 401) { showLogin("令牌不对，或者已经更换"); throw new Error("unauthorized"); }
     if (raw) {
       const text = await res.text();
@@ -487,6 +496,7 @@ export function adminPage(): string {
       $("login").hidden = true;
       $("app").hidden = false;
       await loadAll();
+      startPoll();
     } catch (e) {
       if (e.message !== "unauthorized") $("loginError").textContent = e.message;
     }
@@ -528,17 +538,29 @@ export function adminPage(): string {
       };
     }
 
+    const voiceReady = Boolean(o.voice && (o.voice.provider !== "local" || o.assistant.voiceHostOnline));
+    const voicePillCls = voiceReady ? "on" : (o.voice ? "warn" : "");
+    const voicePillText = voiceReady ? "已就绪" : (o.voice ? "待连电脑" : "未开");
+    const canToggleReply = Boolean(o.voice?.provider === "local" || o.assistant.replyMode === "voice");
     $("voicePanel").innerHTML =
-      '<div class="probe-row"><div><b>回复播报模式</b><div class="muted" style="font-size:12px">当前：' + (o.assistant.replyMode === "voice" ? "双轨语音播报" : "纯文字") + '</div></div><button class="ghost sm" id="toggleReplyBtn">切到' + (o.assistant.replyMode === "voice" ? "纯文字" : "双轨语音") + '</button></div>' +
+      '<div class="probe-row"><div><b>回复播报模式</b><div class="muted" style="font-size:12px">当前：' + (o.assistant.replyMode === "voice" ? "双轨语音播报" : "纯文字") + (!canToggleReply ? "（未启用本地语音通道）" : "") + '</div></div><button class="ghost sm" id="toggleReplyBtn"' + (canToggleReply ? "" : " disabled") + '>切到' + (o.assistant.replyMode === "voice" ? "纯文字" : "双轨语音") + '</button></div>' +
       '<div class="probe-row"><div><b>动手前确认</b><div class="muted" style="font-size:12px">当前：' + (o.assistant.confirm === "always" ? "每次先问再做" : "直接执行") + '</div></div><button class="ghost sm" id="toggleConfirmBtn">切到' + (o.assistant.confirm === "always" ? "直接做" : "先问") + '</button></div>' +
-      '<div class="probe-row"><div><b>语音通道</b><div class="muted" style="font-size:12px">' + esc(o.voice ? (o.voice.provider + " · " + o.voice.model) : "未启用") + " · Windows语音宿主 " + (o.assistant.voiceHostOnline ? "在线" : "未连") + '</div></div><span class="pill ' + (o.assistant.voiceHostOnline || o.voice ? "on" : "") + '">' + (o.voice ? "已就绪" : "未开") + "</span></div>";
+      '<div class="probe-row"><div><b>语音通道</b><div class="muted" style="font-size:12px">' + esc(o.voice ? (o.voice.provider + " · " + o.voice.model) : "未启用") + " · Windows语音宿主 " + (o.assistant.voiceHostOnline ? "在线" : "未连") + '</div></div><span class="pill ' + voicePillCls + '">' + voicePillText + "</span></div>";
     $("toggleReplyBtn").onclick = async () => {
-      await api("/v1/assistant/settings", { method: "POST", body: JSON.stringify({ replyMode: o.assistant.replyMode === "voice" ? "text" : "voice" }) });
-      await loadOverview();
+      try {
+        await api("/v1/assistant/settings", { method: "POST", body: JSON.stringify({ replyMode: o.assistant.replyMode === "voice" ? "text" : "voice" }) });
+        await loadOverview();
+      } catch (e) {
+        alert(e.message);
+      }
     };
     $("toggleConfirmBtn").onclick = async () => {
-      await api("/v1/assistant/settings", { method: "POST", body: JSON.stringify({ confirm: o.assistant.confirm === "always" ? "never" : "always" }) });
-      await loadOverview();
+      try {
+        await api("/v1/assistant/settings", { method: "POST", body: JSON.stringify({ confirm: o.assistant.confirm === "always" ? "never" : "always" }) });
+        await loadOverview();
+      } catch (e) {
+        alert(e.message);
+      }
     };
 
     const rows = (o.actions || []).map((a) =>
@@ -591,7 +613,11 @@ export function adminPage(): string {
     }).join("") || '<p class="muted">当前筛选下没有 Agent</p>';
 
     for (const b of document.querySelectorAll("[data-ag-log]")) {
-      b.onclick = () => { $("text").value = b.dataset.agLog; $("kind").value = ""; $("level").value = ""; switchTab("logs"); };
+      b.onclick = () => {
+        $("device").value = ""; $("source").value = ""; $("kind").value = ""; $("level").value = "";
+        $("text").value = b.dataset.agLog;
+        switchTab("logs");
+      };
     }
     for (const b of document.querySelectorAll("[data-ag-diag]")) {
       b.onclick = () => openDiagnostics({ agent: b.dataset.agDiag, label: b.dataset.agName });
@@ -625,24 +651,55 @@ export function adminPage(): string {
     ).join("") || '<tr><td colspan="8" class="muted">还没有设备</td></tr>';
 
     for (const b of document.querySelectorAll("[data-dev-log]")) {
-      b.onclick = () => { $("device").value = b.dataset.devLog; switchTab("logs"); };
+      b.onclick = () => {
+        $("source").value = ""; $("kind").value = ""; $("level").value = ""; $("text").value = "";
+        $("device").value = b.dataset.devLog;
+        switchTab("logs");
+      };
     }
     for (const b of document.querySelectorAll("[data-revoke]")) {
       b.onclick = async () => {
         if (!confirm("吊销「" + b.dataset.name + "」？它会立刻断开，要重新配对才能再连。")) return;
-        await api("/v1/devices/" + encodeURIComponent(b.dataset.revoke), { method: "DELETE" });
-        await loadDevices();
+        try {
+          await api("/v1/devices/" + encodeURIComponent(b.dataset.revoke), { method: "DELETE" });
+          await loadDevices();
+        } catch (e) {
+          alert(e.message);
+        }
       };
     }
   }
 
   $("genPairBtn").onclick = async () => {
-    const kind = $("pairKind").value;
-    const out = await api("/v1/pair/codes", { method: "POST", body: JSON.stringify(kind ? { kind } : {}) });
-    $("pairResult").textContent = "配对码: " + out.code + " · 链接: " + out.link;
+    try {
+      const kind = $("pairKind").value;
+      const out = await api("/v1/pair/codes", { method: "POST", body: JSON.stringify(kind ? { kind } : {}) });
+      $("pairResult").textContent = "配对码: " + out.code + " · 链接: " + out.link;
+    } catch (e) {
+      alert(e.message);
+    }
   };
 
   let lastModels = null;
+  let fetchedModelsState = { provider: "", models: [] };
+
+  function renderFetchedModels() {
+    const q = $("fetchedModelsFilter").value.trim().toLowerCase();
+    const list = fetchedModelsState.models.filter((m) => !q || m.toLowerCase().includes(q));
+    const shown = list.slice(0, 120);
+    $("fetchedModelsList").innerHTML = shown.length
+      ? shown.map((m) => '<button class="chip-btn" data-pick-pv="' + esc(fetchedModelsState.provider) + '" data-pick-md="' + esc(m) + '">' + esc(m) + "</button>").join("") +
+        (list.length > shown.length ? '<span class="muted" style="font-size:12px;padding:4px 6px">还有 ' + (list.length - shown.length) + " 个，输入关键字筛选</span>" : "")
+      : '<span class="muted">' + (fetchedModelsState.models.length ? "没有匹配筛选条件的模型" : "接口返回空列表，请在下方直接输入模型 ID") + "</span>";
+    for (const chip of document.querySelectorAll("[data-pick-md]")) {
+      chip.onclick = () => {
+        $("addModelProvider").value = chip.dataset.pickPv;
+        $("addModelId").value = chip.dataset.pickMd;
+        $("addModelId").focus();
+      };
+    }
+  }
+  $("fetchedModelsFilter").oninput = renderFetchedModels;
 
   function flashModelMsg(txt) {
     $("modelMsg").textContent = txt;
@@ -659,12 +716,13 @@ export function adminPage(): string {
     $("providerGrid").innerHTML = (cfg.providers || []).map((p) => {
       const srcLabel = p.source === "server" ? (p.overridden ? "预设已覆盖" : "服务器预设") : "控制台新增";
       const protoLabel = p.protocol === "anthropic" ? "Anthropic" : p.protocol === "openai" ? "OpenAI 兼容" : "GPT OAuth";
+      const displayName = p.label && p.label !== p.id ? (p.label + " (" + p.id + ")") : p.id;
       const revertBtn = !p.readOnly && (p.overridden || p.source === "console")
         ? '<button class="ghost sm" data-pv-del="' + esc(p.id) + '">' + (p.source === "server" ? "还原" : "删除") + "</button>"
         : "";
       return '<div class="agent-card">' +
-        '<div class="agent-top"><div><div class="agent-title">' + esc(p.id) + ' <span class="pill">' + esc(protoLabel) + '</span></div><div class="agent-meta mono">' + esc(p.baseUrl) + '</div></div>' +
-        '<span class="pill ' + (p.hasKey ? "on" : "warn") + '">' + esc(p.maskedKey || "无密钥") + '</span></div>' +
+        '<div class="agent-top"><div><div class="agent-title">' + esc(displayName) + ' <span class="pill">' + esc(protoLabel) + '</span></div><div class="agent-meta mono">' + esc(p.baseUrl) + '</div></div>' +
+        '<span class="pill ' + (p.hasKey || p.auth === "none" ? "on" : "warn") + '">' + esc(p.auth === "none" ? "无密钥" : (p.maskedKey || "未配密钥")) + '</span></div>' +
         '<div class="row-wrap" style="justify-content:space-between">' +
           '<span class="muted" style="font-size:12px">来源：' + esc(srcLabel) + "</span>" +
           '<span class="row-wrap">' +
@@ -689,17 +747,10 @@ export function adminPage(): string {
           const res = await api("/v1/admin/models/fetch", { method: "POST", body: JSON.stringify({ provider: id }) });
           $("fetchedModelsBar").hidden = false;
           const list = res.models || [];
+          fetchedModelsState = { provider: id, models: list };
+          $("fetchedModelsFilter").value = "";
           $("fetchedModelsTitle").textContent = id + " 可用模型（共 " + list.length + " 个，点选自动填入下方）" + (res.note ? (" · " + res.note) : "");
-          $("fetchedModelsList").innerHTML = list.length
-            ? list.slice(0, 80).map((m) => '<button class="chip-btn" data-pick-pv="' + esc(id) + '" data-pick-md="' + esc(m) + '">' + esc(m) + "</button>").join("")
-            : '<span class="muted">接口返回空列表，请在下方直接输入模型 ID</span>';
-          for (const chip of document.querySelectorAll("[data-pick-md]")) {
-            chip.onclick = () => {
-              $("addModelProvider").value = chip.dataset.pickPv;
-              $("addModelId").value = chip.dataset.pickMd;
-              $("addModelId").focus();
-            };
-          }
+          renderFetchedModels();
         } catch (e) {
           alert(e.message);
         } finally {
@@ -711,10 +762,14 @@ export function adminPage(): string {
     for (const b of document.querySelectorAll("[data-pv-del]")) {
       b.onclick = async () => {
         const id = b.dataset.pvDel;
-        const next = await api("/v1/admin/models/provider/" + encodeURIComponent(id), { method: "DELETE" });
-        renderModelsConfig(next);
-        await loadOverview();
-        flashModelMsg("已更新并生效");
+        try {
+          const next = await api("/v1/admin/models/provider/" + encodeURIComponent(id), { method: "DELETE" });
+          renderModelsConfig(next);
+          await loadOverview();
+          flashModelMsg("已更新并生效");
+        } catch (e) {
+          alert(e.message);
+        }
       };
     }
 
@@ -808,6 +863,8 @@ export function adminPage(): string {
           badge.textContent = r.ok ? (r.latencyMs + "ms · " + (r.reply || "ok")) : ("失败 " + r.latencyMs + "ms: " + (r.error || ""));
         }
       }
+    } catch (e) {
+      alert("测速失败：" + e.message);
     } finally {
       targetBtn.disabled = false;
       targetBtn.textContent = origText;
@@ -824,8 +881,10 @@ export function adminPage(): string {
     $("pvLabel").value = existing ? (existing.label || "") : "";
     $("pvProtocol").value = existing ? (existing.protocol === "anthropic" ? "anthropic" : "openai") : "openai";
     $("pvUrl").value = existing ? (existing.baseUrl || "") : "";
+    $("pvAuth").value = existing ? (existing.auth || "") : "";
+    $("pvMaxTokensField").value = existing ? (existing.maxTokensField || "") : "";
     $("pvKey").value = "";
-    $("pvKey").placeholder = existing ? "留空则继续使用原密钥" : "输入服务商 API Key";
+    $("pvKey").placeholder = existing ? "留空则继续使用原密钥" : "输入服务商 API Key（无密钥请将认证方式选为无密钥）";
     $("pvError").textContent = "";
     $("providerModal").hidden = false;
   }
@@ -837,6 +896,7 @@ export function adminPage(): string {
     $("pvLabel").value = p.label;
     $("pvProtocol").value = p.protocol;
     $("pvUrl").value = p.baseUrl;
+    $("pvAuth").value = p.keyless ? "none" : "";
   };
   $("addProviderBtn").onclick = () => openProviderModal(null);
   $("pvCloseBtn").onclick = () => { $("providerModal").hidden = true; };
@@ -851,6 +911,8 @@ export function adminPage(): string {
           label: $("pvLabel").value.trim() || undefined,
           protocol: $("pvProtocol").value,
           baseUrl: $("pvUrl").value.trim(),
+          auth: $("pvAuth").value || undefined,
+          maxTokensField: $("pvMaxTokensField").value || undefined,
           apiKey: $("pvKey").value.trim() || undefined,
         }),
       });
@@ -865,10 +927,14 @@ export function adminPage(): string {
   $("closeFetchedBtn").onclick = () => { $("fetchedModelsBar").hidden = true; };
   $("resetModelsBtn").onclick = async () => {
     if (!confirm("恢复为中转服启动预设的模型与服务商？")) return;
-    const next = await api("/v1/admin/models/reset", { method: "POST", body: "{}" });
-    renderModelsConfig(next);
-    await loadOverview();
-    flashModelMsg("已恢复服务器默认配置");
+    try {
+      const next = await api("/v1/admin/models/reset", { method: "POST", body: "{}" });
+      renderModelsConfig(next);
+      await loadOverview();
+      flashModelMsg("已恢复服务器默认配置");
+    } catch (e) {
+      alert(e.message);
+    }
   };
   $("addModelBtn").onclick = async () => {
     const provider = $("addModelProvider").value;
@@ -890,17 +956,42 @@ export function adminPage(): string {
   };
   $("probeBtn").onclick = () => runProbe();
 
+  let personaPresets = [];
+  let loadedPresetId = "custom";
+  let loadedPresetText = "";
+
+  function updatePersonaLen() {
+    const len = Array.from($("pfPersona").value || "").length;
+    $("pfLenHint").textContent = "(" + len + " / 8000 字)";
+    $("pfLenHint").style.color = len > 7600 ? "var(--err)" : "";
+  }
+  $("pfPersona").oninput = () => {
+    updatePersonaLen();
+    if ($("pfPreset").value !== "custom" && $("pfPersona").value !== loadedPresetText) {
+      $("pfPreset").value = "custom";
+    }
+  };
+
   async function loadDataTab() {
     const [pf, mem, led] = await Promise.all([
       api("/v1/assistant/profile"),
       api("/v1/assistant/memories?limit=60" + ($("memQuery").value.trim() ? "&q=" + encodeURIComponent($("memQuery").value.trim()) : "")),
       api("/v1/ledger"),
     ]);
+    personaPresets = pf?.presets || [];
+    if (personaPresets.length) {
+      $("pfPreset").innerHTML = personaPresets.map((pr) => '<option value="' + esc(pr.id) + '">' + esc(pr.label) + "</option>").join("");
+    }
     if (pf?.profile) {
+      loadedPresetId = pf.profile.presetId || "custom";
+      loadedPresetText = pf.profile.personaText || "";
+      if ([...$("pfPreset").options].some((o) => o.value === loadedPresetId)) $("pfPreset").value = loadedPresetId;
       $("pfName").value = pf.profile.name || "";
       $("pfCall").value = pf.profile.userCall || "";
-      $("pfPersona").value = pf.profile.personaText || "";
-      $("profileHint").textContent = pf.profile.updatedBy ? ("最后由 " + pf.profile.updatedBy + " 修改于 " + ago(pf.profile.updatedAt)) : "";
+      $("pfPersona").value = loadedPresetText;
+      $("pfAutoMem").checked = pf.profile.autoMemory !== false;
+      updatePersonaLen();
+      $("profileHint").textContent = pf.profile.updatedAt ? ("上次保存于 " + ago(pf.profile.updatedAt)) : ("预设：" + loadedPresetId);
     }
     $("memTotal").textContent = "(共 " + (mem?.total ?? 0) + " 条)";
     $("memTable").querySelector("tbody").innerHTML = (mem?.memories || []).map((m) =>
@@ -915,25 +1006,58 @@ export function adminPage(): string {
     ).join("") || '<tr><td colspan="6" class="muted">暂无账单记录</td></tr>';
   }
 
+  $("applyPresetBtn").onclick = () => {
+    const sel = personaPresets.find((x) => x.id === $("pfPreset").value);
+    if (!sel) return;
+    if (sel.id !== "custom") {
+      $("pfCall").value = sel.userCall || "";
+      $("pfPersona").value = sel.personaText || "";
+      loadedPresetText = $("pfPersona").value;
+      updatePersonaLen();
+      $("profileMsg").textContent = "已填入预设「" + sel.label + "」，点保存生效";
+    }
+  };
   $("saveProfileBtn").onclick = async () => {
-    await api("/v1/assistant/profile", {
-      method: "POST",
-      body: JSON.stringify({ name: $("pfName").value.trim(), userCall: $("pfCall").value.trim(), personaText: $("pfPersona").value }),
-    });
-    $("profileMsg").textContent = "已保存";
-    setTimeout(() => { $("profileMsg").textContent = ""; }, 2000);
-    await loadOverview();
+    $("profileMsg").textContent = "保存中…";
+    try {
+      const saved = await api("/v1/assistant/profile", {
+        method: "POST",
+        body: JSON.stringify({
+          name: $("pfName").value.trim(),
+          userCall: $("pfCall").value.trim(),
+          presetId: $("pfPreset").value || "custom",
+          personaText: $("pfPersona").value,
+          autoMemory: $("pfAutoMem").checked,
+        }),
+      });
+      loadedPresetId = saved?.profile?.presetId || $("pfPreset").value || "custom";
+      loadedPresetText = saved?.profile?.personaText || $("pfPersona").value;
+      $("profileHint").textContent = saved?.profile?.updatedAt ? ("上次保存于 " + ago(saved.profile.updatedAt)) : "";
+      $("profileMsg").textContent = "已保存并热生效";
+      setTimeout(() => { if ($("profileMsg").textContent === "已保存并热生效") $("profileMsg").textContent = ""; }, 2500);
+      await loadOverview();
+    } catch (e) {
+      $("profileMsg").textContent = "保存失败：" + e.message;
+    }
   };
   $("memSearchBtn").onclick = () => loadDataTab().catch(() => {});
+  $("memQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") loadDataTab().catch(() => {}); });
   $("memExportBtn").onclick = async () => {
-    const res = await api("/v1/assistant/memories/export");
-    openTextModal("长期记忆 Markdown 导出", res.markdown || "");
+    try {
+      const res = await api("/v1/assistant/memories/export");
+      openTextModal("长期记忆 Markdown 导出", res.markdown || "", "xiaoaixiaoai-memories");
+    } catch (e) {
+      alert(e.message);
+    }
   };
 
-  function query(after) {
+  let followBusy = false;
+  let followFallbackSince = "";
+
+  function query(after, overrideSince) {
     const q = new URLSearchParams();
     if (after) q.set("after", String(after));
-    else q.set("since", $("since").value);
+    else q.set("since", overrideSince || $("since").value);
     for (const k of ["device", "source", "kind", "level", "text"]) if ($(k).value.trim()) q.set(k, $(k).value.trim());
     q.set("limit", after ? "500" : $("limit").value);
     return "/v1/logs?" + q.toString();
@@ -950,22 +1074,29 @@ export function adminPage(): string {
 
   async function loadLogs() {
     const { entries } = await api(query());
-    lastId = entries.length ? entries[entries.length - 1].id : lastId;
+    lastId = entries.length ? entries[entries.length - 1].id : 0;
+    followFallbackSince = String(Date.now());
     $("logs").querySelector("tbody").innerHTML = entries.slice().reverse().map(logRow).join("") || '<tr><td colspan="5" class="muted">这段时间没有日志</td></tr>';
     $("logCount").textContent = "(" + entries.length + " 条)";
     for (const ch of document.querySelectorAll("[data-k]")) ch.classList.toggle("active", ch.dataset.k === $("kind").value.trim());
   }
 
   async function follow() {
+    if (followBusy) return;
+    followBusy = true;
     try {
-      const { entries } = await api(query(lastId));
+      const { entries } = await api(lastId > 0 ? query(lastId) : query(0, followFallbackSince || "15m"));
       if (!entries.length) return;
       lastId = entries[entries.length - 1].id;
       const body = $("logs").querySelector("tbody");
       if (body.querySelector("td[colspan]")) body.innerHTML = "";
       body.insertAdjacentHTML("afterbegin", entries.slice().reverse().map(logRow).join(""));
+      while (body.rows.length > 500) body.deleteRow(body.rows.length - 1);
+      $("logCount").textContent = "(" + body.rows.length + " 条)";
     } catch {
       /* ignore transient poll failure */
+    } finally {
+      followBusy = false;
     }
   }
 
@@ -977,9 +1108,9 @@ export function adminPage(): string {
   for (const ch of document.querySelectorAll("[data-k]")) {
     ch.onclick = () => { $("kind").value = ch.dataset.k; loadLogs().catch(() => {}); };
   }
-  $("search").onclick = () => loadLogs();
-  for (const id of ["since", "device", "source", "level", "limit"]) $(id).onchange = () => loadLogs();
-  for (const id of ["kind", "text"]) $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") loadLogs(); });
+  $("search").onclick = () => loadLogs().catch(() => {});
+  for (const id of ["since", "device", "source", "level", "limit"]) $(id).onchange = () => loadLogs().catch(() => {});
+  for (const id of ["kind", "text"]) $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") loadLogs().catch(() => {}); });
   $("follow").onchange = () => {
     stopFollow();
     if ($("follow").checked) followTimer = setInterval(follow, 4000);
@@ -987,18 +1118,18 @@ export function adminPage(): string {
 
   function diagParams(opts = {}) {
     const q = new URLSearchParams();
-    q.set("since", $("since").value || "1h");
-    q.set("limit", $("limit").value || "300");
+    q.set("since", opts.global ? "1h" : ($("since").value || "1h"));
+    q.set("limit", opts.global ? "300" : ($("limit").value || "300"));
     if (opts.agent) q.set("agent", opts.agent);
-    else {
+    else if (!opts.global) {
       for (const k of ["device", "source", "kind", "level", "text"]) if ($(k).value.trim()) q.set(k, $(k).value.trim());
     }
     q.set("format", diagState.format);
     return "/v1/diagnostics?" + q.toString();
   }
 
-  function openTextModal(title, text) {
-    diagState = { format: "markdown", agent: "", text, staticOnly: true };
+  function openTextModal(title, text, filePrefix = "xiaoaixiaoai-export") {
+    diagState = { format: "markdown", agent: "", global: false, text, staticOnly: true, filePrefix };
     $("diagTitle").textContent = title;
     $("diagFormatBtn").hidden = true;
     $("diagMeta").textContent = text.length + " 字符";
@@ -1007,7 +1138,7 @@ export function adminPage(): string {
   }
 
   async function openDiagnostics(opts = {}) {
-    diagState = { format: "markdown", agent: opts.agent || "", text: "", staticOnly: false, label: opts.label || "" };
+    diagState = { format: "markdown", agent: opts.agent || "", global: Boolean(opts.global), text: "", staticOnly: false, label: opts.label || "", filePrefix: "xiaoaixiaoai-diagnostics" };
     $("diagFormatBtn").hidden = false;
     $("diagTitle").textContent = opts.label ? ("AI 排障包 · " + opts.label) : "AI 排障诊断包（三端合并 · 已脱敏）";
     await fetchDiagnostics();
@@ -1015,7 +1146,7 @@ export function adminPage(): string {
   }
 
   async function fetchDiagnostics() {
-    const url = diagParams({ agent: diagState.agent });
+    const url = diagParams({ agent: diagState.agent, global: diagState.global });
     $("diagMeta").textContent = "加载中…";
     let text = await api(url, {}, true);
     if (diagState.format === "json") {
@@ -1030,12 +1161,16 @@ export function adminPage(): string {
     $("diagBody").textContent = text;
   }
 
-  $("exportTopBtn").onclick = () => openDiagnostics();
-  $("exportLogBtn").onclick = () => openDiagnostics();
+  $("exportTopBtn").onclick = () => openDiagnostics({ global: true }).catch((e) => alert(e.message));
+  $("exportLogBtn").onclick = () => openDiagnostics().catch((e) => alert(e.message));
   $("diagFormatBtn").onclick = async () => {
     if (diagState.staticOnly) return;
     diagState.format = diagState.format === "markdown" ? "json" : "markdown";
-    await fetchDiagnostics();
+    try {
+      await fetchDiagnostics();
+    } catch (e) {
+      alert(e.message);
+    }
   };
   $("diagCopyBtn").onclick = async () => {
     try {
@@ -1055,14 +1190,19 @@ export function adminPage(): string {
   };
   $("diagDownloadBtn").onclick = () => {
     const ext = diagState.format === "json" ? "json" : "md";
+    const prefix = diagState.filePrefix || "xiaoaixiaoai-diagnostics";
     const blob = new Blob([diagState.text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "xiaoaixiaoai-diagnostics-" + new Date().toISOString().replace(/[:.]/g, "-") + "." + ext;
+    a.href = url;
+    a.download = prefix + "-" + new Date().toISOString().replace(/[:.]/g, "-") + "." + ext;
     a.click();
-    URL.revokeObjectURL(a.href);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   $("diagCloseBtn").onclick = () => { $("diagModal").hidden = true; };
+  for (const mid of ["diagModal", "quickModal", "providerModal"]) {
+    $(mid).addEventListener("click", (e) => { if (e.target === $(mid)) $(mid).hidden = true; });
+  }
 
   function renderQuickList() {
     const q = $("quickInput").value.trim().toLowerCase();
@@ -1075,7 +1215,11 @@ export function adminPage(): string {
     ];
     const agItems = lastAgents.slice(0, 60).map((a) => ({
       label: "Agent [" + statusLabel(a.status) + "] " + (a.title || a.key) + " · " + a.deviceName,
-      run: () => { $("text").value = a.key; switchTab("logs"); },
+      run: () => {
+        $("device").value = ""; $("source").value = ""; $("kind").value = ""; $("level").value = "";
+        $("text").value = a.key;
+        switchTab("logs");
+      },
     }));
     const list = [...tabs, ...agItems].filter((x) => !q || x.label.toLowerCase().includes(q)).slice(0, 20);
     $("quickList").innerHTML = list.map((x, i) => '<button class="ghost" style="text-align:left;justify-content:flex-start" data-qidx="' + i + '">' + esc(x.label) + "</button>").join("") || '<span class="muted">没有匹配项</span>';

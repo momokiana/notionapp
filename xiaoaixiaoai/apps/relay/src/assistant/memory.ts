@@ -129,13 +129,18 @@ export class MemoryService {
     if (slotKey) {
       const existing = this.store.findMemoryBySlot(category, slotKey);
       if (existing) {
+        const nextPinned = pinned !== undefined ? pinned : Boolean(existing.pinned);
+        const nextExpires = expiresAt !== undefined ? expiresAt : undefined;
         const next: AssistantMemoryItem = {
-          ...existing,
+          id: existing.id,
+          category: existing.category,
+          slotKey,
           content,
           importance: Math.max(importance, existing.importance) as 1 | 2 | 3,
-          ...(pinned !== undefined ? { pinned } : existing.pinned ? { pinned: true } : {}),
-          ...(expiresAt !== undefined ? { expiresAt } : {}),
+          ...(nextPinned ? { pinned: true } : {}),
+          ...(nextExpires !== undefined ? { expiresAt: nextExpires } : {}),
           source,
+          createdAt: existing.createdAt,
           updatedAt: t,
         };
         this.store.putMemory(next);
@@ -146,17 +151,27 @@ export class MemoryService {
     // Deduplicate identical or superseding strings inside the same category.
     const normalized = content.toLowerCase();
     const existingList = this.store.listMemories();
-    const dup = existingList.find(
-      (m) => m.category === category && !m.slotKey && (m.content.toLowerCase() === normalized || (normalized.length >= 8 && m.content.toLowerCase().includes(normalized))),
-    );
+    const dup = existingList.find((m) => {
+      if (m.category !== category || m.slotKey) return false;
+      const mLower = m.content.toLowerCase();
+      return (
+        mLower === normalized ||
+        (normalized.length >= 8 && mLower.includes(normalized)) ||
+        (mLower.length >= 8 && normalized.includes(mLower))
+      );
+    });
     if (dup) {
+      const nextPinned = pinned !== undefined ? pinned : Boolean(dup.pinned);
+      const nextExpires = expiresAt !== undefined ? expiresAt : dup.expiresAt;
       const next: AssistantMemoryItem = {
-        ...dup,
+        id: dup.id,
+        category: dup.category,
         content: content.length >= dup.content.length ? content : dup.content,
         importance: Math.max(dup.importance, importance) as 1 | 2 | 3,
-        ...(pinned ?? dup.pinned ? { pinned: pinned ?? dup.pinned } : {}),
-        ...(expiresAt !== undefined ? { expiresAt } : dup.expiresAt ? { expiresAt: dup.expiresAt } : {}),
+        ...(nextPinned ? { pinned: true } : {}),
+        ...(nextExpires !== undefined ? { expiresAt: nextExpires } : {}),
         source,
+        createdAt: dup.createdAt,
         updatedAt: t,
       };
       this.store.putMemory(next);
@@ -216,13 +231,15 @@ export class MemoryService {
       if (clash && clash.id !== existing.id) this.store.deleteMemory(clash.id);
     }
     const next: AssistantMemoryItem = {
-      ...existing,
+      id: existing.id,
       category,
       ...(slotKey ? { slotKey } : {}),
       content,
       importance,
       ...(pinned ? { pinned: true } : {}),
       ...(expiresAt !== undefined ? { expiresAt } : {}),
+      source: existing.source,
+      createdAt: existing.createdAt,
       updatedAt: this.now(),
     };
     this.store.putMemory(next);
@@ -269,14 +286,19 @@ export class MemoryService {
     const core = all.filter((m) => m.pinned || m.importance === 3).slice(0, 12);
     const coreIds = new Set(core.map((m) => m.id));
     const qTokens = searchTokens(queryText);
-    const plain = queryText.trim().toLowerCase();
+    const plainFragments = queryText
+      .split(/[\n\r\t，。！？、；：,.!?;:]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter((s) => s.length >= 2);
 
     const pool = all
       .filter((m) => !coreIds.has(m.id))
       .map((m) => {
         const textLower = `${m.content} ${m.slotKey ?? ""}`.toLowerCase();
         let score = 0;
-        if (plain && textLower.includes(plain)) score += 12;
+        for (const frag of plainFragments) {
+          if (textLower.includes(frag)) score += 10;
+        }
         if (qTokens.size) {
           const mTokens = searchTokens(textLower);
           for (const tok of qTokens) if (mTokens.has(tok)) score += 3;

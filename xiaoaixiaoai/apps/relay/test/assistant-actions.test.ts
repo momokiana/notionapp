@@ -230,8 +230,8 @@ test("by default an action runs at once and the answer reports what really happe
   const card = items.filter((i) => i.action).pop()!;
   assert.equal(card.action!.state, "done");
   assert.match(card.action!.result!, /排在它的输入框里/);
-  // The board the model reads says what is waiting in the agent's input.
-  assert.match(String(seen[seen.length - 1]!.system), /输入框里排着 1 条没处理/);
+  // The live board snapshot the model reads rides in messages (keeping system static for KV caching) and says what is waiting in the agent's input.
+  assert.match(JSON.stringify(seen[seen.length - 1]!.messages), /输入框里排着 1 条没处理/);
   await publish([]);
 });
 
