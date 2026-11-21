@@ -652,6 +652,9 @@ export class Relay {
           ts: typeof body?.ts === "number" ? body.ts : undefined,
           adjustBalance: typeof body?.adjustBalance === "boolean" ? body.adjustBalance : true,
         });
+        if (source === "wechat_notify" && !out.duplicate) {
+          this.assistant.onLedgerCapture(out);
+        }
         sendJson(res, 200, out);
       } catch (e) {
         sendError(res, 400, "bad_request", (e as Error).message);
@@ -1276,6 +1279,22 @@ export class Relay {
           try {
             this.store.bindRuntimeTask({ hostId: conn.device.id, ...dispatch }, p.caller.device.id, Date.now());
           } catch { /* Notice persistence is best-effort; leave the real RPC result unchanged and private. */ }
+        }
+        if (
+          !("resolve" in p.caller) &&
+          p.caller.device.kind === "viewer" &&
+          frame.error === undefined &&
+          (p.method === "terminal.send" || p.method === "terminal.keys") &&
+          p.params &&
+          typeof p.params === "object"
+        ) {
+          const rawAgent = (p.params as Record<string, unknown>).agent;
+          if (typeof rawAgent === "string" && rawAgent) {
+            const key = rawAgent.includes("/")
+              ? rawAgent
+              : (this.agents.get(conn.device.id)?.find((a) => a.localId === rawAgent || a.key === rawAgent)?.key ?? `${conn.device.id}/${rawAgent}`);
+            this.assistant.noteUserTouch(key);
+          }
         }
         this.rpcEvent(p, frame.error);
         if ("resolve" in p.caller) {

@@ -1324,9 +1324,9 @@ export class Host {
       if (a.source === "runtime") {
         this.runtimeAccess(from);
         const state = this.runtimeState.get(a.localId);
-        if (state) {
+        if (state && state.status === "done") {
           const turn = Math.max(state.turn, 1);
-          this.runtimeState.set(a.localId, { ...state, seenTurn: turn, status: state.status === "done" ? "idle" : state.status });
+          this.runtimeState.set(a.localId, { ...state, seenTurn: turn, status: "idle" });
           this.runtimeAgents = this.runtimeAgents.map((item) =>
             item.localId === a.localId && item.status === "done" ? { ...item, status: "idle" } : item,
           );

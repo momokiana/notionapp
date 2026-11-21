@@ -62,15 +62,24 @@ object WeChatBillParser {
 
   private val AMOUNT_YUAN = Regex("""(?:[￥¥]|人民币)?\s*(\d{1,7}(?:\.\d{1,2})?)\s*元""")
   private val AMOUNT_SYMBOL = Regex("""[￥¥]\s*(\d{1,7}(?:\.\d{1,2})?)""")
-  private val PAYEE_PREFIX = Regex("""(?:收款方|付款方|商户|来自|向)[：:\s]*([^\n，,。；;]{1,28})""")
+  private val PAYEE_PREFIX = Regex("""(?:收款方|付款方|商户|来自|向)[：:\s]*([^\n，,。；;￥¥]{1,28}?)(?=\s*(?:付款|已支付|支付成功|支付|收款|转账|消费|[￥¥]|\d+(?:\.\d+)?元|$))""")
+  private val COLLAPSED_PREFIX = Regex("""^\s*\[(\d+)条\]\s*""")
 
-  fun parse(titleRaw: String?, bodyRaw: String?): ParsedWeChatBill? {
-    val title = titleRaw?.trim().orEmpty()
-    val body = bodyRaw?.trim().orEmpty()
+  fun extractCollapsedCount(raw: String?): Int {
+    if (raw.isNullOrBlank()) return 1
+    val m = COLLAPSED_PREFIX.find(raw) ?: return 1
+    return m.groupValues[1].toIntOrNull()?.coerceAtLeast(1) ?: 1
+  }
+
+  fun stripCollapsedPrefix(raw: String): String = raw.replace(COLLAPSED_PREFIX, "").trim()
+
+  fun parse(titleRaw: String?, bodyRaw: String?, extraNote: String? = null): ParsedWeChatBill? {
+    val title = stripCollapsedPrefix(titleRaw?.trim().orEmpty())
+    val body = stripCollapsedPrefix(bodyRaw?.trim().orEmpty())
     if (title.isEmpty() && body.isEmpty()) return null
 
     val combined = "$title $body"
-    val isPaymentChannel = PAYMENT_TITLES.any { title.contains(it) || body.startsWith(it) }
+    val isPaymentChannel = PAYMENT_TITLES.any { title.contains(it) || body.startsWith(it) || combined.contains(it) }
     val hasExplicitAction = INCOME_HINTS.any { combined.contains(it) } || EXPENSE_HINTS.any {
       if (it.contains(".+")) Regex(it).containsMatchIn(combined) else combined.contains(it)
     }
@@ -91,7 +100,8 @@ object WeChatBillParser {
     if (amountCents <= 0L || amountCents > 50_000_000L) return null
 
     val merchant = extractLabel(title, body, direction)
-    val note = body.replace('\n', ' ').trim().take(120).takeIf { it.isNotEmpty() && it != merchant }
+    val baseNote = body.replace('\n', ' ').trim().take(100).takeIf { it.isNotEmpty() && it != merchant }
+    val note = listOfNotNull(baseNote, extraNote?.takeIf { it.isNotBlank() }).joinToString(" ").take(140).ifEmpty { null }
     return ParsedWeChatBill(direction = direction, amountCents = amountCents, title = merchant, note = note)
   }
 

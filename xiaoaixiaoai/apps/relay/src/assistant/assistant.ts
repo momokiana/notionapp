@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import {
   HERDR_COMMANDS,
   effectiveAgentStatus,
+  formatYuan,
   type Agent,
   type AgentStatus,
   type AssistantAction,
@@ -29,6 +30,9 @@ import {
   type HerdrCommand,
   type LaunchOption,
   type LayoutSpace,
+  type LedgerAlertSummary,
+  type LedgerState,
+  type LedgerTransaction,
   type Notice,
   type NoticeVerdict,
   type PersonaPresetSummary,
@@ -168,7 +172,7 @@ const EVENT_ASSISTANT_MAX_CHARS = 32_000;
 const WAKE_TOOLS = new Set(["read_agent"]);
 const WAKE_ROUNDS = 3;
 const WAKE_CONCURRENCY = 2;
-const TOUCH_WINDOW_MS = 30 * 60_000;
+const TOUCH_WINDOW_MS = 2 * 60 * 60_000;
 const WAKE_READ_CONV_CHARS = 6_000;
 const WAKE_READ_TERM_CHARS = 4_000;
 const HARNESS_NAMES: Record<string, string> = {
@@ -209,6 +213,7 @@ export class Assistant {
   private wakeTimes: number[] = [];
   private wakesRunning = 0;
   private wakeQueue: Array<() => void> = [];
+  private seenLedgerTxIds = new Set<string>();
   private boardSig = "";
   private timers = new Set<NodeJS.Timeout>();
   private reminderTimer: NodeJS.Timeout;
@@ -1777,6 +1782,87 @@ export class Assistant {
   // Watching agents
   // -------------------------------------------------------------------------
 
+  /** Records that the user interacted with this agent directly from a viewer device so completion notices are kept. */
+  noteUserTouch(agentKey: string): void {
+    if (this.closed || !agentKey) return;
+    this.touched.set(agentKey, this.now());
+    this.lastNotice.delete(`${agentKey}:done`);
+  }
+
+  /** Speaks up in the assistant thread (and voice mode) when Android captures a new WeChat transaction. */
+  onLedgerCapture(input: { transaction: LedgerTransaction; state: LedgerState; alert: LedgerAlertSummary }): AssistantItem | null {
+    if (this.closed || !input.state.config.enabled) return null;
+    const tx = input.transaction;
+    if (tx.source !== "wechat_notify") return null;
+    if (this.seenLedgerTxIds.has(tx.id)) return null;
+    this.seenLedgerTxIds.add(tx.id);
+    if (this.seenLedgerTxIds.size > 256) {
+      const oldest = this.seenLedgerTxIds.values().next().value;
+      if (oldest) this.seenLedgerTxIds.delete(oldest);
+    }
+
+    const call = this.userCall;
+    const prefix = call ? `${call}，` : "";
+    const amt = formatYuan(tx.amountCents);
+    const plan = input.state.plan;
+    const cleanMerchant = cleanLedgerLabel(tx.title, tx.note);
+    const balPart = plan.balanceCents !== null ? `，当前余额约 ${formatYuan(plan.balanceCents)} 元` : "";
+    let quotaPart = "";
+    if (plan.todayRemainingCents !== null) {
+      if (tx.direction === "expense" && plan.todayRemainingCents < 0) {
+        const over = formatYuan(-plan.todayRemainingCents);
+        const tail = plan.nextDailyLimitCents !== null && plan.daysLeftAfterToday > 0
+          ? `，明天起每天最多用 ${formatYuan(plan.nextDailyLimitCents)} 元，后面稍微收着点`
+          : "";
+        quotaPart = `；今天已经超支 ${over} 元啦${tail}`;
+      } else if (plan.todayRemainingCents >= 0) {
+        quotaPart = `；今天还能用 ${formatYuan(plan.todayRemainingCents)} 元`;
+      } else {
+        quotaPart = `；今日仍超出 ${formatYuan(-plan.todayRemainingCents)} 元`;
+      }
+    }
+    const collapseHint = tx.note && /微信折叠了\s*\d+\s*条/.test(tx.note)
+      ? "（注：微信把多条消息折在一起了，早先如果还有一笔漏掉可以对照一下）"
+      : "";
+    const actionWord = tx.direction === "income" ? "收到一笔微信入账" : "刚捕捉到一笔微信消费";
+    const subjectPart = cleanMerchant ? `（${cleanMerchant}）` : "";
+    const text = `${prefix}${actionWord} ${amt} 元${subjectPart}${balPart}${quotaPart}。${collapseHint}`;
+
+    const itemId = `ledger-${tx.id}`;
+    const willSpeak =
+      this.replyMode() === "voice" &&
+      this.voices.size === 0 &&
+      !this.busy &&
+      !this.activeChatSpeech &&
+      !!this.findVoiceHost() &&
+      this.host.devices().some((d) => d.kind === "viewer" && d.online);
+
+    const item = this.put({
+      id: itemId,
+      ts: this.now(),
+      role: "assistant",
+      text,
+      via: "text",
+      ...(willSpeak ? { spoken: true } : {}),
+    });
+    if (willSpeak) this.speakItem(itemId, text);
+    for (const v of this.voices) {
+      v.notice({
+        id: newId("n"),
+        kind: "reminder",
+        title: input.alert.title,
+        body: text,
+        ts: this.now(),
+      });
+    }
+    this.event({
+      kind: "ledger",
+      msg: `wechat_notify announced ${tx.direction} ${amt}y (${tx.title})`,
+      data: { txId: tx.id, spoke: willSpeak },
+    });
+    return item;
+  }
+
   /** Called with every agent list a computer publishes. */
   onAgents(deviceId: string, agents: Agent[]): void {
     const first = !this.seenDevices.has(deviceId);
@@ -1790,7 +1876,11 @@ export class Assistant {
       if (prev !== eff) {
         // The sentence about why it stopped is only true while it stays stopped that way.
         if (eff === "working" || prev === "blocked") this.reasons.delete(a.key);
-        if (eff === "working") this.workingSince.set(a.key, first || prev === undefined ? (a.statusSince ?? t) : t);
+        if (eff === "working") {
+          this.workingSince.set(a.key, first || prev === undefined ? (a.statusSince ?? t) : t);
+          // A fresh turn clears the previous turn's done-cooldown so rapid back-to-back tasks still notify.
+          this.lastNotice.delete(`${a.key}:done`);
+        }
       }
       if (first || prev === undefined || prev === eff) continue;
       if (eff === "blocked") {
@@ -1809,10 +1899,10 @@ export class Assistant {
   /** The thresholds of 4.6 that are known the moment a turn ends. */
   private worthLooking(a: Agent, t: number, ranMs: number): boolean {
     if (this.watchers(a.key, "finished").length) return true;
-    // It ended already seen on the desktop: the person may still have walked away from a long turn.
-    if (a.status === "idle" && ranMs < (this.opts.deskTurnMs ?? 180_000)) return false;
     const touched = this.touched.get(a.key);
     if (touched !== undefined && t - touched < TOUCH_WINDOW_MS) return true;
+    // It ended already seen on the desktop: the person may still have walked away from a long turn.
+    if (a.status === "idle" && ranMs < (this.opts.deskTurnMs ?? 180_000)) return false;
     // Unwatched desktop IDE/GUI runtime sessions pause frequently between turns; only wake after a long autonomous stretch.
     if (a.source === "runtime") return ranMs >= (this.opts.deskTurnMs ?? 180_000);
     // A short turn is a quick question and answer, or agents passing notes: the board is enough.
@@ -1872,16 +1962,21 @@ export class Assistant {
       this.stops = this.stops.filter((s) => s !== stop);
     };
     const a = this.agentByKey(stop.key);
-    // `done` that became `idle` within the delay was opened on the desktop; working or blocked again is not a stop.
-    const still = a && !a.isShell && (stop.desk ? a.status === "idle" || a.status === "done" : a.status === "done");
-    if (!a || !still) return drop();
     const watching = this.watchers(stop.key, "finished");
+    const touchedAt = a ? this.touched.get(a.key) : undefined;
+    const recentlyTouched = touchedAt !== undefined && this.now() - touchedAt < TOUCH_WINDOW_MS;
+    // `done` that became `idle` within the delay was opened on the desktop, unless explicitly watched or mobile-touched;
+    // working or blocked again is not a stop.
+    const curEff = a ? effectiveAgentStatus(a) : undefined;
+    const allowIdle = stop.desk || watching.length > 0 || recentlyTouched;
+    const still = !!a && !a.isShell && (allowIdle ? curEff === "idle" || curEff === "done" : curEff === "done");
+    if (!a || !still) return drop();
     if ((a.subagentsWorking ?? 0) > 0 && this.now() - stop.at < (this.opts.subagentWaitMs ?? 30 * 60_000)) {
       // The turn is not really over while its subagents run: look again later.
       this.later(this.opts.subagentPollMs ?? 15_000, () => this.onStopped(stop));
       return;
     }
-    if (!watching.length) {
+    if (!watching.length && !recentlyTouched) {
       const window = this.opts.batchWindowMs ?? 10_000;
       const group = this.stops.filter((s) => Math.abs(s.at - stop.at) <= window && !this.watchers(s.key, "finished").length && this.stillStopped(s.key));
       if (group.length >= (this.opts.batchSize ?? 4)) {
@@ -1895,16 +1990,15 @@ export class Assistant {
     drop();
     for (const r of watching) this.cancelReminder(r.id);
     const handle = this.handleOf(a);
-    const touchedAt = this.touched.get(a.key);
-    const recentlyTouched = touchedAt !== undefined && this.now() - touchedAt < TOUCH_WINDOW_MS;
-    const material = await this.finishedMaterial(a, handle, stop.ranMs, watching);
+    const mustReport = watching.length > 0 || recentlyTouched;
+    const material = await this.finishedMaterial(a, handle, stop.ranMs, watching, mustReport);
     const looked = material ? await this.look(material, true, this.opts.wakeTimeoutMs ?? 45_000) : null;
-    if (looked?.verdict === "skip" && !watching.length) {
+    if (looked?.verdict === "skip" && !mustReport) {
       this.event({ kind: "wake", msg: `looked at ${this.handleOf(a)}: nothing to tell`, data: { agent: stop.key } });
       return;
     }
     const told = looked && looked.verdict !== "skip" && looked.say ? looked : null;
-    if (!told && !watching.length) {
+    if (!told && !mustReport) {
       const longTerminal = a.source !== "runtime" && stop.ranMs >= (this.opts.deskTurnMs ?? 180_000);
       const lastFallback = this.lastFallbackNoticeAt.get(stop.key);
       const cooledDown = lastFallback !== undefined && this.now() - lastFallback < 15 * 60_000;
@@ -1919,11 +2013,22 @@ export class Assistant {
       }
       this.lastFallbackNoticeAt.set(stop.key, this.now());
     }
-    // Not looked at (no material, timeout, over the limit): it stopped, nothing more is known.
-    const verdict: NoticeVerdict = told ? (told.verdict as NoticeVerdict) : "stopped";
-    const say = told?.say ?? `${handle}停了。`;
+    // Not looked at (or model refused with skip on a mobile-touched/watched turn): deliver concrete summary when possible.
+    let verdict: NoticeVerdict = told ? (told.verdict as NoticeVerdict) : "stopped";
+    let say = told?.say;
+    let details = told?.details || undefined;
+    if (!say) {
+      const fallbackWords = mustReport ? oneLine(await this.lastWords(a)) : "";
+      if (fallbackWords) {
+        verdict = "stopped";
+        say = `${handle}停下来了：${clip(fallbackWords, 40)}`;
+        details = clip(fallbackWords, 400);
+      } else {
+        say = `${handle}停了。`;
+      }
+    }
     if (this.stillStopped(stop.key)) this.reasons.set(stop.key, say);
-    await this.emit({ kind: watching.length ? "reminder" : "done", title: `${handle} · ${VERDICT_TITLE[verdict]}`, body: say, verdict, details: told?.details || undefined, agent: stop.key });
+    await this.emit({ kind: watching.length ? "reminder" : "done", title: `${handle} · ${VERDICT_TITLE[verdict]}`, body: say, verdict, details, agent: stop.key });
   }
 
   private stillStopped(key: string): boolean {
@@ -2023,7 +2128,7 @@ export class Assistant {
   }
 
   /** What the turn was about and how it ended (5.5); null when there is nothing to read. */
-  private async finishedMaterial(a: Agent, handle: string, ranMs: number, watching: Reminder[]): Promise<string | null> {
+  private async finishedMaterial(a: Agent, handle: string, ranMs: number, watching: Reminder[], mustReport = false): Promise<string | null> {
     const events = await this.recentEvents(a, 40);
     const asked = events.filter((e) => e.kind === "user_message" && !e.synthetic).pop();
     const said = [...events].reverse().find((e) => e.kind === "assistant_message" && e.text.trim());
@@ -2044,6 +2149,7 @@ export class Assistant {
       subagents: a.subagentsWorking ?? 0,
       key: a.key,
       reminder: watching.map((r) => r.text).join("\n") || undefined,
+      mustReport,
       asked: askedText,
       spoken,
       first,
@@ -2773,6 +2879,20 @@ function tokens(n: number): string {
 
 function fmtTime(t: number): string {
   return new Date(t).toLocaleString("zh-CN", { timeZone: timeZone(), hour12: false, month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function cleanLedgerLabel(title: string, note?: string): string {
+  const generic = new Set(["微信消费", "微信收款", "微信支付"]);
+  const t = title.trim();
+  if (t && !generic.has(t)) return t;
+  if (!note) return "";
+  const stripped = note
+    .replace(/^\s*\[\d+条\]\s*/g, "")
+    .replace(/（微信折叠了\s*\d+\s*条[^）]*）/g, "")
+    .replace(/^(?:微信支付|微信收款助手|微信)[:：]\s*/g, "")
+    .trim();
+  if (!stripped || /^(?:已支付|支付成功|收款成功|微信支付收款)?\s*[￥¥]?\s*\d+(?:\.\d+)?\s*元?$/.test(stripped)) return "";
+  return clip(stripped, 28);
 }
 
 function newId(prefix: string): string {

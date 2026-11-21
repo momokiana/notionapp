@@ -914,7 +914,8 @@ test("OpenAI Realtime receives the same optional style and fixed boundary on its
 });
 
 test("smart filtering suppresses noisy runtime stops, exhausted tool loops get a tool-free decision turn, and repeat fallback stops cool down", async () => {
-  assert.match(systemPrompt("爱弥斯", "woken", ""), /默认回「不用说」/);
+  assert.match(systemPrompt("爱弥斯", "woken", ""), /只有在明显属于电脑前零碎试探.*才回「不用说」/);
+  assert.match(systemPrompt("爱弥斯", "woken", ""), /只要材料标了从手机发过话\/重点关注.*就必须汇报/);
   assert.doesNotMatch(systemPrompt("爱弥斯", "woken", ""), /拿不准该不该说，就说/);
 
   const { host, publish } = await fakeHost("Win Filter", (method) =>
@@ -1237,11 +1238,60 @@ test("woken turns get 4000 maxTokens, confirm cards preserve watch:true, and tou
     asst.close();
     st.close();
     assert.equal(notices.length, 1);
-    assert.match(notices[0]!.body, /^Checking.*停了。$/);
+    assert.match(notices[0]!.body, /^Checking.*停下来了：干完了$/);
     assert.equal(notices[0]!.agent, agentKey);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
   await api("/v1/assistant/settings", { method: "POST", token: phone.token, body: { confirm: "never" } });
   void host;
+});
+
+test("phone terminal.send marks agent touched, idle within delay does not drop touched notice, skip is overridden, and new working clears done cooldown", async () => {
+  const { host, publish } = await fakeHost("TouchPC", (method) =>
+    method === "session.events"
+      ? {
+          sessionKey: "runtime:antigravity:p1:t1",
+          more: false,
+          events: [
+            { id: "u1", session: "runtime:antigravity:p1:t1", ts: 1, kind: "user_message", text: "跑个短检查" },
+            { id: "a1", session: "runtime:antigravity:p1:t1", ts: 2, kind: "assistant_message", text: "短检查已经全部通过。" },
+          ],
+        }
+      : undefined,
+  );
+  const phone = await pair("viewer", "TouchPhone");
+  const p = await Sock.open("/v1/ws", phone.token);
+  await p.next((f) => f.type === "snapshot");
+  const push = await Sock.open("/v1/notify", phone.token);
+  await push.next((f) => f.type === "hello");
+
+  publish([agent("touch1", "idle", "短任务检查", { source: "runtime", sessionKey: "runtime:antigravity:p1:t1" })]);
+  await sleep(30);
+
+  // Simulate sending directly from phone UI (bypassing assistant chat).
+  p.send({ type: "rpc", id: "rpc-touch-1", to: host.device.id, method: "terminal.send", params: { agent: `${host.device.id}/runtime:touch1`, text: "跑个短检查" } });
+  await p.next((f) => f.type === "rpc_result" && f.id === "rpc-touch-1");
+
+  // Even if LLM replies "不用说" AND the agent turns "idle" (seen in UI) during doneDelayMs, the notice still fires!
+  wake = (req) => {
+    assert.match(String(req.messages[0]?.content ?? ""), /关注标记：.*不能回「不用说」/);
+    return text("不用说");
+  };
+  publish([agent("touch1", "working", "短任务检查", { source: "runtime", sessionKey: "runtime:antigravity:p1:t1" })]);
+  await sleep(20);
+  publish([agent("touch1", "done", "短任务检查", { source: "runtime", sessionKey: "runtime:antigravity:p1:t1" })]);
+  await sleep(10);
+  publish([agent("touch1", "idle", "短任务检查", { source: "runtime", sessionKey: "runtime:antigravity:p1:t1" })]);
+
+  const notice1 = await push.next((f) => f.type === "notice");
+  assert.match(notice1.notice.body, /短检查已经全部通过/);
+
+  // Starting a second working turn right away (< noticeGapMs) still notifies when finished.
+  wake = () => text("成了\n第二轮也做完啦。");
+  publish([agent("touch1", "working", "短任务检查", { source: "runtime", sessionKey: "runtime:antigravity:p1:t1" })]);
+  await sleep(20);
+  publish([agent("touch1", "done", "短任务检查", { source: "runtime", sessionKey: "runtime:antigravity:p1:t1" })]);
+  const notice2 = await push.next((f) => f.type === "notice");
+  assert.equal(notice2.notice.body, "第二轮也做完啦。");
 });

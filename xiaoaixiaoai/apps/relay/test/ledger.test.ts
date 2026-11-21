@@ -116,3 +116,44 @@ test("ledger plugin stays gated when disabled and powers WeChat capture, fixed e
   assert.equal(finalState.json.fixedExpenses.length, 2);
   assert.equal(finalState.json.plan.unpaidFixedCents, 285_00);
 });
+
+test("wechat_notify capture proactively announces transaction in assistant thread without duplicating retries or manual entries", async () => {
+  const pairCode = await reqJson("/v1/pair/codes", ADMIN, { body: { kind: "viewer" } });
+  const phone = (await reqJson("/v1/pair", ADMIN, { body: { kind: "viewer", code: pairCode.json.code, name: "Announce Phone" } })).json;
+
+  // Enable and calibrate balance so daily remaining is computed.
+  await reqJson("/v1/ledger/config", phone.token, { body: { enabled: true, balanceCents: 1000_00, savingsGoalCents: 200_00 } });
+  const before = (await reqJson("/v1/assistant", phone.token)).json.items as Array<{ id: string; text: string }>;
+  const beforeIds = new Set(before.map((x) => x.id));
+
+  // Manual transaction does not trigger assistant proactive chat bubble.
+  await reqJson("/v1/ledger/transactions", phone.token, {
+    body: { direction: "expense", amountCents: 10_00, title: "手动早饭", source: "manual" },
+  });
+  let items = (await reqJson("/v1/assistant", phone.token)).json.items as Array<{ id: string; text: string }>;
+  assert.equal(items.length, before.length);
+
+  // First wechat_notify capture generates one warm Aemeath-toned announcement with amount, balance, and collapsed note.
+  const wc = {
+    direction: "expense",
+    amountCents: 23_00,
+    title: "瑞幸咖啡",
+    note: "已支付¥23.00 （微信折叠了2条消息中的最新一笔）",
+    source: "wechat_notify",
+    externalId: "wc-announce-1",
+  };
+  const first = await reqJson("/v1/ledger/transactions", phone.token, { body: wc });
+  assert.equal(first.status, 200);
+  items = (await reqJson("/v1/assistant", phone.token)).json.items as Array<{ id: string; role: string; text: string }>;
+  const added = items.filter((it) => it.id.startsWith("ledger-") && !beforeIds.has(it.id));
+  assert.equal(added.length, 1);
+  assert.match(added[0]!.text, /哥哥，刚捕捉到一笔微信消费 23 元（瑞幸咖啡）/);
+  assert.match(added[0]!.text, /当前余额约 967 元/);
+  assert.match(added[0]!.text, /微信把多条消息折在一起了/);
+
+  // Idempotent duplicate upload must not repeat the assistant bubble.
+  const dup = await reqJson("/v1/ledger/transactions", phone.token, { body: wc });
+  assert.equal(dup.json.duplicate, true);
+  items = (await reqJson("/v1/assistant", phone.token)).json.items as Array<{ id: string; role: string; text: string }>;
+  assert.equal(items.filter((it) => it.id.startsWith("ledger-") && !beforeIds.has(it.id)).length, 1);
+});

@@ -31,11 +31,88 @@ class Prefs(ctx: Context) {
     p.edit().putString("ledgerSnapshot", json).apply()
   }
 
+  data class WeChatCardLine(val text: String, val collapsedHintCount: Int = 0)
+
+  fun consumeWeChatCardLines(cardKey: String, postTime: Long, rawLines: List<String>, collapsedCount: Int): List<WeChatCardLine> = synchronized(lock) {
+    val lines = rawLines.map { it.trim() }.filter { it.isNotEmpty() }
+    if (lines.isEmpty()) return@synchronized emptyList()
+    val root = try { JSONObject(p.getString("wcCardStates", "{}") ?: "{}") } catch (_: Throwable) { JSONObject() }
+    val prevObj = root.optJSONObject(cardKey)
+    val prevTs = prevObj?.optLong("ts", 0L) ?: 0L
+    val prevCount = prevObj?.optInt("count", 0) ?: 0
+    val prevLines = ArrayList<String>().apply {
+      val arr = prevObj?.optJSONArray("lines")
+      if (arr != null) for (i in 0 until arr.length()) arr.optString(i)?.let { if (it.isNotEmpty()) add(it) }
+    }
+
+    if (prevObj != null && prevTs == postTime && prevLines == lines && prevCount == collapsedCount) {
+      return@synchronized emptyList()
+    }
+
+    val result = ArrayList<WeChatCardLine>()
+    if (lines.size == 1) {
+      val line = lines[0]
+      if (collapsedCount > 1) {
+        if (prevObj == null) {
+          result.add(WeChatCardLine(line, collapsedHintCount = collapsedCount))
+        } else if (collapsedCount > prevCount) {
+          val delta = collapsedCount - prevCount
+          result.add(WeChatCardLine(line, collapsedHintCount = if (delta > 1) collapsedCount else 0))
+        } else if (line != prevLines.firstOrNull() || postTime - prevTs >= 2_500L) {
+          result.add(WeChatCardLine(line, collapsedHintCount = 0))
+        }
+      } else {
+        if (prevObj == null || line != prevLines.firstOrNull() || postTime - prevTs >= 2_500L) {
+          result.add(WeChatCardLine(line, collapsedHintCount = 0))
+        }
+      }
+    } else {
+      var overlap = 0
+      val maxK = minOf(prevLines.size, lines.size)
+      for (k in maxK downTo 1) {
+        if (prevLines.subList(prevLines.size - k, prevLines.size) == lines.subList(0, k)) {
+          overlap = k
+          break
+        }
+      }
+      if (overlap == 0 && prevLines == lines && postTime - prevTs < 2_500L) {
+        overlap = lines.size
+      }
+      for (i in overlap until lines.size) {
+        result.add(WeChatCardLine(lines[i], collapsedHintCount = 0))
+      }
+    }
+
+    val nextObj = JSONObject().apply {
+      put("ts", postTime)
+      put("count", collapsedCount)
+      put("updatedAt", System.currentTimeMillis())
+      put("lines", JSONArray().apply { for (l in lines.takeLast(12)) put(l) })
+    }
+    root.put(cardKey, nextObj)
+    // Cap tracked notification cards to prevent unbounded preference growth.
+    if (root.length() > 32) {
+      val keys = root.keys().asSequence().toList()
+        .sortedBy { root.optJSONObject(it)?.optLong("updatedAt", 0L) ?: 0L }
+      for (staleKey in keys.take(root.length() - 32)) root.remove(staleKey)
+    }
+    p.edit().putString("wcCardStates", root.toString()).apply()
+    result
+  }
+
+  fun forgetWeChatCard(cardKey: String) = synchronized(lock) {
+    val raw = p.getString("wcCardStates", null) ?: return@synchronized
+    val root = try { JSONObject(raw) } catch (_: Throwable) { return@synchronized }
+    if (root.remove(cardKey) != null) {
+      p.edit().putString("wcCardStates", root.toString()).apply()
+    }
+  }
+
   fun rememberWeChatTx(dedupKey: String, ts: Long): Boolean = synchronized(lock) {
     val raw = p.getString("wcRecentKeys", "[]") ?: "[]"
     val arr = try { JSONArray(raw) } catch (_: Throwable) { JSONArray() }
     val fresh = JSONArray()
-    val cutoff = ts - 120_000L
+    val cutoff = ts - 20_000L
     for (i in 0 until arr.length()) {
       val o = arr.optJSONObject(i) ?: continue
       if (o.optLong("ts") < cutoff) continue
