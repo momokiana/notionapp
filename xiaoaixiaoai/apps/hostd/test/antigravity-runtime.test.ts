@@ -608,3 +608,30 @@ test("AntigravityRuntime rolls active child subagents up to idle parent and expo
   assert.equal(childDetail.session.canSend, false);
   assert.equal(childDetail.messages[0]?.text, "运行完整回归测试");
 });
+
+test("AntigravityRuntime hydrates truncated_fields content from transcript_full.jsonl beyond 6000 chars", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "xa-ag-full-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const brainDir = join(root, "brain");
+  const logsDir = join(brainDir, "ag-long-1", ".system_generated", "logs");
+  mkdirSync(logsDir, { recursive: true });
+
+  const fullReply = `START_FULL_${"星".repeat(8200)}_END_FULL`;
+  const compactSteps = [
+    { step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>\n输出完整长报告\n</USER_REQUEST>" },
+    { step_index: 2, type: "PLANNER_RESPONSE", status: "DONE", content: `${fullReply.slice(0, 2400)}...`, truncated_fields: ["content"] },
+  ];
+  const fullSteps = [
+    { step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>\n输出完整长报告\n</USER_REQUEST>" },
+    { step_index: 2, type: "PLANNER_RESPONSE", status: "DONE", content: fullReply },
+  ];
+  writeFileSync(join(logsDir, "transcript.jsonl"), `${compactSteps.map((s) => JSON.stringify(s)).join("\n")}\n`);
+  writeFileSync(join(logsDir, "transcript_full.jsonl"), `${fullSteps.map((s) => JSON.stringify(s)).join("\n")}\n`);
+
+  const rt = new AntigravityRuntime({ brainDir });
+  const [proj] = await rt.list();
+  const detail = await rt.detail(proj!.id, "ag-long-1", 20);
+  const reply = detail.messages.find((m) => m.role === "assistant")?.text ?? "";
+  assert.equal(reply, fullReply);
+});

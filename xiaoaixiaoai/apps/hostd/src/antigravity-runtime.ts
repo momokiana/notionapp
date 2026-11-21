@@ -37,7 +37,8 @@ const SCAN_SESSION_LIMIT = 60;
 const HEAD_BYTES = 128 * 1024;
 const SUMMARY_TAIL_BYTES = 256 * 1024;
 const DETAIL_TAIL_BYTES = 2 * 1024 * 1024;
-const MAX_MESSAGE_TEXT = 6000;
+const FULL_DETAIL_TAIL_BYTES = 8 * 1024 * 1024;
+const MAX_MESSAGE_TEXT = 32_000;
 const MAX_DETAIL_BYTES = 460 * 1024;
 const RECENT_RUNNING_WINDOW_MS = 90_000;
 const MAX_CONCURRENT_TURNS = 3;
@@ -77,11 +78,13 @@ interface SummaryRow {
 }
 
 interface ParsedStep {
+  step_index?: number;
   type?: string;
   source?: string;
   status?: string;
   content?: string;
   created_at?: string;
+  truncated_fields?: string[];
   tool_calls?: Array<{ name?: unknown; args?: unknown }>;
 }
 
@@ -167,6 +170,41 @@ function parseStep(line: string): ParsedStep | null {
     const o = JSON.parse(line);
     return o && typeof o === "object" && !Array.isArray(o) ? o as ParsedStep : null;
   } catch { return null; }
+}
+
+function hydrateTruncatedSteps(transcriptPath: string, steps: ParsedStep[]): void {
+  const needed = new Set<number>();
+  for (const step of steps) {
+    if (
+      typeof step.step_index === "number" &&
+      (step.type === "USER_INPUT" || step.type === "PLANNER_RESPONSE") &&
+      Array.isArray(step.truncated_fields) &&
+      step.truncated_fields.includes("content")
+    ) {
+      needed.add(step.step_index);
+    }
+  }
+  if (needed.size === 0) return;
+  const fullPath = join(dirname(transcriptPath), "transcript_full.jsonl");
+  if (!existsSync(fullPath)) return;
+  const fullContentByIndex = new Map<number, string>();
+  try {
+    for (const line of readWindowLines(fullPath, 0, FULL_DETAIL_TAIL_BYTES, false)) {
+      if (!line.includes("\"step_index\"") || (!line.includes("\"PLANNER_RESPONSE\"") && !line.includes("\"USER_INPUT\""))) continue;
+      const parsed = parseStep(line);
+      if (parsed && typeof parsed.step_index === "number" && needed.has(parsed.step_index) && typeof parsed.content === "string") {
+        fullContentByIndex.set(parsed.step_index, parsed.content);
+      }
+    }
+  } catch {
+    return;
+  }
+  if (fullContentByIndex.size === 0) return;
+  for (const step of steps) {
+    if (typeof step.step_index === "number" && fullContentByIndex.has(step.step_index)) {
+      step.content = fullContentByIndex.get(step.step_index);
+    }
+  }
 }
 
 function extractUserRequest(content: unknown): string {
@@ -799,6 +837,7 @@ export class AntigravityRuntime {
     const steps = meta.transcriptPath && existsSync(meta.transcriptPath)
       ? readWindowLines(meta.transcriptPath, 0, DETAIL_TAIL_BYTES, false).map(parseStep).filter((s): s is ParsedStep => s !== null)
       : [];
+    if (meta.transcriptPath && steps.length > 0) hydrateTruncatedSteps(meta.transcriptPath, steps);
     const messages: RuntimeSessionMessage[] = [];
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i]!;

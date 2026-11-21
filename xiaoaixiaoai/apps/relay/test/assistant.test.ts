@@ -1061,3 +1061,64 @@ test("runtime-only hosts skip herdr.layout in list_spaces and agents expose mode
   assert.equal(calls.filter((c) => c.method === "herdr.layout").length, 0);
   void host;
 });
+
+test("read_agent preserves long replies without 1200-char clipping and paginates oversized output by offset", async () => {
+  const mediumReply = `HEAD_MEDIUM_${"甲".repeat(3600)}_TAIL_MEDIUM`;
+  const megaReply = `HEAD_MEGA_${"乙".repeat(14500)}_TAIL_MEGA`;
+  let currentReply = mediumReply;
+
+  const { host, publish } = await fakeHost("LongReadPC", (method) => {
+    if (method === "session.events") {
+      return {
+        sessionKey: "runtime:antigravity:p1:s1",
+        events: [
+          { kind: "user_message", text: "给我完整结论" },
+          { kind: "assistant_message", text: currentReply },
+        ],
+      };
+    }
+    return undefined;
+  });
+  const phone = await pair("viewer", "LongReadPhone");
+  const p = await Sock.open("/v1/ws", phone.token);
+  await p.next((f) => f.type === "snapshot");
+
+  publish([agent("lr1", "idle", "长回复验证", { sessionKey: "runtime:antigravity:p1:s1" })]);
+  await sleep(30);
+
+  let mediumOut = "";
+  script = (req) => {
+    const res = toolResults(req);
+    if (!res.length) return call("read_agent", { agent: "长回复验证" });
+    mediumOut = res[0]!;
+    return text("读完了中等长回复。");
+  };
+  await api("/v1/assistant/messages", { token: phone.token, body: { text: "读一下长回复验证" } });
+  await p.next((f) => f.type === "assistant_busy" && f.busy === false);
+
+  assert.match(mediumOut, /HEAD_MEDIUM_/);
+  assert.match(mediumOut, /_TAIL_MEDIUM/);
+  assert.doesNotMatch(mediumOut, /…$/);
+
+  currentReply = megaReply;
+  const pages: string[] = [];
+  script = (req) => {
+    const res = toolResults(req);
+    if (res.length) pages.push(res[res.length - 1]!);
+    if (pages.length === 0) return call("read_agent", { agent: "长回复验证", max_chars: 8000 });
+    if (pages.length === 1) return call("read_agent", { agent: "长回复验证", offset: 0, max_chars: 8000 });
+    if (pages.length === 2) return call("read_agent", { agent: "长回复验证", offset: 8000, max_chars: 8000 });
+    return text("前后两页都读完了。");
+  };
+  await api("/v1/assistant/messages", { token: phone.token, body: { text: "再读一下超长回复" } });
+  await p.next((f) => f.type === "assistant_busy" && f.busy === false);
+
+  assert.equal(pages.length, 3);
+  assert.match(pages[0]!, /_TAIL_MEGA/);
+  assert.match(pages[0]!, /传 offset=/);
+  assert.match(pages[1]!, /HEAD_MEGA_/);
+  assert.match(pages[1]!, /传 offset=8000 继续读/);
+  assert.match(pages[2]!, /_TAIL_MEGA/);
+  assert.match(pages[2]!, /已到末尾/);
+  void host;
+});

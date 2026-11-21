@@ -461,7 +461,7 @@ export class UnifloAdapter {
     limit = 80,
     before?: string,
   ): Promise<{ events: ConvEvent[]; more: boolean; nextBefore: string | null }> {
-    const q = new URLSearchParams({ limit: String(Math.min(Math.max(limit, 1), 300)), max_text: "6000" });
+    const q = new URLSearchParams({ limit: String(Math.min(Math.max(limit, 1), 300)), max_text: "32000" });
     if (before) q.set("before", before);
     const r = await this.get(`/v1/sessions/${encodeURIComponent(sessionKey)}/events?${q}`);
     const events = (r.events ?? []) as Array<ConvEvent & Record<string, unknown>>;

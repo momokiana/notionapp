@@ -34,7 +34,7 @@ import { lineSplitter } from "./util.ts";
 const THREAD_LIST_LIMIT = 80;
 const STATUS_TAIL_BYTES = 64 * 1024;
 const DETAIL_TAIL_BYTES = 2 * 1024 * 1024;
-const MAX_MESSAGE_TEXT = 6000;
+const MAX_MESSAGE_TEXT = 32_000;
 const MAX_DETAIL_BYTES = 460 * 1024;
 const RECENT_ACTIVE_WINDOW_MS = 15 * 60_000;
 const MAX_CONCURRENT_TURNS = 2;
