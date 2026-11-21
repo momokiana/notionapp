@@ -285,6 +285,14 @@ export class Assistant {
     return saved === "always" || saved === "never" ? saved : (this.opts.confirm ?? "never");
   }
 
+  lastReason(agentKey: string): string | undefined {
+    return this.reasons.get(agentKey);
+  }
+
+  watcherCount(agentKey: string): number {
+    return this.reminders.filter((r) => r.agent === agentKey).length;
+  }
+
   /** Normal chat reply mode: voice (dual-track) by default when local chatVoice is enabled on the relay. */
   replyMode(): AssistantReplyMode {
     const saved = this.store.getSetting<AssistantReplyMode>(SETTING_REPLY_MODE);
@@ -1887,7 +1895,17 @@ export class Assistant {
         this.later(this.opts.blockedDelayMs ?? 4000, () => this.onBlocked(a.key));
       } else if (prev === "working" && (eff === "done" || eff === "idle")) {
         const ranMs = Math.max(0, t - (this.workingSince.get(a.key) ?? t));
-        if (!this.worthLooking(a, t, ranMs)) continue;
+        const skipWhy = this.ignoreStopReason(a, t, ranMs);
+        if (skipWhy) {
+          this.event({
+            kind: "wake",
+            level: "debug",
+            msg: `ignored stop (${skipWhy}): ${this.handleOf(a)}`,
+            device: a.deviceId,
+            data: { agent: a.key, source: a.source, status: eff, ranMs },
+          });
+          continue;
+        }
         const stop: Stop = { key: a.key, at: t, ranMs, desk: eff === "idle" };
         this.stops.push(stop);
         this.later(this.opts.doneDelayMs ?? 10_000, () => this.onStopped(stop));
@@ -1896,17 +1914,18 @@ export class Assistant {
     this.boardChanged();
   }
 
-  /** The thresholds of 4.6 that are known the moment a turn ends. */
-  private worthLooking(a: Agent, t: number, ranMs: number): boolean {
-    if (this.watchers(a.key, "finished").length) return true;
+  /** Reason a finished turn does not need a wake-up; null means worth looking at. */
+  private ignoreStopReason(a: Agent, t: number, ranMs: number): string | null {
+    if (this.watchers(a.key, "finished").length) return null;
     const touched = this.touched.get(a.key);
-    if (touched !== undefined && t - touched < TOUCH_WINDOW_MS) return true;
+    if (touched !== undefined && t - touched < TOUCH_WINDOW_MS) return null;
     // It ended already seen on the desktop: the person may still have walked away from a long turn.
-    if (a.status === "idle" && ranMs < (this.opts.deskTurnMs ?? 180_000)) return false;
+    if (a.status === "idle" && ranMs < (this.opts.deskTurnMs ?? 180_000)) return "idle_short";
     // Unwatched desktop IDE/GUI runtime sessions pause frequently between turns; only wake after a long autonomous stretch.
-    if (a.source === "runtime") return ranMs >= (this.opts.deskTurnMs ?? 180_000);
+    if (a.source === "runtime" && ranMs < (this.opts.deskTurnMs ?? 180_000)) return "runtime_short";
     // A short turn is a quick question and answer, or agents passing notes: the board is enough.
-    return ranMs >= (this.opts.minTurnMs ?? 45_000);
+    if (ranMs < (this.opts.minTurnMs ?? 45_000)) return "short_turn";
+    return null;
   }
 
   /** Reminders the person set on this agent that fire on this kind of stop. */
@@ -1970,8 +1989,27 @@ export class Assistant {
     const curEff = a ? effectiveAgentStatus(a) : undefined;
     const allowIdle = stop.desk || watching.length > 0 || recentlyTouched;
     const still = !!a && !a.isShell && (allowIdle ? curEff === "idle" || curEff === "done" : curEff === "done");
-    if (!a || !still) return drop();
+    if (!a || !still) {
+      this.event({
+        kind: "wake",
+        level: "debug",
+        msg: `dropped stop after delay: ${a ? this.handleOf(a) : stop.key}`,
+        device: a?.deviceId,
+        data: { agent: stop.key, prevDesk: stop.desk, curEff: curEff ?? "gone", allowIdle, watching: watching.length, recentlyTouched },
+      });
+      return drop();
+    }
     if ((a.subagentsWorking ?? 0) > 0 && this.now() - stop.at < (this.opts.subagentWaitMs ?? 30 * 60_000)) {
+      if (!stop.deferLogged) {
+        stop.deferLogged = true;
+        this.event({
+          kind: "wake",
+          level: "debug",
+          msg: `deferred stop while subagents run: ${this.handleOf(a)}`,
+          device: a.deviceId,
+          data: { agent: stop.key, subagentsWorking: a.subagentsWorking },
+        });
+      }
       // The turn is not really over while its subagents run: look again later.
       this.later(this.opts.subagentPollMs ?? 15_000, () => this.onStopped(stop));
       return;
@@ -1985,7 +2023,16 @@ export class Assistant {
         await this.lookAtMany(group);
         return;
       }
-      if (!this.gapPassed(stop.key, "done")) return drop();
+      if (!this.gapPassed(stop.key, "done")) {
+        this.event({
+          kind: "wake",
+          level: "debug",
+          msg: `cooled down done notice: ${this.handleOf(a)}`,
+          device: a.deviceId,
+          data: { agent: stop.key, ranMs: stop.ranMs },
+        });
+        return drop();
+      }
     }
     drop();
     for (const r of watching) this.cancelReminder(r.id);
@@ -1994,8 +2041,17 @@ export class Assistant {
     const material = await this.finishedMaterial(a, handle, stop.ranMs, watching, mustReport);
     const looked = material ? await this.look(material, true, this.opts.wakeTimeoutMs ?? 45_000) : null;
     if (looked?.verdict === "skip" && !mustReport) {
-      this.event({ kind: "wake", msg: `looked at ${this.handleOf(a)}: nothing to tell`, data: { agent: stop.key } });
+      this.event({ kind: "wake", msg: `looked at ${this.handleOf(a)}: nothing to tell`, device: a.deviceId, data: { agent: stop.key, ranMs: stop.ranMs } });
       return;
+    }
+    if (looked?.verdict === "skip" && mustReport) {
+      this.event({
+        kind: "wake",
+        level: "info",
+        msg: `kept mustReport fallback despite model skip: ${handle}`,
+        device: a.deviceId,
+        data: { agent: stop.key, watching: watching.length, recentlyTouched },
+      });
     }
     const told = looked && looked.verdict !== "skip" && looked.say ? looked : null;
     if (!told && !mustReport) {
@@ -2199,17 +2255,21 @@ export class Assistant {
     this.put({ id: itemId, ts: notice.ts, role: "notice", text: [notice.body, notice.details].filter(Boolean).join("\n"), notice });
     for (const s of this.sinks) s(notice);
     for (const v of this.voices) v.notice(notice);
-    if (
+    const willSpeak =
       !this.closed &&
       this.replyMode() === "voice" &&
       this.voices.size === 0 &&
       !this.busy &&
       !this.activeChatSpeech &&
-      this.host.devices().some((d) => d.kind === "viewer" && d.online)
-    ) {
+      this.host.devices().some((d) => d.kind === "viewer" && d.online);
+    if (willSpeak) {
       this.speakItem(itemId, notice.body);
     }
-    this.event({ kind: "notice", msg: `${notice.kind}${notice.verdict ? `/${notice.verdict}` : ""}: ${notice.title} — ${clip(notice.body, 120)}`, data: { agent: notice.agent, phones: this.sinks.size, calls: this.voices.size } });
+    this.event({
+      kind: "notice",
+      msg: `${notice.kind}${notice.verdict ? `/${notice.verdict}` : ""}: ${notice.title} — ${clip(notice.body, 120)}`,
+      data: { agent: notice.agent, phones: this.sinks.size, calls: this.voices.size, speak: willSpeak },
+    });
     this.boardChanged();
   }
 
@@ -2647,6 +2707,8 @@ interface Stop {
   ranMs: number;
   /** It ended already seen on the desktop (working -> idle). */
   desk: boolean;
+  /** True once a subagent deferral debug event has been emitted for this stop. */
+  deferLogged?: boolean;
 }
 
 const VERDICT_TITLE: Record<NoticeVerdict, string> = { ok: "跑完了", decide: "等你", failed: "没跑成", stopped: "停了" };

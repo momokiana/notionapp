@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   PROTOCOL_VERSION,
+  effectiveAgentStatus,
   isJoinId,
   isPairCode,
   joinLink,
@@ -38,8 +39,14 @@ import { joinLanding, notFoundLanding, pairLanding, type LandingPage } from "./l
 import { Assistant, type AssistantOptions } from "./assistant/assistant.ts";
 import { makeLlm, type Llm, type LlmTarget } from "./assistant/llm.ts";
 import { startCall, endAllCalls, type LiveConfig } from "./assistant/live.ts";
-import { EventLog, levelsFrom, parseSince, type EventInput } from "./eventlog.ts";
+import { EventLog, levelsFrom, parseSince, redact, type EventInput } from "./eventlog.ts";
 import { adminPage } from "./admin.ts";
+import {
+  buildDiagnosticsBundle,
+  filterEventsForAgent,
+  formatDiagnosticsMarkdown,
+  sanitizeDiagnosticAgents,
+} from "./diagnostics.ts";
 import {
   confirmsRuntimeTask,
   parseRuntimeTaskFrame,
@@ -544,6 +551,52 @@ export class Relay {
       return;
     }
 
+    if (req.method === "GET" && path === "/v1/admin/agents") {
+      if (auth !== "admin") {
+        sendError(res, 401, "unauthorized", "需要管理员令牌");
+        return;
+      }
+      const includeShell = url.searchParams.get("includeShell") === "1";
+      const list = this.allAgents().filter((x) => includeShell || !x.isShell);
+      const devName = (id: string) => this.store.getDevice(id)?.name;
+      sendJson(res, 200, {
+        agents: sanitizeDiagnosticAgents(
+          list,
+          devName,
+          (k) => this.assistant.lastReason(k),
+          (k) => this.assistant.watcherCount(k),
+        ),
+      });
+      return;
+    }
+
+    if (req.method === "POST" && path === "/v1/admin/probe") {
+      if (auth !== "admin") {
+        sendError(res, 401, "unauthorized", "需要管理员令牌");
+        return;
+      }
+      sendJson(res, 200, { results: await this.probeModels() });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/v1/diagnostics") {
+      if (!auth) {
+        sendError(res, 401, "unauthorized", "需要设备令牌或管理员令牌");
+        return;
+      }
+      const bundle = this.diagnosticsBundle(url.searchParams);
+      if (url.searchParams.get("format") === "markdown") {
+        res.writeHead(200, {
+          "Content-Type": "text/markdown; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+        res.end(formatDiagnosticsMarkdown(bundle));
+        return;
+      }
+      sendJson(res, 200, bundle);
+      return;
+    }
+
     if (path === "/v1/assistant" || path.startsWith("/v1/assistant/")) {
       // The assistant belongs to the person: phones (and the admin), not computers.
       if (!auth || (auth !== "admin" && auth.kind !== "viewer")) {
@@ -652,8 +705,14 @@ export class Relay {
           ts: typeof body?.ts === "number" ? body.ts : undefined,
           adjustBalance: typeof body?.adjustBalance === "boolean" ? body.adjustBalance : true,
         });
-        if (source === "wechat_notify" && !out.duplicate) {
-          this.assistant.onLedgerCapture(out);
+        if (source === "wechat_notify") {
+          this.events.record({
+            kind: "ledger",
+            level: out.duplicate ? "debug" : "info",
+            msg: `wechat_notify ${out.duplicate ? "duplicate" : "recorded"} ${out.transaction.direction} ${(out.transaction.amountCents / 100).toFixed(2)}`,
+            data: { txId: out.transaction.id, title: out.transaction.title, duplicate: out.duplicate },
+          });
+          if (!out.duplicate) this.assistant.onLedgerCapture(out);
         }
         sendJson(res, 200, out);
       } catch (e) {
@@ -992,19 +1051,41 @@ export class Relay {
       }
     };
     const host = [...new Set((a?.targets ?? []).map((t) => hostOf(t.baseUrl)).filter(Boolean))].join(", ");
+    const nonShell = this.allAgents().filter((x) => !x.isShell);
+    const board = { blocked: 0, working: 0, done: 0, idle: 0 };
+    for (const ag of nonShell) {
+      const eff = effectiveAgentStatus(ag);
+      if (eff === "blocked" || eff === "working" || eff === "done" || eff === "idle") board[eff]++;
+    }
+    const assistantState = this.assistant.state();
+    const profile = this.assistant.profile();
+    const ledgerState = this.ledger.state();
     return {
       version: VERSION,
       protocol: PROTOCOL_VERSION,
       startedAt: STARTED,
       devices: devices.length,
       online: devices.filter((d) => d.online).length,
-      agents: this.allAgents().filter((x) => !x.isShell).length,
+      notifySubs: this.notifySubs.size,
+      agents: nonShell.length,
+      board,
       assistant: {
-        ready: this.assistant.state().ready,
+        ready: assistantState.ready,
+        name: profile.name,
+        userCall: profile.userCall,
         models: this.opts.llm ? ["test"] : (a?.targets ?? []).map((t) => `${t.provider}:${t.model}`),
         endpoint: host,
         confirm: this.assistant.confirmMode(),
-        busy: this.assistant.state().busy,
+        replyMode: this.assistant.replyMode(),
+        voiceHostOnline: devices.some((d) => d.kind === "host" && d.online && d.sources?.includes("local-voice")),
+        memoryCount: this.assistant.memory.list({ limit: 1 }).total,
+        busy: assistantState.busy,
+      },
+      ledger: {
+        enabled: ledgerState.config.enabled,
+        balanceCents: ledgerState.plan.balanceCents,
+        todayRemainingCents: ledgerState.plan.todayRemainingCents,
+        txCount: ledgerState.recentTransactions.length,
       },
       voice: live
         ? live.provider === "local"
@@ -1014,13 +1095,114 @@ export class Relay {
             : null
         : null,
       last24h: { warn: trouble.filter((e) => e.level === "warn").length, error: trouble.filter((e) => e.level === "error").length },
-      actions: this.assistant
-        .state()
-        .items.filter((i) => i.action)
+      actions: assistantState.items
+        .filter((i) => i.action)
         .slice(-30)
         .reverse()
         .map((i) => i.action),
     };
+  }
+
+  private diagnosticsBundle(q: URLSearchParams) {
+    const query = this.logQuery(q);
+    const agent = q.get("agent")?.trim() || undefined;
+    const rawLimit = Math.min(Math.max(Number(q.get("limit")) || 300, 1), 1000);
+    const fetched = this.events.query({
+      ...query,
+      // When filtering to one agent across relay+host+viewer, scan a wider window before slicing.
+      limit: agent ? Math.max(rawLimit * 4, 1500) : rawLimit,
+    });
+    const events = agent ? filterEventsForAgent(fetched, agent, rawLimit) : fetched.slice(-rawLimit);
+    const ov = this.overview();
+    return buildDiagnosticsBundle({
+      generatedAt: Date.now(),
+      relay: {
+        version: ov.version,
+        protocol: ov.protocol,
+        startedAt: ov.startedAt,
+        uptimeMs: Math.max(0, Date.now() - ov.startedAt),
+        notifySubs: ov.notifySubs,
+        assistantReady: ov.assistant.ready,
+        models: ov.assistant.models,
+        endpoint: ov.assistant.endpoint,
+        confirm: ov.assistant.confirm,
+        replyMode: ov.assistant.replyMode,
+        voice: ov.voice,
+      },
+      filter: {
+        since: query.since,
+        until: query.until,
+        agent,
+        device: query.device,
+        source: query.source,
+        level: q.get("level")?.trim() || undefined,
+        kind: query.kind,
+        text: query.text,
+        limit: rawLimit,
+      },
+      devices: this.devices(),
+      agents: this.allAgents(),
+      deviceName: (id) => this.store.getDevice(id)?.name,
+      reasonOf: (k) => this.assistant.lastReason(k),
+      watcherCount: (k) => this.assistant.watcherCount(k),
+      last24h: ov.last24h,
+      recentActions: (ov.actions ?? []).filter((x): x is NonNullable<typeof x> => !!x),
+      events,
+    });
+  }
+
+  private async probeModels(): Promise<
+    Array<{ index: number; provider: string; model: string; protocol: string; endpointHost: string; ok: boolean; latencyMs: number; reply?: string; error?: string }>
+  > {
+    const targets: Array<{ label: string; provider: string; model: string; protocol: string; endpointHost: string; llm: Llm }> = [];
+    const hostOf = (u: string) => {
+      try {
+        return new URL(u).host;
+      } catch {
+        return "";
+      }
+    };
+    if (this.opts.llm) {
+      targets.push({ label: "test:test", provider: "test", model: "test", protocol: "mock", endpointHost: "local", llm: this.opts.llm });
+    } else {
+      for (const t of this.opts.assistant?.targets ?? []) {
+        targets.push({
+          label: `${t.provider}:${t.model}`,
+          provider: t.provider,
+          model: t.model,
+          protocol: t.protocol,
+          endpointHost: hostOf(t.baseUrl),
+          llm: makeLlm({ targets: [t], firstByteMs: 12_000, totalMs: 15_000 }),
+        });
+      }
+    }
+    const results: Array<{ index: number; provider: string; model: string; protocol: string; endpointHost: string; ok: boolean; latencyMs: number; reply?: string; error?: string }> = [];
+    for (let i = 0; i < targets.length; i++) {
+      const target = targets[i]!;
+      const t0 = Date.now();
+      try {
+        const res = await target.llm({
+          system: "Reply with OK only.",
+          messages: [{ role: "user", content: "ping" }],
+          tools: [],
+          maxTokens: 16,
+        });
+        const latencyMs = Date.now() - t0;
+        const reply = res.content
+          .filter((c): c is { type: "text"; text: string } => c.type === "text")
+          .map((c) => c.text.trim())
+          .join(" ")
+          .slice(0, 60);
+        this.events.record({ kind: "model", level: "info", msg: `probe ${target.label} ok ${latencyMs}ms` });
+        results.push({ index: i + 1, provider: target.provider, model: target.model, protocol: target.protocol, endpointHost: target.endpointHost, ok: true, latencyMs, reply: reply || "ok" });
+      } catch (e) {
+        const latencyMs = Date.now() - t0;
+        const error = redact((e instanceof Error ? e.message : String(e)).slice(0, 180));
+        this.events.record({ kind: "model", level: "warn", msg: `probe ${target.label} failed ${latencyMs}ms: ${error}` });
+        results.push({ index: i + 1, provider: target.provider, model: target.model, protocol: target.protocol, endpointHost: target.endpointHost, ok: false, latencyMs, error });
+      }
+    }
+    return results;
   }
 
   private toViewers(frame: ServerFrame): void {

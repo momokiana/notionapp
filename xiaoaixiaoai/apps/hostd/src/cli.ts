@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createServer } from "node:net";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, platform } from "node:os";
 import { parseArgs } from "node:util";
 import { WebSocket } from "ws";
@@ -14,7 +14,8 @@ import { loadRuntimeSessions } from "./runtime-sessions.ts";
 import { localRelayProxy } from "./relay-proxy.ts";
 import { IS_WINDOWS } from "./platform.ts";
 import { lineSplitter } from "./util.ts";
-import { SERVICE_HELP, control as controlAt, serviceCommand } from "./winservice.ts";
+import { SERVICE_HELP, SERVICE_LOG, control as controlAt, serviceCommand } from "./winservice.ts";
+import { redactLine } from "./logbuf.ts";
 import { updateCommand, updateHelpText, versionCommand, watchForUpdates } from "@xiaoaixiaoai/update";
 
 const HELP = `xiaoaixiaoai ${HOSTD_VERSION} — put this computer's herdr agents in your pocket
@@ -53,8 +54,9 @@ Look and talk (works with any computer on the relay)
 Logs (what the relay, the computers and the phones recorded)
   logs [--since 1h] [--device <name|id>] [--kind <kind>] [--level warn|error]
        [--source relay|host|viewer] [--text <words>] [--limit N] [--follow] [--json]
+  logs --bundle [--since 1h] [--agent <key>] [--out <file>] [--json]
         kinds: assistant (turns, tools), action, rpc, guard, live, wake, model,
-        device, settings, or what a computer/phone reported (hostd, rpc, link, js, ...).
+        runtime, ledger, notify, device, settings, or phone/host events.
 `;
 
 async function main(): Promise<void> {
@@ -396,12 +398,36 @@ async function logs(argv: string[]): Promise<void> {
       level: { type: "string" },
       source: { type: "string" },
       text: { type: "string" },
+      agent: { type: "string" },
       limit: { type: "string", default: "200" },
       follow: { type: "boolean", short: "f", default: false },
+      bundle: { type: "boolean", default: false },
+      out: { type: "string" },
       json: { type: "boolean", default: false },
     },
   });
   const cfg = needConfig();
+  if (values.bundle) {
+    const q = new URLSearchParams();
+    q.set("since", values.since!);
+    q.set("limit", values.limit!);
+    for (const k of ["device", "kind", "level", "source", "text", "agent"] as const) if (values[k]) q.set(k, values[k]!);
+    q.set("format", values.json ? "json" : "markdown");
+    let content = await httpText(cfg.server, `/v1/diagnostics?${q}`, cfg.token);
+    if (!values.json && existsSync(SERVICE_LOG)) {
+      const tailLines = readFileSync(SERVICE_LOG, "utf8").split(/\r?\n/).filter(Boolean).slice(-60).map(redactLine);
+      if (tailLines.length) {
+        content = `${content.trimEnd()}\n\n## Local hostd.log tail (${tailLines.length} lines)\n\`\`\`text\n${tailLines.join("\n")}\n\`\`\`\n`;
+      }
+    }
+    if (values.out) {
+      writeFileSync(values.out, content, "utf8");
+      console.log(`wrote diagnostics bundle (${content.length} chars) to ${values.out}`);
+    } else {
+      console.log(content);
+    }
+    return;
+  }
   const query = (after?: number) => {
     const q = new URLSearchParams();
     if (after) q.set("after", String(after));
@@ -552,6 +578,24 @@ async function http<T>(server: string, path: string, init: { token?: string; bod
   const json = (await res.json().catch(() => ({}))) as any;
   if (!res.ok) throw new Error(json?.error?.message ?? `HTTP ${res.status}`);
   return json as T;
+}
+
+async function httpText(server: string, path: string, token?: string): Promise<string> {
+  const res = await fetch(server.replace(/\/+$/, "") + path, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    let msg: string | undefined;
+    try {
+      msg = (JSON.parse(text) as any)?.error?.message;
+    } catch {
+      /* raw error */
+    }
+    throw new Error(msg ?? `HTTP ${res.status}`);
+  }
+  return text;
 }
 
 function needConfig(): HostConfig {

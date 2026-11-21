@@ -14,6 +14,7 @@ import {
   type ConvEvent,
   type HostSource,
   type LayoutSpace,
+  type LogLevel,
   type Device,
   type ClientFrame,
   type RpcError,
@@ -181,7 +182,7 @@ export class Host {
   }
 
   /** A structured line for the relay's log (not printed). */
-  note(level: "info" | "warn" | "error", kind: string, msg: string, data?: Record<string, unknown>): void {
+  note(level: LogLevel, kind: string, msg: string, data?: Record<string, unknown>): void {
     this.logs.push(level, kind, msg, data);
   }
 
@@ -265,8 +266,22 @@ export class Host {
           const localId = encodeRuntimeLocalId(entry.runtime, entry.projectId, entry.session.id);
           seen.add(localId);
           const subagentsWorking = entry.session.subagentsWorking ?? 0;
-          const state = nextRuntimeState(this.runtimeState.get(localId), entry.session.state, now, entry.session.updatedAt, subagentsWorking);
+          const prevState = this.runtimeState.get(localId);
+          const state = nextRuntimeState(prevState, entry.session.state, now, entry.session.updatedAt, subagentsWorking);
           this.runtimeState.set(localId, state);
+          const key = agentKey(this.deviceId, "runtime", localId);
+          if (
+            (prevState && (prevState.status !== state.status || (state.status === "working" && prevState.turn !== state.turn))) ||
+            (!prevState && state.status !== "idle")
+          ) {
+            this.note("debug", "runtime", `status ${prevState?.status ?? "new"} -> ${state.status}`, {
+              agent: key,
+              title: entry.session.title,
+              turn: state.turn,
+              raw: entry.session.state,
+              subagentsWorking,
+            });
+          }
           const canSend = !this.opts.readOnly && entry.sendConfigured;
           const readOnlyReason = this.opts.readOnly
             ? "这台电脑当前为只读模式。"
@@ -276,7 +291,7 @@ export class Host {
                 : "当前会话处于只读状态，仅支持查看消息记录。")
               : undefined;
           next.push({
-            key: agentKey(this.deviceId, "runtime", localId),
+            key,
             deviceId: this.deviceId,
             source: "runtime",
             localId,
@@ -1330,7 +1345,14 @@ export class Host {
           this.runtimeAgents = this.runtimeAgents.map((item) =>
             item.localId === a.localId && item.status === "done" ? { ...item, status: "idle" } : item,
           );
+          this.note("debug", "runtime", "agent.seen done -> idle", { agent: a.key, turn, by: this.who(from) });
           this.publish();
+        } else {
+          this.note("debug", "runtime", `agent.seen skipped (${state?.status ?? a.status})`, {
+            agent: a.key,
+            turn: state?.turn,
+            by: this.who(from),
+          });
         }
         return { ok: true as const };
       }
