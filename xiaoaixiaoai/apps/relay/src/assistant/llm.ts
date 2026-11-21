@@ -167,7 +167,10 @@ async function once(t: HttpLlmTarget, cfg: LlmConfig, req: LlmRequest): Promise<
     }
     const events = sse(res.body as unknown as AsyncIterable<Uint8Array>);
     const r = anthropic ? await readAnthropic(events, t, req, stream) : await readOpenai(events, t, req, stream);
-    if (!gotContent || r.content.length === 0) throw new LlmError(`${label}: empty answer`);
+    if (!gotContent || r.content.length === 0) {
+      const suffix = r.stopReason === "max_tokens" ? " (exhausted max_tokens)" : "";
+      throw new LlmError(`${label}: empty answer${suffix}`);
+    }
     return r;
   } catch (e) {
     if (e instanceof LlmError) throw e;

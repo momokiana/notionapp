@@ -168,7 +168,9 @@ const EVENT_ASSISTANT_MAX_CHARS = 32_000;
 const WAKE_TOOLS = new Set(["read_agent"]);
 const WAKE_ROUNDS = 3;
 const WAKE_CONCURRENCY = 2;
-const TOUCH_WINDOW_MS = 10 * 60_000;
+const TOUCH_WINDOW_MS = 30 * 60_000;
+const WAKE_READ_CONV_CHARS = 6_000;
+const WAKE_READ_TERM_CHARS = 4_000;
 const HARNESS_NAMES: Record<string, string> = {
   "claude-code": "Claude Code",
   claude: "Claude Code",
@@ -224,11 +226,21 @@ export class Assistant {
     this.memory = new MemoryService(this.store, () => this.now());
     this.items = this.store.listAssistantItems<AssistantItem>(MAX_ITEMS);
     this.reminders = this.store.listReminders<Reminder>();
-    // An action left pending across a restart is no longer what the person saw.
+    // An action left pending across a restart is no longer what the person saw;
+    // recent completed sends/keys still count as touched so wake fallbacks are not lost across restarts.
+    const now = this.now();
     for (const it of this.items) {
-      if (it.action && (it.action.state === "pending" || it.action.state === "running")) {
-        it.action = { ...it.action, state: "expired", result: "服务重启过，这个没执行。" };
+      const act = it.action;
+      if (!act) continue;
+      if (act.state === "pending" || act.state === "running") {
+        it.action = { ...act, state: "expired", result: "服务重启过，这个没执行。" };
         this.persist(it);
+      } else if (act.state === "done" && (act.kind === "send" || act.kind === "keys") && act.agent) {
+        const at = act.doneAt ?? Math.max(it.ts, act.createdAt);
+        if (now - at < TOUCH_WINDOW_MS) {
+          const prev = this.touched.get(act.agent) ?? 0;
+          if (at > prev) this.touched.set(act.agent, at);
+        }
       }
     }
     this.reminderTimer = setInterval(() => this.tickReminders(), opts.reminderTickMs ?? 15_000);
@@ -863,7 +875,7 @@ export class Assistant {
         system,
         messages,
         tools,
-        maxTokens: opts.occasion === "text" ? 6000 : 1600,
+        maxTokens: opts.occasion === "text" ? 6000 : opts.occasion === "woken" ? 4000 : 1600,
         signal: opts.signal,
         onText: (d) => {
           live += d;
@@ -886,7 +898,7 @@ export class Assistant {
         if (used.length > 0 && !opts.signal?.aborted) {
           messages.push({ role: "user", content: "工具已经执行完，请不要再调用工具，直接用自然的话把刚才处理的结果回复给我。" });
           try {
-            const summary = await this.llm!({ system, messages, tools: [], maxTokens: 1600, signal: opts.signal });
+            const summary = await this.llm!({ system, messages, tools: [], maxTokens: opts.occasion === "woken" ? 4000 : 1600, signal: opts.signal });
             const summaryText = summary.content
               .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
               .map((b) => b.text)
@@ -933,7 +945,7 @@ export class Assistant {
     if (opts.occasion === "woken" && !opts.signal?.aborted && used.length > 0) {
       messages.push({ role: "user", content: "不要再调用工具，直接按格式给出最终判断（如果只是日常小步停顿、不用打扰，回：不用说）。" });
       try {
-        const res = await this.llm!({ system, messages, tools: [], maxTokens: 1600, signal: opts.signal });
+        const res = await this.llm!({ system, messages, tools: [], maxTokens: 4000, signal: opts.signal });
         const finalRaw = res.content
           .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
           .map((b) => b.text)
@@ -993,7 +1005,8 @@ export class Assistant {
     const where = [this.deviceName(a.deviceId), a.where].filter(Boolean).join(" / ");
     const folder = a.cwd ? a.cwd.split("/").filter(Boolean).pop() : "";
     const modelQuota = this.formatQuota(a.modelQuota);
-    const modelPart = [a.model ? `模型 ${a.model}` : "", modelQuota].filter(Boolean).join(" · ");
+    const sharedQuota = a.harness === "codex" && a.modelQuota?.available && !modelQuota.includes("账号") ? `账号共享实时额度：${modelQuota}` : modelQuota;
+    const modelPart = [a.model ? `模型 ${a.model}` : "", sharedQuota].filter(Boolean).join(" · ");
     const queued = a.queued ? ` | 输入框里排着 ${a.queued} 条没处理` : "";
     const ro = a.canSend === false ? " | 只读" : "";
     return `${a.key} | ${this.handleOf(a)} | 「${titleOf(a)}」 | ${a.harness} | ${statusLabel}${since} | ${where}${folder ? ` | ${folder}` : ""}${modelPart ? ` | ${modelPart}` : ""}${queued}${ro}`;
@@ -1214,7 +1227,11 @@ export class Assistant {
           const lines = Math.min(Math.max(Number(input.lines ?? 60) || 60, 10), 300);
           const r = await this.host.call(a.deviceId, "terminal.read", { agent: a.key, lines }, 15_000);
           const text = (r.text ?? "").split("\n").map((l) => l.trimEnd()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
-          const page = paginateText(text, { offset: input.offset, maxChars: input.max_chars, defaultPageSize: 10_000 });
+          const page = paginateText(text, {
+            offset: input.offset,
+            maxChars: input.max_chars,
+            defaultPageSize: turn.occasion === "woken" ? WAKE_READ_TERM_CHARS : 10_000,
+          });
           return { out: `${this.agentLine(a)}\n终端最后 ${lines} 行${page.note ? ` ${page.note}` : ""}：\n${page.body}`, step: `看了「${titleOf(a)}」的终端` };
         }
         const limit = Math.min(Math.max(Number(input.limit ?? 24) || 24, 4), 80);
@@ -1232,7 +1249,11 @@ export class Assistant {
         if (r.canSend === false || a.canSend === false) {
           extra.push(`[说明] ${r.readOnlyReason ?? a.readOnlyReason ?? "当前会话仅支持查看，不能直接发消息。"}`);
         }
-        const page = paginateText(renderEvents(r.events), { offset: input.offset, maxChars: input.max_chars });
+        const page = paginateText(renderEvents(r.events), {
+          offset: input.offset,
+          maxChars: input.max_chars,
+          defaultPageSize: turn.occasion === "woken" ? WAKE_READ_CONV_CHARS : READ_PAGE_DEFAULT_CHARS,
+        });
         return { out: `${this.agentLine(a)}\n最近的对话${page.note ? ` ${page.note}` : ""}：\n${page.body}${extra.length ? `\n${extra.join("\n")}` : ""}`, step: `读了「${titleOf(a)}」的对话` };
       }
       case "list_launchers": {
@@ -1276,6 +1297,7 @@ export class Assistant {
             deviceName: this.deviceName(a.deviceId),
             text: text.slice(0, 4000),
             said,
+            ...(input.watch === true ? { watch: true } : {}),
             summary: `给「${titleOf(a)}」发送：${clip(text, 80)}`,
           },
           turn,
@@ -1283,8 +1305,10 @@ export class Assistant {
           `给「${this.handleOf(a)}」发了消息`,
         );
         // Watching it: its next stop comes back as a notice with what it said.
-        if (input.watch === true && !r.out.startsWith("已生成待确认") && !r.out.startsWith("没办成")) {
-          this.addReminder({ id: newId("r"), text: `「${titleOf(a)}」回完了`, createdAt: this.now(), agent: a.key, until: "finished" });
+        if (input.watch === true && r.out.startsWith("已生成待确认")) {
+          return { out: `${r.out}\n确认发出后会自动盯上它：它这一轮停下时会主动告诉我它说了什么。`, step: r.step };
+        }
+        if (input.watch === true && !r.out.startsWith("没办成")) {
           return { out: `${r.out}\n已经盯上它了：它这一轮停下时会主动告诉我它说了什么。`, step: r.step };
         }
         return r;
@@ -1733,8 +1757,12 @@ export class Assistant {
       state = "failed";
       result = (e as Error).message;
     }
-    const done: AssistantAction = { ...act, state, result };
+    const done: AssistantAction = { ...act, state, result, ...(state === "done" ? { doneAt: this.now() } : {}) };
     this.put({ ...it, action: done });
+    if (act.kind === "send" && state === "done" && act.watch === true && act.agent && !this.watchers(act.agent, "finished").length) {
+      const label = act.agentTitle || this.handleByKey(act.agent);
+      this.addReminder({ id: newId("r"), text: `「${label}」回完了`, createdAt: this.now(), agent: act.agent, until: "finished" });
+    }
     this.event({
       kind: "action",
       level: state === "done" ? "info" : "warn",
@@ -1827,7 +1855,7 @@ export class Assistant {
     for (const r of watching) this.cancelReminder(r.id);
     const handle = this.handleOf(a);
     const material = await this.blockedMaterial(a, handle, watching);
-    const looked = material ? await this.look(material, false, this.opts.blockedWakeTimeoutMs ?? 8000) : null;
+    const looked = material ? await this.look(material, false, this.opts.blockedWakeTimeoutMs ?? 15_000) : null;
     // Approved at the desk while the assistant was looking: nothing left to tell.
     if (!watching.length && this.agentByKey(key)?.status !== "blocked") return;
     // Being asked for is always worth telling: "不用说" is not accepted here.
@@ -1870,7 +1898,7 @@ export class Assistant {
     const touchedAt = this.touched.get(a.key);
     const recentlyTouched = touchedAt !== undefined && this.now() - touchedAt < TOUCH_WINDOW_MS;
     const material = await this.finishedMaterial(a, handle, stop.ranMs, watching);
-    const looked = material ? await this.look(material, true, this.opts.wakeTimeoutMs ?? 20_000) : null;
+    const looked = material ? await this.look(material, true, this.opts.wakeTimeoutMs ?? 45_000) : null;
     if (looked?.verdict === "skip" && !watching.length) {
       this.event({ kind: "wake", msg: `looked at ${this.handleOf(a)}: nothing to tell`, data: { agent: stop.key } });
       return;
@@ -1915,7 +1943,7 @@ export class Assistant {
       const text = await this.lastWords(a);
       if (text) said.push({ handle: this.handleOf(a), text: clip(oneLine(text), 300) });
     }
-    const looked = said.length ? await this.look(wakeBatch(handles, said), true, this.opts.wakeTimeoutMs ?? 20_000) : null;
+    const looked = said.length ? await this.look(wakeBatch(handles, said), true, this.opts.wakeTimeoutMs ?? 45_000) : null;
     const told = looked && looked.verdict !== "skip" && looked.say ? looked : null;
     const say = told?.say ?? `${agents.length} 个停了：${handles.slice(0, 3).join("、")}。`;
     for (const a of agents) if (this.stillStopped(a.key)) this.reasons.set(a.key, say);
@@ -2659,9 +2687,11 @@ function renderEvents(events: ConvEvent[]): string {
       case "assistant_message":
         out.push(`[它] ${clip(e.text, EVENT_ASSISTANT_MAX_CHARS)}`);
         break;
-      case "tool_call":
-        out.push(`[它调用工具] ${e.name}：${clip(oneLine(toolInput(e.input)), 160)}`);
+      case "tool_call": {
+        const arg = clip(oneLine(toolInput(e.input)), 160);
+        out.push(arg ? `[它调用工具] ${e.name}：${arg}` : `[它调用工具] ${e.name}`);
         break;
+      }
       case "tool_result":
         if (e.is_error) out.push(`[它的工具出错] ${clip(oneLine(e.output), 200)}`);
         break;
@@ -2715,9 +2745,10 @@ function paginateText(
 function toolInput(input: unknown): string {
   if (input && typeof input === "object") {
     const o = input as Record<string, unknown>;
-    for (const k of ["command", "description", "file_path", "path", "pattern", "url", "query", "prompt"]) {
-      if (typeof o[k] === "string") return o[k] as string;
+    for (const k of ["summary", "command", "description", "file_path", "path", "pattern", "url", "query", "prompt"]) {
+      if (typeof o[k] === "string" && (o[k] as string).trim()) return o[k] as string;
     }
+    if (Object.keys(o).length === 0) return "";
     return JSON.stringify(input);
   }
   return String(input ?? "");

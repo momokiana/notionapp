@@ -25,7 +25,7 @@ const DELIVERED =
   /(发|递|传|转|带|捎|送)(过去|到|好|出去|给[^，。！？\n]{0,12}了)|(已经?|都)(发|递|传|转告|转达|告诉|说给)|(发|递|传|转告|转达|告诉[^，。！？\n]{0,10})了|说过去了|带到了|话带到/;
 /** Negations or conditional future statements about pending confirmation: must not be mistaken for delivery claims. */
 const NOT_DELIVERED =
-  /(没(有|能|准|敢|真|太|怎么)?|未|并未|不曾|不会|别|先不|大概率没|还没|尚未|暂未)[^，。！？\n]{0,8}(发|递|传|转|带|捎|送)|(点确认|确认|点头|同意|允许|批准|回复)[^，。！？\n]{0,8}(后|才|再)[^，。！？\n]{0,8}(发|递|传|转|送)|准备[^，。！？\n]{0,6}(发|递|传|送)|排好了/;
+  /(没(有|能|准|敢|真|太|怎么)?|未|并未|不曾|不会|别|先不|大概率没|还没|尚未|暂未)[^，。！？\n]{0,8}(发|递|传|转|带|捎|送)|(点确认|确认|点头|同意|允许|批准|回复)[^，。！？\n]{0,10}(后|才|再|就|立刻|马上)[^，。！？\n]{0,8}(发|递|传|转|送)|准备[^，。！？\n]{0,6}(发|递|传|送)|排好了/;
 /**
  * "那边回话说", "它回复说", "对方表示": another agent's answer. A bare "它说" is
  * left alone: it is how the assistant reports what it read before sending.
@@ -64,7 +64,10 @@ export function guardClaims(text: string, facts: RunFacts): { text: string; fixe
       fixed.push("delivery");
       if (!replaced) {
         replaced = true;
-        out.push(pending.length ? "还没发，等你点头：要发吗？" : failed.length ? `没发成：${clip(failed[0]!.result ?? "电脑那边没接住")}。` : "还没发出去。");
+        const alreadyPendingPrompt = pending.length && /(还没发|等你点确认|等你点头)/.test(out.join(""));
+        if (!alreadyPendingPrompt) {
+          out.push(pending.length ? "还没发，等你点头：要发吗？" : failed.length ? `没发成：${clip(failed[0]!.result ?? "电脑那边没接住")}。` : "还没发出去。");
+        }
       }
     }
     if (!reply && !delivery) out.push(s);

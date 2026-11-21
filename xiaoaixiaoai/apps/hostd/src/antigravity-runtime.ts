@@ -42,7 +42,8 @@ const MAX_MESSAGE_TEXT = 32_000;
 const MAX_DETAIL_BYTES = 460 * 1024;
 const RECENT_RUNNING_WINDOW_MS = 90_000;
 const MAX_CONCURRENT_TURNS = 3;
-const BACKGROUND_TURN_TIMEOUT_MS = 15 * 60_000;
+const BACKGROUND_TURN_IDLE_TIMEOUT_MS = 20 * 60_000;
+const BACKGROUND_TURN_MAX_MS = 60 * 60_000;
 const RECENT_CREATED_TTL_MS = 10 * 60_000;
 const TASK_EVENT_TTL_MS = 10 * 60_000;
 const TASK_EVENT_LIMIT = RUNTIME_TASK_EVENTS_LIMIT;
@@ -62,6 +63,7 @@ interface ActiveTurn {
   projectId: string;
   attention: boolean;
   timer: NodeJS.Timeout;
+  maxTimer?: NodeJS.Timeout;
   notify: (method: string, params: unknown) => void;
   emitTerminal: (kind: "completed" | "stopped") => void;
 }
@@ -285,6 +287,51 @@ function formatAnswerValue(selected: readonly string[], custom?: string): string
   const cus = custom?.trim() ?? "";
   if (sel && cus) return `${sel}（补充：${cus}）`;
   return sel || cus;
+}
+
+function summarizeToolArgs(args: unknown): string {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return "";
+  const o = args as Record<string, unknown>;
+  for (const key of ["toolSummary", "Path", "file_path", "path", "CommandLine", "command", "Description", "Role", "query", "SearchPath", "Target"]) {
+    const val = o[key];
+    if (typeof val === "string" && val.trim()) {
+      const cleaned = cleanLabel(val, "");
+      if (cleaned) return cleaned;
+    }
+  }
+  return "";
+}
+
+function sliceMessagesPreservingContext(messages: RuntimeSessionMessage[], limit: number): RuntimeSessionMessage[] {
+  if (messages.length <= limit) return messages;
+  const tail = messages.slice(-limit);
+  const head = messages.slice(0, messages.length - limit);
+  const hasUser = tail.some((m) => m.role === "user");
+  const hasAssistant = tail.some((m) => m.role === "assistant");
+  if (hasUser && hasAssistant) return tail;
+
+  const extraIndices: number[] = [];
+  if (!hasUser) {
+    for (let i = head.length - 1; i >= 0; i--) {
+      if (head[i]!.role === "user") {
+        extraIndices.push(i);
+        break;
+      }
+    }
+  }
+  if (!hasAssistant) {
+    for (let i = head.length - 1; i >= 0; i--) {
+      if (head[i]!.role === "assistant") {
+        extraIndices.push(i);
+        break;
+      }
+    }
+  }
+  if (extraIndices.length === 0) return tail;
+  extraIndices.sort((a, b) => a - b);
+  const prefix = extraIndices.map((idx) => head[idx]!);
+  const keepFromTail = Math.max(0, limit - prefix.length);
+  return [...prefix, ...tail.slice(-keepFromTail)];
 }
 
 function readSummaryIndex(brainDir: string, summaryDbPath?: string): Map<string, SummaryRow> | undefined {
@@ -853,7 +900,9 @@ export class AntigravityRuntime {
             if (typeof rawName !== "string" || !rawName) continue;
             const shortName = rawName.includes(":") ? rawName.split(":").pop()! : rawName;
             const toolName = cleanLabel(shortName, "tool");
-            messages.push({ id: `ag-t-${i}-${j}`, role: "tool", text: `${toolName}（调用）`, ...(ts !== undefined ? { ts } : {}), toolName, isError: false });
+            const argSummary = summarizeToolArgs(step.tool_calls[j]?.args);
+            const toolText = argSummary ? `${toolName}：${argSummary}` : `${toolName}（调用）`;
+            messages.push({ id: `ag-t-${i}-${j}`, role: "tool", text: toolText, ...(ts !== undefined ? { ts } : {}), toolName, isError: false });
           }
         }
         const replyText = cleanText(step.content, MAX_MESSAGE_TEXT);
@@ -885,7 +934,7 @@ export class AntigravityRuntime {
       runtime: "antigravity",
       project: meta.project,
       session,
-      messages: messages.slice(-boundedLimit),
+      messages: sliceMessagesPreservingContext(messages, boundedLimit),
       pendingQuestions,
       ...(canSend ? {} : { readOnlyReason: isChild ? "子 agent 会话仅支持查看，不能直接发消息。" : this.readOnlyReasonFor(meta, state) }),
     };
@@ -945,11 +994,21 @@ export class AntigravityRuntime {
         const tracked = this.activeTurns.get(boundSessionId);
         if (tracked?.child === child) {
           clearTimeout(tracked.timer);
+          if (tracked.maxTimer) clearTimeout(tracked.maxTimer);
           this.activeTurns.delete(boundSessionId);
         }
       }
       try { child.stdin.end(); } catch {}
       setTimeout(() => { try { child.kill(); } catch {} }, 400).unref();
+    };
+
+    const touchActiveTurn = () => {
+      if (!boundSessionId || emittedTerminal) return;
+      const tracked = this.activeTurns.get(boundSessionId);
+      if (!tracked || tracked.child !== child) return;
+      clearTimeout(tracked.timer);
+      tracked.timer = setTimeout(() => emitTerminal("stopped"), BACKGROUND_TURN_IDLE_TIMEOUT_MS);
+      tracked.timer.unref();
     };
 
     const failPendingRpc = (err: Error) => {
@@ -982,6 +1041,7 @@ export class AntigravityRuntime {
           if (method === "session/request_permission") {
             const optionId = pickPermissionOptionId(packet.params);
             if (optionId) {
+              touchActiveTurn();
               try {
                 writePacket({ id, result: { outcome: { outcome: "selected", optionId } } });
                 return;
@@ -1002,13 +1062,16 @@ export class AntigravityRuntime {
           }
           return;
         }
-        if (handoffDone && method === "session/update" && !emittedProgress && boundRequestId) {
-          const p = packet.params && typeof packet.params === "object" ? packet.params as Record<string, unknown> : undefined;
-          const update = p?.update && typeof p.update === "object" ? p.update as Record<string, unknown> : undefined;
-          const kind = update?.sessionUpdate;
-          if (kind === "agent_message_chunk" || kind === "tool_call" || kind === "tool_call_update") {
-            emittedProgress = true;
-            this.pushTaskEvent(boundRequestId, "progress");
+        if (handoffDone && method === "session/update") {
+          touchActiveTurn();
+          if (!emittedProgress && boundRequestId) {
+            const p = packet.params && typeof packet.params === "object" ? packet.params as Record<string, unknown> : undefined;
+            const update = p?.update && typeof p.update === "object" ? p.update as Record<string, unknown> : undefined;
+            const kind = update?.sessionUpdate;
+            if (kind === "agent_message_chunk" || kind === "tool_call" || kind === "tool_call_update") {
+              emittedProgress = true;
+              this.pushTaskEvent(boundRequestId, "progress");
+            }
           }
         }
         return;
@@ -1077,13 +1140,16 @@ export class AntigravityRuntime {
         boundSessionId = sessionId;
         boundRequestId = requestId;
         handoffDone = true;
-        const timer = setTimeout(() => emitTerminal("stopped"), BACKGROUND_TURN_TIMEOUT_MS);
+        const timer = setTimeout(() => emitTerminal("stopped"), BACKGROUND_TURN_IDLE_TIMEOUT_MS);
         timer.unref();
+        const maxTimer = setTimeout(() => emitTerminal("stopped"), BACKGROUND_TURN_MAX_MS);
+        maxTimer.unref();
         this.activeTurns.set(sessionId, {
           child,
           projectId: boundProjectId,
           attention: false,
           timer,
+          maxTimer,
           notify: (method, params) => writePacket({ method, params }),
           emitTerminal,
         });
@@ -1250,6 +1316,7 @@ export class AntigravityRuntime {
     this.closed = true;
     for (const [id, entry] of this.activeTurns) {
       clearTimeout(entry.timer);
+      if (entry.maxTimer) clearTimeout(entry.maxTimer);
       try { entry.child.kill(); } catch {}
       this.activeTurns.delete(id);
     }

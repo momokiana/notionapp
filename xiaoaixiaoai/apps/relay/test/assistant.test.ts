@@ -1122,3 +1122,126 @@ test("read_agent preserves long replies without 1200-char clipping and paginates
   assert.match(pages[2]!, /已到末尾/);
   void host;
 });
+
+test("woken turns get 4000 maxTokens, confirm cards preserve watch:true, and touched runtime agents survive restart", async () => {
+  const { host, publish } = await fakeHost("WakeFixPC");
+  const phone = await pair("viewer", "WakeFixPhone");
+  const p = await Sock.open("/v1/ws", phone.token);
+  await p.next((f) => f.type === "snapshot");
+  const push = await Sock.open("/v1/notify", phone.token);
+  await push.next((f) => f.type === "hello");
+
+  publish([agent("wfix1", "idle", "CheckingFix", { source: "runtime", sessionKey: "runtime:antigravity:p1:wfix1" })]);
+  await sleep(30);
+
+  // Switch to confirm=always and propose send_to_agent with watch:true.
+  await api("/v1/assistant/settings", { method: "POST", token: phone.token, body: { confirm: "always" } });
+  let proposedActionId = "";
+  script = (req) => {
+    const res = toolResults(req);
+    if (!res.length) return call("send_to_agent", { agent: "CheckingFix", text: "修一下通知链路", watch: true });
+    const m = /待确认操作\s+([a-z0-9]+)/i.exec(res[0]!);
+    if (m) proposedActionId = m[1]!;
+    return text("点确认我就发，发完盯着它。");
+  };
+  await api("/v1/assistant/messages", { token: phone.token, body: { text: "发给 CheckingFix 并盯着" } });
+  await p.next((f) => f.type === "assistant_busy" && f.busy === false);
+  assert.ok(proposedActionId, "expected pending action id");
+
+  // Confirm card via app API: watch reminder must be registered automatically.
+  const confirmRes = await api(`/v1/assistant/actions/${proposedActionId}`, { token: phone.token, body: { decision: "confirm" } });
+  assert.equal(confirmRes.status, 200);
+  const stateAfterConfirm = (await api("/v1/assistant", { token: phone.token })).json;
+  assert.ok(
+    stateAfterConfirm.reminders.some((r: any) => r.agent === `${host.device.id}/runtime:wfix1` && r.until === "finished"),
+    "watch:true must register finished reminder after card confirmation",
+  );
+
+  // Verify woken turn receives maxTokens=4000 (not 1600) and delivers notice.
+  let seenWokenMaxTokens = 0;
+  wake = (req) => {
+    seenWokenMaxTokens = req.maxTokens ?? 0;
+    return text("成了\n哥哥，CheckingFix 跑完啦。");
+  };
+  publish([agent("wfix1", "working", "CheckingFix", { source: "runtime", sessionKey: "runtime:antigravity:p1:wfix1" })]);
+  await sleep(20);
+  publish([agent("wfix1", "done", "CheckingFix", { source: "runtime", sessionKey: "runtime:antigravity:p1:wfix1" })]);
+  const doneNotice = await push.next((f) => f.type === "notice");
+  assert.equal(seenWokenMaxTokens, 4000);
+  assert.equal(doneNotice.notice.body, "哥哥，CheckingFix 跑完啦。");
+
+  // Rehydrate a fresh Assistant on the same store (simulating relay restart):
+  // touched runtime agent still emits fallback notice when wake throws, instead of suppressing it.
+  const { Assistant } = await import("../src/assistant/assistant.ts");
+  const { Store } = await import("../src/store.ts");
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(join(tmpdir(), "xa-wake-rehydrate-"));
+  try {
+    const st = new Store(join(dir, "r.db"));
+    const now = Date.now();
+    const agentKey = "dev1/runtime:r-rehydrate";
+    st.putAssistantItem("i1", now - 60_000, {
+      id: "i1",
+      ts: now - 60_000,
+      role: "assistant",
+      text: "",
+      action: {
+        id: "a1",
+        kind: "send",
+        agent: agentKey,
+        agentTitle: "CheckingRehydrate",
+        device: "dev1",
+        text: "做个任务",
+        summary: "发任务",
+        state: "done",
+        result: "发了",
+        createdAt: now - 65_000,
+        doneAt: now - 60_000,
+      },
+    });
+    const notices: any[] = [];
+    const ag = (status: Agent["status"]): Agent => ({
+      key: agentKey,
+      deviceId: "dev1",
+      localId: "r-rehydrate",
+      source: "runtime",
+      harness: "antigravity",
+      status,
+      title: "CheckingRehydrate",
+      isShell: false,
+      updatedAt: now,
+      sessionKey: "runtime:antigravity:p1:r-rehydrate",
+    });
+    let current = [ag("working")];
+    const asst = new Assistant({
+      store: st,
+      host: {
+        devices: () => [{ id: "dev1", name: "Win", kind: "host", platform: "win32", online: true, lastSeenAt: now, createdAt: now - 86_400_000 }],
+        agents: () => current,
+        call: async () => ({ sessionKey: "runtime:antigravity:p1:r-rehydrate", events: [{ kind: "assistant_message", text: "干完了" }], more: false, nextBefore: null }) as any,
+        toViewers: () => {},
+        log: () => {},
+      },
+      llm: async () => { throw new Error("deepseek empty answer"); },
+      doneDelayMs: 20,
+      noticeGapMs: 0,
+      wakeTimeoutMs: 200,
+    });
+    asst.onNotice((n) => notices.push(n));
+    asst.onAgents("dev1", current);
+    current = [ag("done")];
+    asst.onAgents("dev1", current);
+    await sleep(120);
+    asst.close();
+    st.close();
+    assert.equal(notices.length, 1);
+    assert.match(notices[0]!.body, /^Checking.*停了。$/);
+    assert.equal(notices[0]!.agent, agentKey);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  await api("/v1/assistant/settings", { method: "POST", token: phone.token, body: { confirm: "never" } });
+  void host;
+});

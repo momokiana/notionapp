@@ -781,12 +781,16 @@ export interface AssistantAction {
   args?: Record<string, unknown>;
   /** resume: the session key. */
   session?: string;
+  /** send: automatically watch for turn finish once sent (survives confirm card). */
+  watch?: boolean;
   /** One line for people, e.g. 给「迁移脚本」发送：继续. */
   summary: string;
   state: "pending" | "running" | "done" | "cancelled" | "failed" | "expired";
   /** What happened, once it is no longer pending. */
   result?: string;
   createdAt: number;
+  /** When the action finished executing. */
+  doneAt?: number;
 }
 
 export type NoticeKind = "blocked" | "done" | "reminder" | "progress";

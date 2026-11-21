@@ -52,6 +52,10 @@ export class RuntimeEventSeqTracker {
         const callMeta = assign(`${msg.id}:call`);
         const resMeta = assign(`${msg.id}:res`);
         const toolName = msg.toolName ?? "tool";
+        const defaultToolLabel = `${toolName}（调用）`;
+        const detailSummary = msg.text && msg.text !== defaultToolLabel
+          ? msg.text.replace(new RegExp(`^${toolName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[：:]\\s*`), "").trim()
+          : "";
         events.push({
           id: `${msg.id}:call`,
           session: sessionKey,
@@ -60,7 +64,7 @@ export class RuntimeEventSeqTracker {
           kind: "tool_call",
           call_id: msg.id,
           name: toolName,
-          input: {},
+          input: detailSummary ? { summary: detailSummary } : {},
         });
         events.push({
           id: `${msg.id}:res`,

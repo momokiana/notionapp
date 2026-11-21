@@ -635,3 +635,35 @@ test("AntigravityRuntime hydrates truncated_fields content from transcript_full.
   const reply = detail.messages.find((m) => m.role === "assistant")?.text ?? "";
   assert.equal(reply, fullReply);
 });
+
+test("AntigravityRuntime preserves latest user and assistant context across long tool bursts and includes tool arg summaries", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "xa-ag-tools-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const brainDir = join(root, "brain");
+  const logsDir = join(brainDir, "ag-tools-1", ".system_generated", "logs");
+  mkdirSync(logsDir, { recursive: true });
+
+  const steps: unknown[] = [
+    { step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>\n排查完成通知 bug\n</USER_REQUEST>" },
+    { step_index: 2, type: "PLANNER_RESPONSE", status: "DONE", content: "已完成上一轮诊断，下面开始跑全量测试。" },
+    ...Array.from({ length: 16 }, (_, idx) => ({
+      step_index: 3 + idx,
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      content: "",
+      tool_calls: [{ name: "default_api:run_command", args: { toolSummary: `Run check #${idx + 1}` } }],
+    })),
+  ];
+  writeFileSync(join(logsDir, "transcript.jsonl"), `${steps.map((s) => JSON.stringify(s)).join("\n")}\n`);
+
+  const rt = new AntigravityRuntime({ brainDir });
+  const [proj] = await rt.list();
+  const detail = await rt.detail(proj!.id, "ag-tools-1", 10);
+  assert.equal(detail.messages.length, 10);
+  assert.equal(detail.messages[0]?.role, "user");
+  assert.equal(detail.messages[0]?.text, "排查完成通知 bug");
+  assert.equal(detail.messages[1]?.role, "assistant");
+  assert.equal(detail.messages[1]?.text, "已完成上一轮诊断，下面开始跑全量测试。");
+  assert.equal(detail.messages[detail.messages.length - 1]?.text, "run_command：Run check #16");
+});

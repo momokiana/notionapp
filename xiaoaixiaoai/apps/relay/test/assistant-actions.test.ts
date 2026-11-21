@@ -604,3 +604,19 @@ test("logs: phones and computers upload, tokens never stored, filters and follow
   assert.ok(overview.last24h.error >= 1);
   assert.ok(!JSON.stringify(overview).includes("moss-test-key"));
 });
+
+test("guardClaims allows conditional confirmation phrasing and deduplicates pending fallback prompt", async () => {
+  const { guardClaims, newFacts } = await import("../src/assistant/guard.ts");
+  const facts = newFacts();
+  facts.actions.push({ kind: "send", state: "pending", agent: "a1", title: "Checking", seq: 1 });
+
+  const conditional = "消息已经写好了，还没发。你点确认我就立刻发出去。";
+  const kept = guardClaims(conditional, facts);
+  assert.equal(kept.fixed.length, 0);
+  assert.equal(kept.text, conditional);
+
+  const dup = "消息已经写好了，还没发，等你点确认。已经发过去了。";
+  const deduped = guardClaims(dup, facts);
+  assert.deepEqual(deduped.fixed, ["delivery"]);
+  assert.equal(deduped.text, "消息已经写好了，还没发，等你点确认。");
+});
