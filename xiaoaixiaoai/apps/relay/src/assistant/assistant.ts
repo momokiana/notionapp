@@ -967,12 +967,17 @@ export class Assistant {
 
   private formatQuota(q?: ModelQuota): string {
     if (!q) return "";
-    if (!q.available) return `配额未公开${q.note ? `（${clip(q.note, 36)}）` : ""}`;
+    if (!q.available) return `配额未公开${q.note ? `（${clip(q.note, 48)}）` : ""}`;
     const win = (w: NonNullable<ModelQuota["primary"]>) => {
       const reset = w.resetsAt ? `，${fmtTime(w.resetsAt)}重置` : "";
       return `余 ${w.remainingPercent}%${w.label ? `(${w.label}${reset})` : reset ? `(${reset.slice(1)})` : ""}`;
     };
-    const parts = [q.primary ? win(q.primary) : "", q.secondary ? win(q.secondary) : "", q.balance ? `余额 ${q.balance}` : ""].filter(Boolean);
+    const parts = [
+      q.primary ? win(q.primary) : "",
+      q.secondary ? win(q.secondary) : "",
+      q.balance ? `余额 ${q.balance}` : "",
+      q.note ? clip(q.note, 48) : "",
+    ].filter(Boolean);
     return parts.join(" · ");
   }
 

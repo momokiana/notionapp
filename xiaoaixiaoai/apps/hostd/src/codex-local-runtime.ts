@@ -42,6 +42,10 @@ const BACKGROUND_TURN_TIMEOUT_MS = 10 * 60_000;
 const RECENT_CREATED_TTL_MS = 10 * 60_000;
 const TASK_EVENT_LIMIT = 128;
 const TASK_EVENT_TTL_MS = 15 * 60_000;
+const ACCOUNT_QUOTA_TTL_MS = 60_000;
+const ACCOUNT_QUOTA_ERROR_TTL_MS = 20_000;
+const ACCOUNT_QUOTA_STALE_MAX_MS = 5 * 60_000;
+const ACCOUNT_QUOTA_TIMEOUT_MS = 8_000;
 
 export interface CodexLocalRuntimeOptions {
   codexHome: string;
@@ -72,7 +76,6 @@ interface RolloutMeta {
   model?: string;
   contextTokens?: number;
   contextLimit?: number;
-  modelQuota?: ModelQuota;
 }
 
 interface ActiveTurn {
@@ -231,6 +234,7 @@ function querySubagentRows(dbPath: string): ThreadRow[] {
 }
 
 function formatWindowLabel(minutes: number): string {
+  if (minutes === 10080) return "每周";
   if (minutes >= 1440) {
     const days = Math.round(minutes / 1440);
     return `${days}天`;
@@ -245,34 +249,76 @@ function formatWindowLabel(minutes: number): string {
 function parseQuotaWindow(raw: unknown): QuotaWindow | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
-  const used = typeof r.used_percent === "number" && Number.isFinite(r.used_percent) ? r.used_percent : undefined;
+  const rawUsed = typeof r.usedPercent === "number" ? r.usedPercent : r.used_percent;
+  const used = typeof rawUsed === "number" && Number.isFinite(rawUsed) ? rawUsed : undefined;
   if (used === undefined) return undefined;
   const remainingPercent = Math.max(0, Math.min(100, Math.round((100 - used) * 10) / 10));
-  const windowMinutes = typeof r.window_minutes === "number" && Number.isSafeInteger(r.window_minutes) && r.window_minutes > 0
-    ? r.window_minutes
+  const rawMins = typeof r.windowDurationMins === "number" ? r.windowDurationMins : r.window_minutes;
+  const windowMinutes = typeof rawMins === "number" && Number.isSafeInteger(rawMins) && rawMins > 0
+    ? rawMins
     : undefined;
-  const resetsAtSec = typeof r.resets_at === "number" && Number.isFinite(r.resets_at) && r.resets_at > 0 ? r.resets_at : undefined;
+  const rawReset = typeof r.resetsAt === "number" ? r.resetsAt : r.resets_at;
+  const resetsAt = typeof rawReset === "number" && Number.isFinite(rawReset) && rawReset > 0
+    ? Math.trunc(rawReset >= 1e12 ? rawReset : rawReset * 1000)
+    : undefined;
   return {
     remainingPercent,
     ...(windowMinutes !== undefined ? { windowMinutes, label: formatWindowLabel(windowMinutes) } : {}),
-    ...(resetsAtSec !== undefined ? { resetsAt: Math.trunc(resetsAtSec * 1000) } : {}),
+    ...(resetsAt !== undefined ? { resetsAt } : {}),
   };
 }
 
-function parseRateLimits(raw: unknown, updatedAt?: number): ModelQuota | undefined {
+function parseAccountRateLimits(raw: unknown, updatedAt?: number): ModelQuota | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  const rl = raw as Record<string, unknown>;
-  const primary = parseQuotaWindow(rl.primary);
-  const secondary = parseQuotaWindow(rl.secondary);
-  const credits = rl.credits && typeof rl.credits === "object" ? rl.credits as Record<string, unknown> : undefined;
-  let balance: string | undefined;
-  if (credits?.has_credits === true && credits.unlimited !== true && credits.balance !== undefined && credits.balance !== null) {
-    const num = Number(credits.balance);
-    if (Number.isFinite(num)) balance = num >= 100 ? num.toFixed(0) : num.toFixed(2);
-    else if (typeof credits.balance === "string" && credits.balance.trim()) balance = credits.balance.trim().slice(0, 32);
+  const root = raw as Record<string, unknown>;
+  const byId = root.rateLimitsByLimitId && typeof root.rateLimitsByLimitId === "object"
+    ? root.rateLimitsByLimitId as Record<string, unknown>
+    : undefined;
+  const snapObj = (byId?.codex && typeof byId.codex === "object" ? byId.codex : undefined)
+    ?? (root.rateLimits && typeof root.rateLimits === "object" ? root.rateLimits : undefined)
+    ?? (byId ? Object.values(byId).find((v) => v && typeof v === "object") : undefined)
+    ?? root;
+  if (!snapObj || typeof snapObj !== "object") return undefined;
+  const rl = snapObj as Record<string, unknown>;
+
+  const windows = [parseQuotaWindow(rl.primary), parseQuotaWindow(rl.secondary)]
+    .filter((w): w is QuotaWindow => w !== undefined);
+  if (windows.length === 2 && windows[0]!.windowMinutes !== undefined && windows[1]!.windowMinutes !== undefined) {
+    windows.sort((a, b) => (a.windowMinutes ?? Infinity) - (b.windowMinutes ?? Infinity));
   }
-  const plan = typeof rl.plan_type === "string" && rl.plan_type.trim() ? cleanLabel(rl.plan_type, "") : undefined;
-  if (!primary && !secondary && !balance) return undefined;
+  const primary = windows[0];
+  const secondary = windows[1];
+
+  const credits = rl.credits && typeof rl.credits === "object" ? rl.credits as Record<string, unknown> : undefined;
+  const hasCredits = credits?.hasCredits === true || credits?.has_credits === true;
+  let balance: string | undefined;
+  if (hasCredits && credits?.unlimited !== true && credits?.balance !== undefined && credits?.balance !== null) {
+    const num = Number(credits.balance);
+    if (Number.isFinite(num) && num > 0) balance = num >= 100 ? num.toFixed(0) : num.toFixed(2);
+    else if (typeof credits.balance === "string" && credits.balance.trim() && credits.balance.trim() !== "0") {
+      balance = credits.balance.trim().slice(0, 32);
+    }
+  }
+  const rawPlan = typeof rl.planType === "string" ? rl.planType : typeof rl.plan_type === "string" ? rl.plan_type : "";
+  const plan = rawPlan.trim() ? cleanLabel(rawPlan, "") : undefined;
+
+  const hasShortWindow = windows.some((w) => w.windowMinutes !== undefined && w.windowMinutes <= 360);
+  const hasWeeklyWindow = windows.some((w) => w.windowMinutes !== undefined && w.windowMinutes >= 1440);
+  const noteParts: string[] = [];
+  if (hasWeeklyWindow && !hasShortWindow) noteParts.push("当前账号未返回5小时窗口");
+  else if (hasShortWindow && !hasWeeklyWindow) noteParts.push("当前账号未返回每周窗口");
+  const reached = typeof rl.rateLimitReachedType === "string" && rl.rateLimitReachedType.trim() ? rl.rateLimitReachedType.trim() : "";
+  if (reached) noteParts.push("已达限额");
+  const note = noteParts.length ? noteParts.join(" · ") : undefined;
+
+  if (!primary && !secondary && !balance) {
+    return {
+      available: false,
+      ...(plan ? { plan } : {}),
+      ...(updatedAt !== undefined ? { updatedAt } : {}),
+      note: "Codex 账号未返回窗口限额数据",
+    };
+  }
   return {
     available: true,
     ...(primary ? { primary } : {}),
@@ -280,6 +326,7 @@ function parseRateLimits(raw: unknown, updatedAt?: number): ModelQuota | undefin
     ...(balance ? { balance } : {}),
     ...(plan ? { plan } : {}),
     ...(updatedAt !== undefined ? { updatedAt } : {}),
+    ...(note ? { note } : {}),
   };
 }
 
@@ -311,12 +358,8 @@ function extractRolloutMeta(rolloutPath: string): RolloutMeta {
         if (tot !== undefined && meta.contextTokens === undefined) meta.contextTokens = tot;
         if (lim !== undefined && meta.contextLimit === undefined) meta.contextLimit = lim;
       }
-      if (!meta.modelQuota) {
-        const q = parseRateLimits(p.rate_limits, parseTimestamp(record.timestamp));
-        if (q) meta.modelQuota = q;
-      }
     }
-    if (meta.model && meta.contextTokens !== undefined && meta.contextLimit !== undefined && meta.modelQuota) break;
+    if (meta.model && meta.contextTokens !== undefined && meta.contextLimit !== undefined) break;
   }
   return meta;
 }
@@ -441,8 +484,9 @@ function resolveCodexBinary(configured?: string): string | undefined {
   return onPath("codex");
 }
 
-function spawnCodexAppServer(exe: string, cwd: string): ChildProcessByStdio<Writable, Readable, Readable> {
-  const opts = { cwd, stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"], windowsHide: true };
+function spawnCodexAppServer(exe: string, cwd: string, codexHome?: string): ChildProcessByStdio<Writable, Readable, Readable> {
+  const env = codexHome ? { ...process.env, CODEX_HOME: codexHome } : process.env;
+  const opts = { cwd, env, stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"], windowsHide: true };
   if (/\.(?:mjs|js|cjs)$/i.test(exe)) {
     return spawn(process.execPath, [exe, "app-server", "--listen", "stdio://"], opts);
   }
@@ -463,7 +507,10 @@ export class CodexLocalRuntime {
   private readonly recentCreated = new Map<string, { row: ThreadRow; expiresAt: number }>();
   private readonly rolloutCache = new Map<string, { mtimeMs: number; size: number; meta: RolloutMeta }>();
   private readonly events: Array<{ event: RuntimeTaskEvent; expiresAt: number }> = [];
-  private latestQuota?: ModelQuota;
+  private accountQuota?: ModelQuota;
+  private accountQuotaFetchedAt = 0;
+  private accountQuotaCheckedAt = 0;
+  private accountQuotaInFlight?: Promise<ModelQuota | undefined>;
   private closed = false;
 
   constructor(options: CodexLocalRuntimeOptions) {
@@ -577,16 +624,66 @@ export class CodexLocalRuntime {
       const meta = extractRolloutMeta(rolloutPath);
       if (this.rolloutCache.size > 200) this.rolloutCache.clear();
       this.rolloutCache.set(rolloutPath, { mtimeMs: st.mtimeMs, size: st.size, meta });
-      if (meta.modelQuota && (!this.latestQuota || (meta.modelQuota.updatedAt ?? 0) >= (this.latestQuota.updatedAt ?? 0))) {
-        this.latestQuota = meta.modelQuota;
-      }
       return meta;
     } catch {
       return {};
     }
   }
 
-  private toEntry(row: ThreadRow, counts?: [number, number], readOnlyChild = false): { project: DshDirectoryProject; session: RuntimeSession; archived: boolean } {
+  private async readAccountQuota(force = false): Promise<ModelQuota | undefined> {
+    if (this.closed) return this.accountQuota;
+    const now = Date.now();
+    const ttl = this.accountQuota?.available ? ACCOUNT_QUOTA_TTL_MS : ACCOUNT_QUOTA_ERROR_TTL_MS;
+    if (!force && this.accountQuotaCheckedAt > 0 && now - this.accountQuotaCheckedAt < ttl) {
+      return this.accountQuota;
+    }
+    if (this.accountQuotaInFlight) return this.accountQuotaInFlight;
+
+    const run = (async (): Promise<ModelQuota | undefined> => {
+      const exe = resolveCodexBinary(this.codexBin);
+      const checkedAt = Date.now();
+      if (!exe) {
+        this.accountQuotaCheckedAt = checkedAt;
+        this.accountQuota = { available: false, updatedAt: checkedAt, note: "未在本机找到 Codex CLI，无法查询账号实时额度" };
+        return this.accountQuota;
+      }
+      const cwd = existsSync(this.codexHome) ? this.codexHome : homedir();
+      let server: Awaited<ReturnType<CodexLocalRuntime["openAppServer"]>> | undefined;
+      try {
+        server = await this.openAppServer(cwd);
+        const res = await server.rpc("account/rateLimits/read", {}, ACCOUNT_QUOTA_TIMEOUT_MS);
+        const fetchedAt = Date.now();
+        const parsed = parseAccountRateLimits(res, fetchedAt);
+        this.accountQuotaCheckedAt = fetchedAt;
+        if (parsed) {
+          this.accountQuota = parsed;
+          if (parsed.available) this.accountQuotaFetchedAt = fetchedAt;
+          return this.accountQuota;
+        }
+        this.accountQuota = { available: false, updatedAt: fetchedAt, note: "Codex 账号未返回窗口限额数据" };
+        return this.accountQuota;
+      } catch {
+        const failedAt = Date.now();
+        this.accountQuotaCheckedAt = failedAt;
+        if (this.accountQuota?.available && this.accountQuotaFetchedAt > 0 && failedAt - this.accountQuotaFetchedAt <= ACCOUNT_QUOTA_STALE_MAX_MS) {
+          return this.accountQuota;
+        }
+        this.accountQuota = { available: false, updatedAt: failedAt, note: "Codex 账号实时额度查询失败" };
+        return this.accountQuota;
+      } finally {
+        server?.abort();
+      }
+    })();
+
+    this.accountQuotaInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (this.accountQuotaInFlight === run) this.accountQuotaInFlight = undefined;
+    }
+  }
+
+  private toEntry(row: ThreadRow, counts?: [number, number], readOnlyChild = false, accountQuota?: ModelQuota): { project: DshDirectoryProject; session: RuntimeSession; archived: boolean } {
     const project = projectForCwd(row.cwd);
     const archived = row.archived === 1;
     const state = probeState(row, this.activeTurns.get(row.id));
@@ -603,7 +700,7 @@ export class CodexLocalRuntime {
         ? `${baseModel} (${row.reasoning_effort.trim()})`
         : baseModel)
       : undefined;
-    const quota = meta.modelQuota ?? this.latestQuota;
+    const quota = accountQuota;
     return {
       project: { runtime: "codex", id: project.id, title: project.title },
       archived,
@@ -625,12 +722,13 @@ export class CodexLocalRuntime {
   async list(): Promise<RuntimeProject[]> {
     const rows = this.listRows(THREAD_LIST_LIMIT);
     if (!rows.length) return [];
+    const accountQuota = await this.readAccountQuota();
     const { countsByParent } = this.subagentIndex();
     const grouped = new Map<string, RuntimeProject>();
     let sessionCount = 0;
     for (const row of rows) {
       if (sessionCount >= 100) break;
-      const entry = this.toEntry(row, countsByParent.get(row.id));
+      const entry = this.toEntry(row, countsByParent.get(row.id), false, accountQuota);
       let project = grouped.get(entry.project.id);
       if (!project) {
         if (grouped.size >= 20) continue;
@@ -645,8 +743,9 @@ export class CodexLocalRuntime {
 
   async browse(input: DshDirectoryRequest): Promise<DshDirectoryReply> {
     const rows = this.listRows(input.view === "exact" ? 200 : THREAD_LIST_LIMIT);
+    const accountQuota = await this.readAccountQuota();
     const { countsByParent } = this.subagentIndex();
-    const items = rows.map((row) => this.toEntry(row, countsByParent.get(row.id)));
+    const items = rows.map((row) => this.toEntry(row, countsByParent.get(row.id), false, accountQuota));
     if (input.view === "projects") {
       const map = new Map<string, DshDirectoryProject>();
       for (const item of items) if (!map.has(item.project.id)) map.set(item.project.id, item.project);
@@ -725,8 +824,9 @@ export class CodexLocalRuntime {
     const row = this.findRow(sessionId, true);
     if (!row || !isRuntimeId(row.id)) throw new RuntimeError("not_found", "未找到对应的本地 Codex 会话。");
     const isChild = Boolean(parseParentThreadId(row) || (row.thread_source != null && row.thread_source !== "user"));
+    const accountQuota = await this.readAccountQuota();
     const { countsByParent } = this.subagentIndex();
-    const entry = this.toEntry(row, countsByParent.get(row.id), isChild);
+    const entry = this.toEntry(row, countsByParent.get(row.id), isChild, accountQuota);
     if (entry.project.id !== projectId) throw new RuntimeError("not_found", "该 Codex 会话不属于所选项目。");
     const boundedLimit = Math.min(Math.max(Math.trunc(limit) || 60, 1), RUNTIME_DETAIL_LIMIT);
     let messages = row.rollout_path && existsSync(row.rollout_path) ? parseRolloutMessages(row.rollout_path, boundedLimit) : [];
@@ -774,7 +874,7 @@ export class CodexLocalRuntime {
   private async openAppServer(cwd: string) {
     const exe = resolveCodexBinary(this.codexBin);
     if (!exe) throw new RuntimeError("unsupported", "未在本机找到 Codex Desktop 可执行程序。");
-    const child = spawnCodexAppServer(exe, cwd);
+    const child = spawnCodexAppServer(exe, cwd, this.codexHome);
 
     let nextRpcId = 1;
     let handoffDone = false;
@@ -829,6 +929,16 @@ export class CodexLocalRuntime {
           } else {
             failPendingRpc(new RuntimeError("not_found", "Codex 请求人工交互确认，请在桌面窗口查看。"));
             cleanupChild();
+          }
+          return;
+        }
+        if (method === "account/rateLimits/updated") {
+          const now = Date.now();
+          const parsed = parseAccountRateLimits(packet.params, now);
+          if (parsed) {
+            this.accountQuota = parsed;
+            this.accountQuotaCheckedAt = now;
+            if (parsed.available) this.accountQuotaFetchedAt = now;
           }
           return;
         }
@@ -1050,5 +1160,6 @@ export class CodexLocalRuntime {
     }
     this.recentCreated.clear();
     this.events.length = 0;
+    this.accountQuotaInFlight = undefined;
   }
 }

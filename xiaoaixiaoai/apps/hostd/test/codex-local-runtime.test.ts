@@ -95,6 +95,43 @@ rl.on("line", (line) => {
     process.stdout.write(JSON.stringify({ id: msg.id, result: { serverInfo: { name: "fake-codex" } } }) + "\\n");
     return;
   }
+  if (msg.method === "account/rateLimits/read") {
+    if (mode === "quota-error") {
+      process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32000, message: "not authenticated" } }) + "\\n");
+      return;
+    }
+    if (mode === "quota-weekly-only") {
+      process.stdout.write(JSON.stringify({
+        id: msg.id,
+        result: {
+          rateLimits: {
+            limitId: "codex",
+            primary: { usedPercent: 100, windowDurationMins: 10080, resetsAt: 1795301903 },
+            secondary: null,
+            credits: { hasCredits: false, unlimited: false, balance: "0" },
+            planType: "pro",
+            rateLimitReachedType: "rate_limit_reached",
+          },
+        },
+      }) + "\\n");
+      return;
+    }
+    process.stdout.write(JSON.stringify({
+      id: msg.id,
+      result: {
+        rateLimitsByLimitId: {
+          codex: {
+            limitId: "codex",
+            primary: { usedPercent: 80, windowDurationMins: 10080, resetsAt: 1795301903 },
+            secondary: { usedPercent: 35, windowDurationMins: 300, resetsAt: 1795070000 },
+            credits: { hasCredits: false, unlimited: false, balance: "0" },
+            planType: "pro",
+          },
+        },
+      },
+    }) + "\\n");
+    return;
+  }
   if (msg.method === "thread/resume") {
     if (msg.params.excludeTurns !== true) {
       process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "missing excludeTurns" } }) + "\\n");
@@ -163,9 +200,12 @@ test("CodexLocalRuntime lists, browses, and extracts bounded tail detail without
   assert.equal(projects[0]!.sessions[0]!.contextTokens, 12500);
   assert.equal(projects[0]!.sessions[0]!.contextLimit, 400000);
   assert.equal(projects[0]!.sessions[0]!.modelQuota?.available, true);
-  assert.equal(projects[0]!.sessions[0]!.modelQuota?.primary?.remainingPercent, 75);
-  assert.equal(projects[0]!.sessions[0]!.modelQuota?.primary?.label, "7天");
-  assert.equal(projects[0]!.sessions[0]!.modelQuota?.balance, "1235");
+  assert.equal(projects[0]!.sessions[0]!.modelQuota?.primary?.remainingPercent, 65);
+  assert.equal(projects[0]!.sessions[0]!.modelQuota?.primary?.label, "5小时");
+  assert.equal(projects[0]!.sessions[0]!.modelQuota?.secondary?.remainingPercent, 20);
+  assert.equal(projects[0]!.sessions[0]!.modelQuota?.secondary?.label, "每周");
+  assert.equal(projects[0]!.sessions[0]!.modelQuota?.balance, undefined);
+  assert.equal(projects[0]!.sessions[0]!.modelQuota?.plan, "pro");
   assert.equal(projects[0]!.sessions[1]!.state, "running");
   assert.equal(projects[0]!.sessions[1]!.canSend, false);
   assert.equal(projects[0]!.sessions[2]!.state, "inactive");
@@ -406,4 +446,30 @@ test("CodexLocalRuntime counts active subagent threads on idle parent threads an
   const childDetail = await rt.detail(entries[0]!.projectId, "thread-child-1", 20);
   assert.equal(childDetail.session.canSend, false);
   assert.equal(childDetail.messages[0]?.text, "审查 API 更改");
+});
+
+test("CodexLocalRuntime reports live weekly-only account quota and never falls back to stale rollout snapshots on error", async (t) => {
+  const fx = setupCodexFixture(t);
+
+  fx.setMode("quota-weekly-only");
+  const rtWeekly = new CodexLocalRuntime({ codexHome: fx.codexHome, codexBin: fx.fakeCodex, enableSend: false });
+  t.after(() => rtWeekly.close());
+  const [projWeekly] = await rtWeekly.list();
+  const qWeekly = projWeekly!.sessions[0]!.modelQuota;
+  assert.equal(qWeekly?.available, true);
+  assert.equal(qWeekly?.primary?.remainingPercent, 0);
+  assert.equal(qWeekly?.primary?.label, "每周");
+  assert.equal(qWeekly?.secondary, undefined);
+  assert.equal(qWeekly?.balance, undefined);
+  assert.match(qWeekly?.note ?? "", /未返回5小时窗口/);
+  assert.match(qWeekly?.note ?? "", /已达限额/);
+
+  fx.setMode("quota-error");
+  const rtErr = new CodexLocalRuntime({ codexHome: fx.codexHome, codexBin: fx.fakeCodex, enableSend: false });
+  t.after(() => rtErr.close());
+  const [projErr] = await rtErr.list();
+  const qErr = projErr!.sessions[0]!.modelQuota;
+  assert.equal(qErr?.available, false);
+  assert.equal(qErr?.primary, undefined);
+  assert.equal(qErr?.balance, undefined);
 });
