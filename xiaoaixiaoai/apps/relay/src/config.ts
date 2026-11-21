@@ -21,6 +21,8 @@ export interface AssistantSetup {
 
 export interface ModelSetup {
   assistant?: AssistantSetup;
+  /** Additional valid server-configured providers not yet active in startup model order. */
+  extraProviders?: LlmProvider[];
   /** Identity still applies when no text model is configured. Never sent as a credential. */
   assistantProfile: AssistantProfile;
   live?: LiveConfig;
@@ -252,6 +254,18 @@ function assistantSetup(e: (n: string) => string | undefined, file: FileConfig, 
     ...out.assistantProfile,
     ...(firstMs > 0 ? { firstByteMs: firstMs } : {}),
   };
+  const extras: LlmProvider[] = [];
+  if (!resolved.has("gpt-login") && (e("POCKET_GPT_LOGIN_CREDENTIALS_FILE") || fileProviders["gpt-login"])) {
+    const p = resolve("gpt-login");
+    if (p) extras.push(p);
+  }
+  for (const id of Object.keys(TEXT_PRESETS)) {
+    if (!resolved.has(id) && e(`${envId(id)}API_KEY`)) {
+      const p = resolve(id);
+      if (p) extras.push(p);
+    }
+  }
+  if (extras.length) out.extraProviders = extras;
   out.summary.assistant = [...new Set(targets.map((t) => t.provider))];
 }
 

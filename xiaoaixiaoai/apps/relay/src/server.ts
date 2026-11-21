@@ -37,7 +37,7 @@ import { LedgerService } from "./ledger/service.ts";
 import { issueSetupCode, type SetupInfo } from "./setup.ts";
 import { joinLanding, notFoundLanding, pairLanding, type LandingPage } from "./landing.ts";
 import { Assistant, type AssistantOptions } from "./assistant/assistant.ts";
-import { makeLlm, type Llm, type LlmTarget } from "./assistant/llm.ts";
+import { makeLlm, type Llm, type LlmProvider, type LlmTarget } from "./assistant/llm.ts";
 import { ModelConfigService } from "./assistant/model-config.ts";
 import { startCall, endAllCalls, type LiveConfig } from "./assistant/live.ts";
 import { EventLog, levelsFrom, parseSince, redact, type EventInput } from "./eventlog.ts";
@@ -70,7 +70,7 @@ export interface RelayOptions {
   rpcTimeoutMs?: number;
   log?: (msg: string) => void;
   /** Text assistant: models tried in order, each at its provider (see src/config.ts). */
-  assistant?: { targets: LlmTarget[]; name?: string; persona?: string; firstByteMs?: number };
+  assistant?: { targets: LlmTarget[]; providers?: LlmProvider[]; name?: string; persona?: string; firstByteMs?: number };
   /** Injected model for tests; wins over `assistant`. */
   llm?: Llm;
   /** Live voice (MOSS-Live or an OpenAI Realtime service); off when unset. */
@@ -191,7 +191,7 @@ export class Relay {
     this.heartbeat = setInterval(() => this.sweep(), 30_000);
     this.ledger = new LedgerService(this.store, () => this.toViewers({ type: "ledger_updated" }));
     const a = opts.assistant;
-    this.modelConfig = new ModelConfigService(this.store, a?.targets ?? []);
+    this.modelConfig = new ModelConfigService(this.store, a?.targets ?? [], a?.providers ?? []);
     const initialTargets = this.modelConfig.targets();
     const llm =
       opts.llm ??

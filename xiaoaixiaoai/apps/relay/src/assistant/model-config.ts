@@ -7,7 +7,7 @@
  */
 import type { Store } from "../store.ts";
 import { redact } from "../eventlog.ts";
-import type { AuthStyle, GptLoginTarget, HttpLlmTarget, LlmTarget } from "./llm.ts";
+import type { AuthStyle, GptLoginTarget, HttpLlmTarget, LlmProvider, LlmTarget } from "./llm.ts";
 import { TEXT_PRESETS } from "./providers.ts";
 
 const SETTING_MODELS = "assistant.models.override";
@@ -119,28 +119,39 @@ export class ModelConfigService {
   private serverProviders = new Map<string, ServerProviderEntry>();
   private now: () => number;
 
-  constructor(store: Store, serverTargets: LlmTarget[] = [], now: () => number = () => Date.now()) {
+  constructor(
+    store: Store,
+    serverTargets: LlmTarget[] = [],
+    extraProviders: LlmProvider[] = [],
+    now: () => number = () => Date.now(),
+  ) {
     this.store = store;
     this.serverTargets = [...serverTargets];
     this.now = now;
-    for (const t of serverTargets) {
-      if (this.serverProviders.has(t.provider)) continue;
-      if (t.protocol === "pi-openai-oauth") {
-        this.serverProviders.set(t.provider, { kind: "oauth", id: t.provider, target: { ...t } });
+    const register = (p: LlmProvider) => {
+      if (this.serverProviders.has(p.provider)) return;
+      if (p.protocol === "pi-openai-oauth") {
+        this.serverProviders.set(p.provider, {
+          kind: "oauth",
+          id: p.provider,
+          target: { ...p, model: "gpt-6-sol" },
+        });
       } else {
-        this.serverProviders.set(t.provider, {
+        this.serverProviders.set(p.provider, {
           kind: "http",
-          id: t.provider,
-          protocol: t.protocol,
-          baseUrl: t.baseUrl,
-          apiKey: t.apiKey,
-          auth: t.auth,
-          headers: t.headers ? { ...t.headers } : undefined,
-          maxTokensField: t.maxTokensField,
-          extraBody: t.extraBody ? { ...t.extraBody } : undefined,
+          id: p.provider,
+          protocol: p.protocol,
+          baseUrl: p.baseUrl,
+          apiKey: p.apiKey,
+          auth: p.auth,
+          headers: p.headers ? { ...p.headers } : undefined,
+          maxTokensField: p.maxTokensField,
+          extraBody: p.extraBody ? { ...p.extraBody } : undefined,
         });
       }
-    }
+    };
+    for (const t of serverTargets) register(t);
+    for (const p of extraProviders) register(p);
   }
 
   private loadSaved(): StoredModelOverride | null {
@@ -406,7 +417,23 @@ export class ModelConfigService {
     const p = this.resolveProvider(id, this.loadSaved());
     if (!p) throw new Error(`未知服务商 "${id}"`);
     if (p.kind === "oauth") {
-      return { provider: id, models: [], note: "OAuth 凭据不支持拉取模型列表，请手动输入模型 ID" };
+      const { createModels, InMemoryModelsStore } = await import("@earendil-works/pi-ai");
+      const { openaiProvider } = await import("@earendil-works/pi-ai/providers/openai");
+      const { GptLoginCredentials } = await import("./gpt-login-credentials.ts");
+      const catalog = createModels({
+        credentials: new GptLoginCredentials(p.target.credentialsFile),
+        modelsStore: new InMemoryModelsStore(),
+        authContext: { env: async () => undefined, fileExists: async () => false },
+      });
+      catalog.setProvider(openaiProvider());
+      const list = (catalog.getModels("openai") ?? [])
+        .filter((m) => m.api === "openai-responses")
+        .map((m) => m.id);
+      return {
+        provider: id,
+        models: [...new Set(list)],
+        note: "ChatGPT OAuth 内置目录（如 gpt-6-sol / gpt-6.1-sol / gpt-6-luna / gpt-5.6-sol，是否可用视订阅额度而定）",
+      };
     }
     const base = p.baseUrl.replace(/\/+$/, "");
     const url = p.protocol === "anthropic" ? `${base}/v1/models` : `${base}/models`;

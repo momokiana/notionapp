@@ -669,7 +669,7 @@ export function adminPage(): string {
           '<span class="muted" style="font-size:12px">来源：' + esc(srcLabel) + "</span>" +
           '<span class="row-wrap">' +
             (p.readOnly ? "" : '<button class="ghost sm" data-pv-edit="' + esc(p.id) + '">编辑</button>') +
-            (p.readOnly ? "" : '<button class="ghost sm" data-pv-fetch="' + esc(p.id) + '">拉取模型</button>') +
+            ((!p.readOnly || p.protocol === "pi-openai-oauth") ? '<button class="ghost sm" data-pv-fetch="' + esc(p.id) + '">拉取模型</button>' : "") +
             revertBtn +
           "</span></div></div>";
     }).join("") || '<p class="muted">暂无服务商，点右上角“+ 新增服务商”即可添加</p>';

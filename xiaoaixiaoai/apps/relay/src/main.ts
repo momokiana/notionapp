@@ -34,7 +34,9 @@ const relay = new Relay({
   publicUrl: env.POCKET_PUBLIC_URL,
   trustProxy: env.POCKET_TRUST_PROXY === "1",
   // Text assistant: models tried in order, each at its provider.
-  assistant: models.assistant ?? { targets: [], ...models.assistantProfile },
+  assistant: models.assistant
+    ? { ...models.assistant, ...(models.extraProviders ? { providers: models.extraProviders } : {}) }
+    : { targets: [], ...(models.extraProviders ? { providers: models.extraProviders } : {}), ...models.assistantProfile },
   // Whether the assistant asks before acting (typed chats only; calls never wait). The app's Settings can change it.
   assistantConfirm: env.POCKET_ASSISTANT_CONFIRM === "always" ? "always" : "never",
   // Live voice; the key stays here and never reaches the phone.

@@ -8,6 +8,7 @@ import { agentKey, type Agent } from "@xiaoaixiaoai/protocol";
 import type { Llm } from "../src/assistant/llm.ts";
 import { Relay } from "../src/server.ts";
 import { adminPage } from "../src/admin.ts";
+import { loadModelSetup } from "../src/config.ts";
 
 const ADMIN = "diag-admin-token";
 let dir = "";
@@ -281,5 +282,52 @@ test("runtime model/provider overrides persist across restarts, mask keys, fetch
     if (r2) await r2.close();
     fakeUpstream.close();
     rmSync(d2, { recursive: true, force: true });
+  }
+});
+
+test("server-configured gpt-login stays available in /admin even when deepseek is active default", async () => {
+  const setup = loadModelSetup({
+    POCKET_ASSISTANT_PROVIDER: "deepseek",
+    POCKET_ASSISTANT_MODELS: "deepseek:deepseek-flash",
+    POCKET_DEEPSEEK_API_KEY: "sk-ds-fixture-9999",
+    POCKET_GPT_LOGIN_CREDENTIALS_FILE: "/var/lib/xiaoaixiaoai/model-auth/auth.json",
+    POCKET_GPT_LOGIN_REASONING: "low",
+  });
+  assert.deepEqual(setup.errors, []);
+  assert.equal(setup.assistant?.targets.length, 1);
+  assert.equal(setup.extraProviders?.length, 1);
+  assert.equal(setup.extraProviders?.[0]?.provider, "gpt-login");
+
+  const d3 = mkdtempSync(join(tmpdir(), "xa-gptcfg-test-"));
+  const r3 = new Relay({
+    dbPath: join(d3, "relay.db"),
+    adminToken: ADMIN,
+    assistant: { ...setup.assistant!, providers: setup.extraProviders },
+    log: () => {},
+  });
+  try {
+    const p3 = await r3.listen(0, "127.0.0.1");
+    const u3 = `http://127.0.0.1:${p3}`;
+    const hdr = { authorization: `Bearer ${ADMIN}`, "content-type": "application/json" };
+
+    const view = await (await fetch(`${u3}/v1/admin/models`, { headers: hdr })).json() as any;
+    const gpt = view.providers.find((p: any) => p.id === "gpt-login");
+    assert.ok(gpt, "gpt-login should appear in providers list");
+    assert.equal(gpt.protocol, "pi-openai-oauth");
+    assert.equal(gpt.readOnly, true);
+
+    const cat = await (await fetch(`${u3}/v1/admin/models/fetch`, { method: "POST", headers: hdr, body: JSON.stringify({ provider: "gpt-login" }) })).json() as any;
+    assert.ok(Array.isArray(cat.models) && cat.models.includes("gpt-6-sol"));
+
+    const sw = await (await fetch(`${u3}/v1/admin/models/order`, {
+      method: "POST",
+      headers: hdr,
+      body: JSON.stringify({ order: [{ provider: "gpt-login", model: "gpt-6-sol" }, { provider: "deepseek", model: "deepseek-flash" }] }),
+    })).json() as any;
+    assert.equal(sw.order[0].provider, "gpt-login");
+    assert.equal(r3.assistant.state().model, "gpt-6-sol");
+  } finally {
+    await r3.close();
+    rmSync(d3, { recursive: true, force: true });
   }
 });
