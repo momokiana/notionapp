@@ -289,6 +289,13 @@ test("the guard leaves true sentences alone", () => {
   const failed = newFacts();
   failed.actions.push({ kind: "send", state: "failed", result: "这台电脑现在不在线", seq: 1 });
   assert.equal(guardClaims("已经发过去了。", failed).text, "没发成：这台电脑现在不在线。");
+  // Conditional future send and explicit negations must stay intact when pending confirmation.
+  const pending = newFacts();
+  pending.actions.push({ kind: "send", state: "pending", seq: 1 });
+  const conditional = "消息已经写好了，你点确认后我就发出去，发完我会盯着它的回复。";
+  assert.deepEqual(guardClaims(conditional, pending), { text: conditional, fixed: [] });
+  const negated = "**Checking 那条大概率没发过去。**";
+  assert.deepEqual(guardClaims(negated, pending), { text: negated, fixed: [] });
 });
 
 test("prompts: acting at once by default, asking only when chosen, and never inventing replies", () => {

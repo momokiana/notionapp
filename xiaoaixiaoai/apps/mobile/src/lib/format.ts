@@ -1,4 +1,4 @@
-import type { Agent } from "@xiaoaixiaoai/protocol";
+import type { Agent, ModelQuota, QuotaWindow } from "@xiaoaixiaoai/protocol";
 
 /** Last part of a path; Windows computers send `C:\...` paths. */
 export function basename(path?: string | null): string {
@@ -118,4 +118,26 @@ export function stableHash(s: string): number {
     h = Math.imul(h, 16777619);
   }
   return h >>> 0;
+}
+
+export type QuotaTone = "ok" | "warn" | "low" | "muted";
+
+export function quotaChip(q?: ModelQuota | null): { text: string; tone: QuotaTone } | null {
+  if (!q) return null;
+  if (!q.available) return { text: "配额未公开", tone: "muted" };
+  const w = q.primary ?? q.secondary;
+  if (w) {
+    const pct = Math.max(0, Math.min(100, Math.round(w.remainingPercent)));
+    const prefix = w.label ? `${w.label}余` : "余";
+    const tone: QuotaTone = pct <= 15 ? "low" : pct <= 40 ? "warn" : "ok";
+    return { text: `${prefix} ${pct}%`, tone };
+  }
+  if (q.balance) return { text: `余额 ${q.balance}`, tone: "ok" };
+  return null;
+}
+
+export function quotaWindowText(w: QuotaWindow, now = Date.now()): string {
+  const pct = Math.max(0, Math.min(100, Math.round(w.remainingPercent)));
+  const reset = w.resetsAt && w.resetsAt > now ? ` · ${dueTime(w.resetsAt, now).abs} 重置` : "";
+  return `${w.label ? `${w.label}窗口 ` : ""}剩余 ${pct}%${reset}`;
 }

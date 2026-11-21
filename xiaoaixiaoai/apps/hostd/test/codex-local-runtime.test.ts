@@ -22,9 +22,27 @@ function setupCodexFixture(t: TestContext) {
   // Add >2.5 MiB prefix noise so we verify bounded tail parsing without loading from start.
   const padLine = JSON.stringify({ type: "event_msg", payload: { type: "agent_reasoning", text: "x".repeat(4000) } });
   const tailLines = [
+    JSON.stringify({ type: "turn_context", timestamp: "2026-11-19T11:59:59.000Z", payload: { model: "gpt-6.2-sol", collaboration_mode: { settings: { model: "gpt-6.2-sol", reasoning_effort: "high" } } } }),
     JSON.stringify({ type: "response_item", timestamp: "2026-11-19T12:00:00.000Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context><cwd>/tmp</cwd></environment_context>" }] } }),
     JSON.stringify({ type: "response_item", timestamp: "2026-11-19T12:00:01.000Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "请检查发布脚本" }, { type: "input_image", image_url: "data:image/png;base64,AA==" }] } }),
     JSON.stringify({ type: "response_item", timestamp: "2026-11-19T12:00:02.000Z", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "已完成发布脚本检查。" }] } }),
+    JSON.stringify({
+      type: "event_msg",
+      timestamp: "2026-11-19T12:00:02.500Z",
+      payload: {
+        type: "token_count",
+        info: {
+          last_token_usage: { input_tokens: 12000, output_tokens: 500, total_tokens: 12500 },
+          model_context_window: 400000,
+        },
+        rate_limits: {
+          limit_id: "codex",
+          primary: { used_percent: 25, window_minutes: 10080, resets_at: 1795301903 },
+          secondary: null,
+          credits: { has_credits: true, unlimited: false, balance: "1234.5678" },
+        },
+      },
+    }),
     JSON.stringify({ type: "event_msg", payload: { type: "task_complete" } }),
   ];
   writeFileSync(rolloutIdle, `${Array(650).fill(padLine).join("\n")}\n${tailLines.join("\n")}\n`);
@@ -141,6 +159,13 @@ test("CodexLocalRuntime lists, browses, and extracts bounded tail detail without
   assert.deepEqual(projects[0]!.sessions.map((s) => s.id), ["thread-codex-idle-1", "thread-codex-run-2", "thread-codex-arch-3"]);
   assert.equal(projects[0]!.sessions[0]!.state, "idle");
   assert.equal(projects[0]!.sessions[0]!.canSend, true);
+  assert.equal(projects[0]!.sessions[0]!.model, "gpt-6.2-sol");
+  assert.equal(projects[0]!.sessions[0]!.contextTokens, 12500);
+  assert.equal(projects[0]!.sessions[0]!.contextLimit, 400000);
+  assert.equal(projects[0]!.sessions[0]!.modelQuota?.available, true);
+  assert.equal(projects[0]!.sessions[0]!.modelQuota?.primary?.remainingPercent, 75);
+  assert.equal(projects[0]!.sessions[0]!.modelQuota?.primary?.label, "7天");
+  assert.equal(projects[0]!.sessions[0]!.modelQuota?.balance, "1235");
   assert.equal(projects[0]!.sessions[1]!.state, "running");
   assert.equal(projects[0]!.sessions[1]!.canSend, false);
   assert.equal(projects[0]!.sessions[2]!.state, "inactive");

@@ -23,13 +23,16 @@ export function newFacts(): RunFacts {
 /** "发过去了", "递到了", "已经告诉它了", "转达了": the message reached the other side. */
 const DELIVERED =
   /(发|递|传|转|带|捎|送)(过去|到|好|出去|给[^，。！？\n]{0,12}了)|(已经?|都)(发|递|传|转告|转达|告诉|说给)|(发|递|传|转告|转达|告诉[^，。！？\n]{0,10})了|说过去了|带到了|话带到/;
+/** Negations or conditional future statements about pending confirmation: must not be mistaken for delivery claims. */
+const NOT_DELIVERED =
+  /(没(有|能|准|敢|真|太|怎么)?|未|并未|不曾|不会|别|先不|大概率没|还没|尚未|暂未)[^，。！？\n]{0,8}(发|递|传|转|带|捎|送)|(点确认|确认|点头|同意|允许|批准|回复)[^，。！？\n]{0,8}(后|才|再)[^，。！？\n]{0,8}(发|递|传|转|送)|准备[^，。！？\n]{0,6}(发|递|传|送)|排好了/;
 /**
  * "那边回话说", "它回复说", "对方表示": another agent's answer. A bare "它说" is
  * left alone: it is how the assistant reports what it read before sending.
  */
 const REPLIED = /回话|回复|回信|回了话|答复|回应|回过来|回答说|(那边|对方)(说|讲|表示|觉得|回)/;
 /** "它还没回", "等它回了我叫你": about a reply that has not come, which is true. */
-const NO_REPLY_YET = /没(有)?(回|答|动静)|还没|等它|等那边|回了(我)?再|回来(我)?再|一回(我)?就|有回音/;
+const NO_REPLY_YET = /没(有)?(回|答|动静)|还没|等(它|它的|那边)?(回|回复|回音)|盯着(它|它的)?(回|回复|动静)|回了(我)?再|回来(我)?再|一回(我)?就|有回音|一个字(的)?(结论)?都没/;
 const SEND_KINDS = new Set<AssistantAction["kind"]>(["send", "keys", "create", "resume"]);
 
 function sentences(text: string): string[] {
@@ -55,7 +58,7 @@ export function guardClaims(text: string, facts: RunFacts): { text: string; fixe
   for (const s of sentences(text)) {
     // Nothing was read after sending: any "it answered ..." is made up.
     const reply = !readAfter && REPLIED.test(s) && !NO_REPLY_YET.test(s);
-    const delivery = !done.length && DELIVERED.test(s);
+    const delivery = !done.length && DELIVERED.test(s) && !NOT_DELIVERED.test(s);
     if (reply) fixed.push("reply");
     if (delivery) {
       fixed.push("delivery");

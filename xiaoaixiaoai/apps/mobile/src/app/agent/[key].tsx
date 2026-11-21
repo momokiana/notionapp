@@ -9,12 +9,13 @@ import { effectiveAgentStatus, type Agent } from "@xiaoaixiaoai/protocol";
 import { ChatView } from "../../components/chat";
 import { Composer, InfoView, TerminalView } from "../../components/detail";
 import { Breadcrumb, SubagentList } from "../../components/subagents";
+import { ConnectionBanner } from "../../components/agents";
 import { EmptyState, HarnessAvatar, PageBackground, StatusPill } from "../../components/ui";
 import { useLive } from "../../lib/store";
 import { call, pingNow } from "../../lib/relay";
 import { Mascot } from "../../components/Mascot";
 import { CuteIcon } from "../../components/icons";
-import { agentTitle, money, relTime } from "../../lib/format";
+import { agentTitle, money, quotaChip, relTime } from "../../lib/format";
 import type { ReplyQuote } from "../../lib/quote";
 import { parseTrail, SUB_STATUS, type Crumb } from "../../lib/subnav";
 import { usePalette } from "../../theme/theme";
@@ -118,7 +119,8 @@ function MainDetail({ agent, initialTab }: { agent: Agent; initialTab?: Tab }) {
     });
   }, [agent.key, agent.deviceId, effStatus, agent.turn]);
 
-  const meta = [agent.where, money(agent.costUsd)].filter(Boolean).join(" · ");
+  const qShort = quotaChip(agent.modelQuota)?.text;
+  const meta = [agent.where, agent.model, qShort, money(agent.costUsd)].filter(Boolean).join(" · ");
   const buttons = [
     { value: "chat", label: "对话" },
     ...(hasTerminal ? [{ value: "terminal", label: "终端" }] : []),
@@ -133,6 +135,7 @@ function MainDetail({ agent, initialTab }: { agent: Agent; initialTab?: Tab }) {
       <Stack.Screen options={{ title: agentTitle(agent) }} />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding" keyboardVerticalOffset={headerHeight}>
         <View style={{ paddingHorizontal: space.lg, paddingTop: space.xs, gap: space.sm }}>
+          <ConnectionBanner />
           <View style={{ flexDirection: "row", gap: space.sm, alignItems: "center", minHeight: 30 }}>
             <HarnessAvatar harness={agent.harness} isShell={agent.isShell} size={28} />
             <View style={{ flexShrink: 1 }}>

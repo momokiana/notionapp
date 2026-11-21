@@ -15,6 +15,7 @@ import {
   type DshDirectoryProject,
   type DshDirectoryReply,
   type DshDirectoryRequest,
+  type ModelQuota,
   type RuntimePendingQuestion,
   type RuntimeProject,
   type RuntimeQuestionItem,
@@ -353,6 +354,22 @@ function pageAfter<T extends { id: string }>(items: T[], after?: string): { page
 
 const searchKey = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
 
+function pickPermissionOptionId(params: unknown): string | undefined {
+  if (!params || typeof params !== "object") return undefined;
+  const options = (params as Record<string, unknown>).options;
+  if (!Array.isArray(options)) return undefined;
+  const parsed = options
+    .map((raw) => (raw && typeof raw === "object" ? raw as Record<string, unknown> : undefined))
+    .filter((o): o is Record<string, unknown> => o !== undefined && typeof o.optionId === "string" && o.optionId.length > 0);
+  const byKind = (kind: string) => parsed.find((o) => o.kind === kind)?.optionId as string | undefined;
+  return (
+    byKind("allow_always") ??
+    byKind("allow_once") ??
+    (parsed.find((o) => typeof o.optionId === "string" && /^allow/i.test(o.optionId))?.optionId as string | undefined) ??
+    (parsed.find((o) => typeof o.kind !== "string" || !/^reject/i.test(o.kind))?.optionId as string | undefined)
+  );
+}
+
 export class AntigravityRuntime {
   private readonly brainDir: string;
   private readonly summaryDbPath?: string;
@@ -360,7 +377,9 @@ export class AntigravityRuntime {
   private readonly enableSend: boolean;
   private readonly activeTurns = new Map<string, ActiveTurn>();
   private readonly recentCreated = new Map<string, { meta: BrainMeta; firstMessage?: string; expiresAt: number }>();
+  private readonly sessionModels = new Map<string, string>();
   private readonly events: Array<{ event: RuntimeTaskEvent; expiresAt: number }> = [];
+  private accountTier?: string;
   private closed = false;
 
   constructor(options: AntigravityRuntimeOptions) {
@@ -596,6 +615,40 @@ export class AntigravityRuntime {
     return this.scanIndex().roots;
   }
 
+  private modelMeta(sessionId: string): { model?: string; modelQuota: ModelQuota } {
+    const model = this.sessionModels.get(sessionId);
+    return {
+      ...(model ? { model } : {}),
+      modelQuota: {
+        available: false,
+        ...(this.accountTier ? { plan: this.accountTier } : {}),
+        note: "Antigravity 客户端暂未向本机开放模型剩余配额接口",
+      },
+    };
+  }
+
+  private recordAcpSessionMeta(sessionId: string, result: Record<string, unknown> | undefined): void {
+    if (!result) return;
+    const models = result.models && typeof result.models === "object" ? result.models as Record<string, unknown> : undefined;
+    const currentId = typeof models?.currentModelId === "string" ? models.currentModelId.trim() : "";
+    if (currentId) {
+      let display = currentId;
+      if (Array.isArray(models?.availableModels)) {
+        const hit = models.availableModels.find(
+          (m) => m && typeof m === "object" && (m as Record<string, unknown>).modelId === currentId,
+        ) as Record<string, unknown> | undefined;
+        if (typeof hit?.name === "string" && hit.name.trim()) display = hit.name.trim();
+      }
+      this.sessionModels.set(sessionId, cleanLabel(display, currentId));
+    }
+    const meta = result._meta && typeof result._meta === "object" ? result._meta as Record<string, unknown> : undefined;
+    const ag = meta?.antigravity && typeof meta.antigravity === "object" ? meta.antigravity as Record<string, unknown> : undefined;
+    const tier = ag?.tier && typeof ag.tier === "object" ? ag.tier as Record<string, unknown> : undefined;
+    if (typeof tier?.name === "string" && tier.name.trim()) {
+      this.accountTier = cleanLabel(tier.name, tier.name);
+    }
+  }
+
   private toSession(meta: BrainMeta): RuntimeSession {
     return {
       id: meta.sessionId,
@@ -603,6 +656,7 @@ export class AntigravityRuntime {
       state: meta.state,
       canSend: this.canSendMeta(meta, meta.state),
       updatedAt: Math.trunc(meta.mtimeMs),
+      ...this.modelMeta(meta.sessionId),
       ...(meta.subagents !== undefined ? { subagents: meta.subagents } : {}),
       ...(meta.subagentsWorking !== undefined ? { subagentsWorking: meta.subagentsWorking } : {}),
     };
@@ -784,6 +838,7 @@ export class AntigravityRuntime {
       state,
       canSend,
       updatedAt: Math.trunc(meta.mtimeMs),
+      ...this.modelMeta(meta.sessionId),
       ...(meta.subagents !== undefined ? { subagents: meta.subagents } : {}),
       ...(meta.subagentsWorking !== undefined ? { subagentsWorking: meta.subagentsWorking } : {}),
     };
@@ -825,7 +880,7 @@ export class AntigravityRuntime {
 
     const resolvedBrain = resolve(this.brainDir);
     const appDataDirName = basename(resolvedBrain).toLowerCase() === "brain" ? basename(dirname(resolvedBrain)) : "antigravity";
-    const acpArgs = ["acp", "--app-data-dir", appDataDirName, "--stdio"];
+    const acpArgs = ["acp", "--app-data-dir", appDataDirName, "--stdio", "--dangerously-skip-permissions"];
     const spawnOpts = { cwd, stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"], windowsHide: true };
     const child = /\.(?:mjs|js|cjs)$/i.test(exe)
       ? spawn(process.execPath, [exe, ...acpArgs], spawnOpts)
@@ -883,8 +938,17 @@ export class AntigravityRuntime {
       const id = packet.id;
       const method = packet.method;
       if (typeof method === "string") {
-        // Server-initiated interactive request (permission / input prompt) cannot resolve unattended.
+        // Auto-approve tool permission RPCs in unattended remote runs; only abort on unhandled interactive prompts.
         if (typeof id === "number" || typeof id === "string") {
+          if (method === "session/request_permission") {
+            const optionId = pickPermissionOptionId(packet.params);
+            if (optionId) {
+              try {
+                writePacket({ id, result: { outcome: { outcome: "selected", optionId } } });
+                return;
+              } catch {}
+            }
+          }
           const tracked = boundSessionId ? this.activeTurns.get(boundSessionId) : undefined;
           if (tracked) tracked.attention = true;
           if (handoffDone && !emittedTerminal) {
@@ -1019,6 +1083,7 @@ export class AntigravityRuntime {
       if (resumed?.sessionId !== sessionId) {
         throw new RuntimeError("not_found", "未确认对应的 Antigravity 会话，未发送。");
       }
+      this.recordAcpSessionMeta(sessionId, resumed);
 
       server.sendPrompt(sessionId, text);
       settledTurn = true;
@@ -1056,6 +1121,7 @@ export class AntigravityRuntime {
       const created = await server.rpc("session/new", { cwd: resolvedCwd, mcpServers: [] }, 20_000);
       const sessionId = typeof created?.sessionId === "string" ? created.sessionId : "";
       if (!isRuntimeId(sessionId)) throw new RuntimeError("outcome_unknown", "未收到有效的 Antigravity 会话标识。");
+      this.recordAcpSessionMeta(sessionId, created);
 
       const workspace = projectFromPath(resolvedCwd) ?? {
         id: "agp_default",

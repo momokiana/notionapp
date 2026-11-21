@@ -1,4 +1,5 @@
 import { AppState, type AppStateStatus, type NativeEventSubscription } from "react-native";
+import { XiaoaiNative } from "../../modules/xiaoaixiaoai-native";
 import {
   PROTOCOL_VERSION,
   type ClientFrame,
@@ -34,6 +35,7 @@ export interface Link {
   call(to: string, method: RpcMethod, params: unknown, timeoutMs: number): Promise<unknown>;
   subscribe(to: string, stream: "terminal" | "session", params: unknown, onEvent: StreamEvent, onState?: StreamEvent): () => void;
   ping(): void;
+  reconnect?: () => void;
   close(): void;
 }
 
@@ -130,41 +132,88 @@ type Stream = { id: string; to: string; stream: "terminal" | "session"; params: 
 /** React Native's WebSocket also takes request headers (the DOM typing doesn't know). */
 type RNWebSocket = new (url: string, protocols: string | string[] | null, options: { headers: Record<string, string> }) => WebSocket;
 
+const CONNECT_TIMEOUT_MS = 10_000;
+const PING_INTERVAL_MS = 20_000;
+const PONG_TIMEOUT_MS = 10_000;
+const STALE_FOREGROUND_MS = 20_000;
+
 class SocketLink implements Link {
   private ws: WebSocket | null = null;
   private pending = new Map<string, Pending>();
   private streams = new Map<string, Stream>();
   private seq = 0;
   private backoff = 1000;
+  private attempts = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pongTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private appSub: NativeEventSubscription | null = null;
+  private notifierSub: { remove(): void } | null = null;
   private closed = false;
   /** Set once the relay greets this socket; a close before that may mean a rejected token. */
   private welcomed = false;
+  private openStartedAt = 0;
+  private lastInboundAt = 0;
 
   constructor(private server: string, private token: string) {
     this.open();
-    this.pingTimer = setInterval(() => this.ping(), 20_000);
+    this.pingTimer = setInterval(() => this.ping(), PING_INTERVAL_MS);
     this.appSub = AppState.addEventListener("change", (s: AppStateStatus) => {
-      if (s === "active" && (!this.ws || this.ws.readyState > WebSocket.OPEN)) this.reconnectNow();
+      if (s !== "active" || this.closed) return;
+      const ws = this.ws;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        if (!ws || ws.readyState > WebSocket.OPEN || Date.now() - this.openStartedAt > 3_000) this.reconnectNow();
+        return;
+      }
+      if (Date.now() - this.lastInboundAt > STALE_FOREGROUND_MS) this.reconnectNow();
+      else this.ping();
     });
+    this.notifierSub = XiaoaiNative?.addListener("onNotifier", (e) => {
+      if (!e.connected || this.closed) return;
+      const link = useLive.getState().link;
+      if (link === "offline" || (link === "connecting" && Date.now() - this.openStartedAt > 2_500)) {
+        this.reconnectNow();
+      }
+    }) ?? null;
   }
 
   private url() {
     return `${this.server.replace(/^http/i, "ws")}/v1/ws`;
   }
 
+  private clearWatchdogs() {
+    if (this.connectTimer) clearTimeout(this.connectTimer);
+    this.connectTimer = null;
+    if (this.pongTimer) clearTimeout(this.pongTimer);
+    this.pongTimer = null;
+  }
+
   private open() {
     if (this.closed) return;
-    useLive.setState({ link: "connecting", runtimeTaskNotices: false });
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    this.clearWatchdogs();
+    this.openStartedAt = Date.now();
+    useLive.setState({ link: "connecting", nextRetryAt: null, reconnectAttempt: this.attempts, runtimeTaskNotices: false });
     this.welcomed = false;
     // The token rides in a header (React Native's third argument): a URL ends up in reverse-proxy access logs.
     const ws = new (WebSocket as unknown as RNWebSocket)(this.url(), null, { headers: { Authorization: `Bearer ${this.token}` } });
     this.ws = ws;
+    this.connectTimer = setTimeout(() => {
+      if (this.closed || this.ws !== ws || ws.readyState !== WebSocket.CONNECTING) return;
+      applog("warn", "link", "socket connect timed out, scheduling retry");
+      this.handleDrop(ws, false, "connect timeout");
+      try { ws.close(); } catch {}
+    }, CONNECT_TIMEOUT_MS);
     ws.onopen = () => {
+      if (this.ws !== ws || this.closed) return;
+      if (this.connectTimer) clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+      this.lastInboundAt = Date.now();
       applog("info", "link", "socket open");
-      this.backoff = 1000;
       this.send({ type: "hello", version: PROTOCOL_VERSION, platform: "mobile" });
       // Under new ids: an older relay or computer may still hold the old ones and refuse them as duplicates.
       const open = [...this.streams.values()];
@@ -177,6 +226,12 @@ class SocketLink implements Link {
       this.ping();
     };
     ws.onmessage = (ev) => {
+      if (this.ws !== ws || this.closed) return;
+      this.lastInboundAt = Date.now();
+      if (this.pongTimer) {
+        clearTimeout(this.pongTimer);
+        this.pongTimer = null;
+      }
       let frame: ServerFrame;
       try {
         frame = JSON.parse(String(ev.data)) as ServerFrame;
@@ -189,41 +244,58 @@ class SocketLink implements Link {
       /* onclose follows */
     };
     ws.onclose = (ev) => {
-      if (this.ws !== ws) return;
-      this.ws = null;
-      this.failPending("offline", "连接断开了");
-      if (this.closed) return;
-      applog(this.welcomed ? "warn" : "info", "link", `socket closed ${ev.code}${ev.reason ? ` ${ev.reason}` : ""}${this.welcomed ? "" : " before welcome"}, retry in ${Math.round(this.backoff / 1000)}s`);
-      // The relay closes a revoked device's socket with 4001 (apps/relay/src/server.ts); 4401 accepted too.
-      if (ev.code === REVOKED_CLOSE_CODE || ev.code === 4401) {
-        this.revoked();
-        return;
-      }
-      useLive.setState({ link: "offline" });
-      this.retryTimer = setTimeout(() => this.open(), this.backoff);
-      this.backoff = Math.min(this.backoff * 2, 30_000);
-      // A token revoked while this phone was away is refused at the HTTP upgrade (401),
-      // which a WebSocket only reports as a plain close. Ask the relay so we stop retrying forever.
-      if (!this.welcomed) {
-        tokenStillValid(this.server, this.token).then((ok) => {
-          if (!ok && !this.closed && this.ws === null) this.revoked();
-        });
-      }
+      const revokedCode = ev.code === REVOKED_CLOSE_CODE || ev.code === 4401;
+      const reason = `${ev.code}${ev.reason ? ` ${ev.reason}` : ""}`;
+      this.handleDrop(ws, revokedCode, reason);
     };
+  }
+
+  private handleDrop(ws: WebSocket, revokedCode: boolean, reason: string) {
+    if (this.ws !== ws) return;
+    this.ws = null;
+    this.clearWatchdogs();
+    this.failPending("offline", "连接断开了");
+    if (this.closed) return;
+    if (revokedCode) {
+      applog("warn", "link", `socket closed ${reason}, revoked`);
+      this.revoked();
+      return;
+    }
+    const delay = this.backoff;
+    this.attempts += 1;
+    this.backoff = Math.min(this.backoff * 2, 30_000);
+    applog(this.welcomed ? "warn" : "info", "link", `socket closed (${reason})${this.welcomed ? "" : " before welcome"}, retry #${this.attempts} in ${Math.round(delay / 1000)}s`);
+    useLive.setState({ link: "offline", nextRetryAt: Date.now() + delay, reconnectAttempt: this.attempts });
+    this.retryTimer = setTimeout(() => this.open(), delay);
+    // A token revoked while this phone was away is refused at the HTTP upgrade (401),
+    // which a WebSocket only reports as a plain close. Ask the relay so we stop retrying forever.
+    if (!this.welcomed) {
+      tokenStillValid(this.server, this.token).then((ok) => {
+        if (!ok && !this.closed && this.ws === null) this.revoked();
+      });
+    }
   }
 
   private revoked() {
     applog("error", "link", "this phone's token was revoked or refused");
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
-    useLive.setState({ link: "unauthorized", lastError: "这台手机的授权已失效，请重新配对" });
+    this.clearWatchdogs();
+    useLive.setState({ link: "unauthorized", nextRetryAt: null, reconnectAttempt: 0, lastError: "这台手机的授权已失效，请重新配对" });
   }
 
-  private reconnectNow() {
+  reconnectNow() {
+    if (this.closed) return;
+    if (useLive.getState().link === "unauthorized") return;
     if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.clearWatchdogs();
     this.backoff = 1000;
-    this.ws?.close();
+    this.attempts = 0;
+    const prev = this.ws;
     this.ws = null;
+    try { prev?.close(); } catch {}
+    this.failPending("offline", "正在重连服务器");
     this.open();
   }
 
@@ -231,7 +303,9 @@ class SocketLink implements Link {
     switch (f.type) {
       case "welcome":
         this.welcomed = true;
-        useLive.setState({ self: f.device, link: "online", lastError: null, runtimeTaskNotices: f.runtimeTaskNotices === true });
+        this.backoff = 1000;
+        this.attempts = 0;
+        useLive.setState({ self: f.device, link: "online", nextRetryAt: null, reconnectAttempt: 0, lastError: null, runtimeTaskNotices: f.runtimeTaskNotices === true });
         // Catch up on anything the assistant said while this socket was down.
         void loadAssistant();
         break;
@@ -307,7 +381,21 @@ class SocketLink implements Link {
   }
 
   ping() {
-    this.send({ type: "ping", t: Date.now() });
+    const ws = this.ws;
+    if (!ws) {
+      if (!this.closed) this.reconnectNow();
+      return;
+    }
+    if (!this.send({ type: "ping", t: Date.now() })) return;
+    if (!this.pongTimer) {
+      this.pongTimer = setTimeout(() => {
+        this.pongTimer = null;
+        if (this.closed || this.ws !== ws) return;
+        applog("warn", "link", "ping timed out, reconnecting");
+        this.handleDrop(ws, false, "ping timeout");
+        try { ws.close(); } catch {}
+      }, PONG_TIMEOUT_MS);
+    }
   }
 
   private streamId() {
@@ -341,15 +429,22 @@ class SocketLink implements Link {
     });
   }
 
+  reconnect() {
+    this.reconnectNow();
+  }
+
   close() {
     this.closed = true;
     if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.clearWatchdogs();
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.appSub?.remove();
+    this.notifierSub?.remove();
     this.failPending("offline", "连接已关闭");
     this.streams.clear();
-    this.ws?.close();
+    const ws = this.ws;
     this.ws = null;
+    try { ws?.close(); } catch {}
   }
 }
 
@@ -379,7 +474,16 @@ export function subscribe(to: string, stream: "terminal" | "session", params: un
 }
 
 export function pingNow() {
+  const link = useLive.getState().link;
+  if (link === "offline") {
+    current?.reconnect?.();
+    return;
+  }
   current?.ping();
+}
+
+export function reconnectNow() {
+  current?.reconnect?.();
 }
 
 export function call<M extends RpcMethod>(to: string, method: M, params: RpcParams<M>, timeoutMs = 15_000): Promise<RpcResult<M>> {

@@ -356,7 +356,7 @@ rl.on("line", (line) => {
   assert.deepEqual(kinds, ["progress", "completed"]);
 
   const records = readFileSync(recordPath, "utf8").trim().split(/\r?\n/).map((l) => JSON.parse(l) as Record<string, unknown>);
-  assert.deepEqual(records[0]!.argv, ["acp", "--app-data-dir", "antigravity-store", "--stdio"]);
+  assert.deepEqual(records[0]!.argv, ["acp", "--app-data-dir", "antigravity-store", "--stdio", "--dangerously-skip-permissions"]);
   const resumeCall = records.find((r) => (r.rpc as { method?: string } | undefined)?.method === "session/resume")?.rpc as { params: { sessionId: string; cwd: string } };
   assert.equal(resumeCall.params.sessionId, "ag-write-attn-1");
   const promptCall = records.find((r) => (r.rpc as { method?: string } | undefined)?.method === "session/prompt")?.rpc as { params: { prompt: Array<{ text: string }> } };
@@ -438,6 +438,100 @@ rl.on("line", (line) => {
   const rpcs = readFileSync(recordPath, "utf8").trim().split(/\r?\n/).map((l) => JSON.parse(l) as { method?: string; params?: Record<string, unknown> });
   assert.ok(rpcs.some((r) => r.method === "session/new"));
   assert.ok(rpcs.some((r) => r.method === "session/cancel" && r.params?.sessionId === "ag-created-1"));
+});
+
+test("AntigravityRuntime auto-approves session/request_permission RPCs and records ACP model/tier", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "xa-ag-perm-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const brainDir = join(root, "antigravity", "brain");
+  const workDir = join(root, "repo-perm");
+  mkdirSync(brainDir, { recursive: true });
+  mkdirSync(workDir, { recursive: true });
+
+  const logDir = join(brainDir, "ag-perm-1", ".system_generated", "logs");
+  mkdirSync(logDir, { recursive: true });
+  writeFileSync(
+    join(logDir, "transcript.jsonl"),
+    [
+      JSON.stringify({ type: "SYSTEM_MESSAGE", content: `Active Workspaces:\n- ${workDir}\n</user_information>` }),
+      JSON.stringify({ type: "USER_INPUT", content: "<USER_REQUEST>\n跑统计命令\n</USER_REQUEST>" }),
+      JSON.stringify({ type: "PLANNER_RESPONSE", status: "DONE", content: "好。" }),
+    ].join("\n") + "\n",
+  );
+
+  const mockAgy = join(root, "mock-agy-perm.mjs");
+  writeFileSync(mockAgy, `
+import { createInterface } from "node:readline";
+const rl = createInterface({ input: process.stdin });
+let promptId = null;
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1 } }) + "\\n");
+  } else if (msg.method === "session/resume") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: msg.id,
+      result: {
+        sessionId: msg.params.sessionId,
+        models: { currentModelId: "gemini-4-neon-high", availableModels: [{ modelId: "gemini-4-neon-high", name: "Gemini 4 Neon (High)" }] },
+        _meta: { antigravity: { tier: { name: "Google AI Ultra" } } },
+      },
+    }) + "\\n");
+  } else if (msg.method === "session/prompt") {
+    promptId = msg.id;
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 99,
+      method: "session/request_permission",
+      params: {
+        sessionId: msg.params.sessionId,
+        options: [
+          { optionId: "reject_once", kind: "reject_once" },
+          { optionId: "allow_always", kind: "allow_always" },
+        ],
+      },
+    }) + "\\n");
+  } else if (msg.id === 99 && msg.result?.outcome?.outcome === "selected" && msg.result?.outcome?.optionId === "allow_always") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: { sessionId: "ag-perm-1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "命令执行完成" } } },
+    }) + "\\n");
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: promptId, result: { stopReason: "end_turn" } }) + "\\n");
+  } else if (msg.method === "session/close") {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
+  }
+});
+`);
+
+  const rt = new AntigravityRuntime({ brainDir, agyBin: mockAgy, enableSend: true });
+  t.after(() => rt.close());
+
+  const [proj] = await rt.list();
+  const reqId = randomUUID();
+  const receipt = await rt.send({
+    runtime: "antigravity",
+    projectId: proj!.id,
+    sessionId: "ag-perm-1",
+    requestId: reqId,
+    text: "统计代码改动",
+  });
+  assert.equal(receipt.accepted, true);
+
+  for (let i = 0; i < 40; i++) {
+    if (rt.taskEvents().some((e) => e.requestId === reqId && e.kind === "completed")) break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  const kinds = rt.taskEvents().filter((e) => e.requestId === reqId).map((e) => e.kind);
+  assert.deepEqual(kinds, ["progress", "completed"]);
+
+  const detail = await rt.detail(proj!.id, "ag-perm-1", 20);
+  assert.equal(detail.session.model, "Gemini 4 Neon (High)");
+  assert.equal(detail.session.modelQuota?.available, false);
+  assert.equal(detail.session.modelQuota?.plan, "Google AI Ultra");
 });
 
 test("AntigravityRuntime rolls active child subagents up to idle parent and exposes children/detail", async (t) => {

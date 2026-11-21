@@ -12,7 +12,7 @@ import { onQueueEvent, sendOut } from "../lib/outbox";
 import { chunks, typingDiff } from "../lib/typing";
 import { useLive, usePending, useSettings } from "../lib/store";
 import { normalizeTermKeyLayout, TERM_KEYS, visibleTermKeys } from "../lib/termkeys";
-import { compactNum, money, relTime, shortPath } from "../lib/format";
+import { compactNum, money, quotaWindowText, relTime, shortPath } from "../lib/format";
 import { TERM_BG, TERM_FG } from "../lib/ansi";
 import { TermScreen, type ScreenView, type ShownRow } from "../lib/termscreen";
 import { harnessLook } from "../lib/harness";
@@ -1057,6 +1057,9 @@ export function InfoView({ agent, bottomInset }: { agent: Agent; bottomInset: nu
   const device = useLive((s) => s.devices[agent.deviceId]);
   const look = harnessLook(agent.harness, agent.isShell);
   const ratio = agent.contextTokens && agent.contextLimit ? agent.contextTokens / agent.contextLimit : null;
+  const quota = agent.modelQuota;
+  const windows = quota?.available ? [quota.primary, quota.secondary].filter((w): w is NonNullable<typeof w> => Boolean(w)) : [];
+  const barColor = (pct: number) => (pct <= 15 ? p.error : pct <= 40 ? "#D97706" : statusColors("working", p.dark).fg);
   const row = (title: string, value: string | undefined | null, icon: string, mono = false) =>
     value ? (
       <List.Item
@@ -1071,6 +1074,41 @@ export function InfoView({ agent, bottomInset }: { agent: Agent; bottomInset: nu
     ) : null;
   return (
     <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: bottomInset + space.xxl, gap: space.md }}>
+      {quota ? (
+        <View style={{ backgroundColor: p.surface, borderRadius: radius.card, padding: space.lg, gap: space.sm }}>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: space.sm }}>
+            <Text style={{ fontFamily: fonts.bodyBold, color: p.ink }}>模型与剩余额度</Text>
+            {quota.plan ? (
+              <View style={{ backgroundColor: p.lavenderContainer, borderRadius: radius.pill, paddingHorizontal: 8, paddingVertical: 2 }}>
+                <Text style={{ fontSize: 11.5, fontFamily: fonts.bodySemi, color: p.ink }}>{quota.plan}</Text>
+              </View>
+            ) : null}
+          </View>
+          {agent.model ? <Text style={{ fontSize: 14, color: p.ink, fontFamily: fonts.mono }}>{agent.model}</Text> : null}
+          {quota.available ? (
+            <View style={{ gap: space.sm }}>
+              {windows.map((w, i) => (
+                <View key={i} style={{ gap: 4 }}>
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.sm }}>
+                    <Text style={{ fontSize: 13, color: p.muted }}>{quotaWindowText(w)}</Text>
+                    <Text style={{ fontSize: 13, fontFamily: fonts.bodyBold, color: barColor(w.remainingPercent) }}>
+                      {Math.round(w.remainingPercent)}%
+                    </Text>
+                  </View>
+                  <ProgressBar
+                    progress={Math.max(0, Math.min(1, w.remainingPercent / 100))}
+                    color={barColor(w.remainingPercent)}
+                    style={{ height: 8, borderRadius: 4, backgroundColor: p.surface3 }}
+                  />
+                </View>
+              ))}
+              {quota.balance ? <Text style={{ fontSize: 13, color: p.muted }}>账户可用余额 / Credits：{quota.balance}</Text> : null}
+            </View>
+          ) : (
+            <Text style={{ fontSize: 13, color: p.muted }}>{quota.note ?? "该程序暂未向本机开放模型剩余配额接口"}</Text>
+          )}
+        </View>
+      ) : null}
       {ratio != null ? (
         <View style={{ backgroundColor: p.surface, borderRadius: radius.card, padding: space.lg, gap: space.sm }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between" }}>

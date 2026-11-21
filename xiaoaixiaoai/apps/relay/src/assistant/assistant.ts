@@ -35,6 +35,7 @@ import {
   type Reminder,
   type RpcMethod,
   type RpcParams,
+  type ModelQuota,
   type RpcResult,
   type ServerFrame,
   type SessionInfo,
@@ -762,13 +763,32 @@ export class Assistant {
 
   private messagesFromThread(limit = CONTEXT_ITEMS): Msg[] {
     const out: Msg[] = [];
+    let resolvedActions: AssistantAction[] = [];
+    const flushResolved = () => {
+      if (!resolvedActions.length) return;
+      const notes = resolvedActions.map(
+        (act) => `[系统状态同步：操作 ${act.id}（${clip(act.summary, 60)}）最终已变成「${actionState(act.state)}」${act.result ? `，${act.result}` : ""}；上面那条提案时的提示已过时]`,
+      );
+      pushAssistant(out, notes.join("\n"));
+      resolvedActions = [];
+    };
     for (const it of this.fresh().slice(-limit)) {
       if (it.error) continue;
-      if (it.role === "user") pushUser(out, it.via === "voice" ? `[语音] ${it.text}` : it.text);
-      else if (it.role === "notice") pushAssistant(out, this.noticeLine(it));
-      else if (it.action) pushAssistant(out, `${it.text ? `${it.text}\n` : ""}[操作 ${it.action.id}：${it.action.summary}；状态：${actionState(it.action.state)}${it.action.result ? `，${it.action.result}` : ""}]`);
-      else if (it.text) pushAssistant(out, it.text);
+      if (it.role === "user") {
+        flushResolved();
+        pushUser(out, it.via === "voice" ? `[语音] ${it.text}` : it.text);
+      } else if (it.role === "notice") {
+        flushResolved();
+        pushAssistant(out, this.noticeLine(it));
+      } else if (it.action) {
+        pushAssistant(out, `${it.text ? `${it.text}\n` : ""}[操作 ${it.action.id}：${it.action.summary}；状态：${actionState(it.action.state)}${it.action.result ? `，${it.action.result}` : ""}]`);
+        if (it.action.state !== "pending") resolvedActions.push(it.action);
+      } else if (it.text) {
+        pushAssistant(out, it.text);
+        flushResolved();
+      }
     }
+    flushResolved();
     while (out.length && out[0]!.role !== "user") out.shift();
     if (!out.length) out.push({ role: "user", content: "你好" });
     return out;
@@ -939,6 +959,17 @@ export class Assistant {
     return this.host.devices().find((d) => d.id === id)?.name ?? "未知电脑";
   }
 
+  private formatQuota(q?: ModelQuota): string {
+    if (!q) return "";
+    if (!q.available) return `配额未公开${q.note ? `（${clip(q.note, 36)}）` : ""}`;
+    const win = (w: NonNullable<ModelQuota["primary"]>) => {
+      const reset = w.resetsAt ? `，${fmtTime(w.resetsAt)}重置` : "";
+      return `余 ${w.remainingPercent}%${w.label ? `(${w.label}${reset})` : reset ? `(${reset.slice(1)})` : ""}`;
+    };
+    const parts = [q.primary ? win(q.primary) : "", q.secondary ? win(q.secondary) : "", q.balance ? `余额 ${q.balance}` : ""].filter(Boolean);
+    return parts.join(" · ");
+  }
+
   private agentLine(a: Agent): string {
     const eff = effectiveAgentStatus(a);
     const statusLabel =
@@ -950,9 +981,11 @@ export class Assistant {
     const since = a.statusSince ? `（${ago(this.now() - a.statusSince)}）` : "";
     const where = [this.deviceName(a.deviceId), a.where].filter(Boolean).join(" / ");
     const folder = a.cwd ? a.cwd.split("/").filter(Boolean).pop() : "";
+    const modelQuota = this.formatQuota(a.modelQuota);
+    const modelPart = [a.model ? `模型 ${a.model}` : "", modelQuota].filter(Boolean).join(" · ");
     const queued = a.queued ? ` | 输入框里排着 ${a.queued} 条没处理` : "";
     const ro = a.canSend === false ? " | 只读" : "";
-    return `${a.key} | ${this.handleOf(a)} | 「${titleOf(a)}」 | ${a.harness} | ${statusLabel}${since} | ${where}${folder ? ` | ${folder}` : ""}${queued}${ro}`;
+    return `${a.key} | ${this.handleOf(a)} | 「${titleOf(a)}」 | ${a.harness} | ${statusLabel}${since} | ${where}${folder ? ` | ${folder}` : ""}${modelPart ? ` | ${modelPart}` : ""}${queued}${ro}`;
   }
 
   /**
@@ -1319,6 +1352,10 @@ export class Assistant {
       }
       case "list_spaces": {
         const id = this.resolveDevice(input.device);
+        const dev = this.host.devices().find((d) => d.id === id);
+        if (dev?.sources?.length && !dev.sources.includes("hc") && !dev.sources.includes("herdr")) {
+          return { out: `「${dev.name}」仅共享项目会话（没有桌面终端空间），直接用 list_agents 或 search_sessions 查看。`, step: `确认「${dev.name}」无桌面空间` };
+        }
         const { spaces } = await this.ask(id, "herdr.layout", {});
         const only = typeof input.space === "string" && input.space.trim() ? [this.findInLayout(spaces, input.space).space] : spaces;
         const lines: string[] = [];
@@ -1557,7 +1594,8 @@ export class Assistant {
     const lines = [`开着的 ${list.length} 个 agent 合计 ${money(total)}${known.length < list.length ? `（${list.length - known.length} 个没有花费记录）` : ""}`];
     if (by === "agent") {
       for (const a of [...list].sort((x, y) => (y.costUsd ?? 0) - (x.costUsd ?? 0)).slice(0, 30)) {
-        lines.push(`${this.handleOf(a)} | ${this.deviceName(a.deviceId)} / ${spaceOf(a) ?? "没有空间"} | ${a.costUsd !== undefined ? money(a.costUsd) : "无记录"}${a.model ? ` | ${a.model}` : ""}${ctx(a)}`);
+        const q = this.formatQuota(a.modelQuota);
+        lines.push(`${this.handleOf(a)} | ${this.deviceName(a.deviceId)} / ${spaceOf(a) ?? "没有空间"} | ${a.costUsd !== undefined ? money(a.costUsd) : "无记录"}${a.model ? ` | ${a.model}` : ""}${q ? ` | ${q}` : ""}${ctx(a)}`);
       }
     } else {
       const groups = new Map<string, Agent[]>();
@@ -2140,7 +2178,9 @@ export class Assistant {
       const title = titleOf(a);
       const why = this.reasonOf(a, handle, 40);
       const queued = a.queued ? `输入框里排着 ${a.queued} 条没处理` : "";
-      return ["- " + handle, title !== handle ? `标题：${title}` : "", HARNESS_NAMES[a.harness] ?? a.harness, this.deviceName(a.deviceId), state, why, queued, `key=${a.key}`].filter(Boolean).join(" | ");
+      const q = this.formatQuota(a.modelQuota);
+      const modelInfo = [a.model, q].filter(Boolean).join(" · ");
+      return ["- " + handle, title !== handle ? `标题：${title}` : "", HARNESS_NAMES[a.harness] ?? a.harness, modelInfo, this.deviceName(a.deviceId), state, why, queued, `key=${a.key}`].filter(Boolean).join(" | ");
     };
     const section = (title: string, list: Agent[], max: number, state: (a: Agent) => string) =>
       list.length ? [title, ...list.slice(0, max).map((a) => line(a, state(a))), ...(list.length > max ? [`（另外 ${list.length - max} 个没列出）`] : [])] : [];

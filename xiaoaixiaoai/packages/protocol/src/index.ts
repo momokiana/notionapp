@@ -106,6 +106,8 @@ export interface Agent {
   /** Human-readable reason shown in place of the input box when `canSend === false`. */
   readOnlyReason?: string;
   model?: string;
+  /** Live model quota / rate-limit state when exposed by the runtime or provider. */
+  modelQuota?: ModelQuota;
   /** First human prompt of the matched session. */
   preview?: string;
   costUsd?: number;
@@ -380,11 +382,41 @@ export type RuntimeSessionState = "running" | "idle" | "inactive" | "attention" 
 export const RUNTIME_SESSION_TEXT_LIMIT = 4000;
 export const RUNTIME_DETAIL_LIMIT = 100;
 
+export interface QuotaWindow {
+  /** Remaining quota percentage (0..100). */
+  remainingPercent: number;
+  /** Window duration in minutes when known (e.g. 300 = 5h, 10080 = 7d). */
+  windowMinutes?: number;
+  /** Epoch ms when this window resets, if known. */
+  resetsAt?: number;
+  /** Human-readable window label (e.g. "5小时" / "7天"). */
+  label?: string;
+}
+
+export interface ModelQuota {
+  /** True when the runtime/provider actually exposed live remaining quota data. */
+  available: boolean;
+  primary?: QuotaWindow;
+  secondary?: QuotaWindow;
+  /** Provider credit balance when finite, e.g. "25422.92". */
+  balance?: string;
+  /** Plan or subscription tier label when known. */
+  plan?: string;
+  /** Epoch ms when this quota snapshot was recorded. */
+  updatedAt?: number;
+  /** Honest note explaining why quota is unavailable when `available === false`. */
+  note?: string;
+}
+
 export interface RuntimeSession {
   id: string;
   title: string;
   state: RuntimeSessionState;
   canSend: boolean;
+  model?: string;
+  contextTokens?: number;
+  contextLimit?: number;
+  modelQuota?: ModelQuota;
   updatedAt?: number;
   subagents?: number;
   subagentsWorking?: number;

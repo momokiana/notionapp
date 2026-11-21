@@ -14,6 +14,8 @@ import {
   type DshDirectoryProject,
   type DshDirectoryReply,
   type DshDirectoryRequest,
+  type ModelQuota,
+  type QuotaWindow,
   type RuntimeProject,
   type RuntimeSession,
   type RuntimeSessionDetail,
@@ -62,6 +64,15 @@ interface ThreadRow {
   attached_thread_parent_id?: string | null;
   agent_nickname?: string | null;
   agent_role?: string | null;
+  model?: string | null;
+  reasoning_effort?: string | null;
+}
+
+interface RolloutMeta {
+  model?: string;
+  contextTokens?: number;
+  contextLimit?: number;
+  modelQuota?: ModelQuota;
 }
 
 interface ActiveTurn {
@@ -148,7 +159,7 @@ function findDbPath(codexHome: string): string | undefined {
 
 function threadExtraSelect(db: DatabaseSync): string {
   const cols = new Set((db.prepare(`PRAGMA table_info(threads)`).all() as Array<{ name?: string }>).map((c) => c.name));
-  const extras = ["source", "thread_source", "attached_thread_parent_id", "agent_nickname", "agent_role"].filter((c) => cols.has(c));
+  const extras = ["source", "thread_source", "attached_thread_parent_id", "agent_nickname", "agent_role", "model", "reasoning_effort"].filter((c) => cols.has(c));
   return extras.length ? `, ${extras.join(", ")}` : "";
 }
 
@@ -217,6 +228,97 @@ function querySubagentRows(dbPath: string): ThreadRow[] {
   } finally {
     db.close();
   }
+}
+
+function formatWindowLabel(minutes: number): string {
+  if (minutes >= 1440) {
+    const days = Math.round(minutes / 1440);
+    return `${days}天`;
+  }
+  if (minutes >= 60) {
+    const hours = Math.round(minutes / 60);
+    return `${hours}小时`;
+  }
+  return `${minutes}分钟`;
+}
+
+function parseQuotaWindow(raw: unknown): QuotaWindow | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const used = typeof r.used_percent === "number" && Number.isFinite(r.used_percent) ? r.used_percent : undefined;
+  if (used === undefined) return undefined;
+  const remainingPercent = Math.max(0, Math.min(100, Math.round((100 - used) * 10) / 10));
+  const windowMinutes = typeof r.window_minutes === "number" && Number.isSafeInteger(r.window_minutes) && r.window_minutes > 0
+    ? r.window_minutes
+    : undefined;
+  const resetsAtSec = typeof r.resets_at === "number" && Number.isFinite(r.resets_at) && r.resets_at > 0 ? r.resets_at : undefined;
+  return {
+    remainingPercent,
+    ...(windowMinutes !== undefined ? { windowMinutes, label: formatWindowLabel(windowMinutes) } : {}),
+    ...(resetsAtSec !== undefined ? { resetsAt: Math.trunc(resetsAtSec * 1000) } : {}),
+  };
+}
+
+function parseRateLimits(raw: unknown, updatedAt?: number): ModelQuota | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const rl = raw as Record<string, unknown>;
+  const primary = parseQuotaWindow(rl.primary);
+  const secondary = parseQuotaWindow(rl.secondary);
+  const credits = rl.credits && typeof rl.credits === "object" ? rl.credits as Record<string, unknown> : undefined;
+  let balance: string | undefined;
+  if (credits?.has_credits === true && credits.unlimited !== true && credits.balance !== undefined && credits.balance !== null) {
+    const num = Number(credits.balance);
+    if (Number.isFinite(num)) balance = num >= 100 ? num.toFixed(0) : num.toFixed(2);
+    else if (typeof credits.balance === "string" && credits.balance.trim()) balance = credits.balance.trim().slice(0, 32);
+  }
+  const plan = typeof rl.plan_type === "string" && rl.plan_type.trim() ? cleanLabel(rl.plan_type, "") : undefined;
+  if (!primary && !secondary && !balance) return undefined;
+  return {
+    available: true,
+    ...(primary ? { primary } : {}),
+    ...(secondary ? { secondary } : {}),
+    ...(balance ? { balance } : {}),
+    ...(plan ? { plan } : {}),
+    ...(updatedAt !== undefined ? { updatedAt } : {}),
+  };
+}
+
+function extractRolloutMeta(rolloutPath: string): RolloutMeta {
+  const meta: RolloutMeta = {};
+  const lines = readTailLines(rolloutPath, STATUS_TAIL_BYTES);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let record: Record<string, unknown>;
+    try { record = JSON.parse(lines[i]!) as Record<string, unknown>; } catch { continue; }
+    const p = record.payload && typeof record.payload === "object" ? record.payload as Record<string, unknown> : undefined;
+    if (!p) continue;
+    if (record.type === "turn_context" && !meta.model) {
+      const collab = p.collaboration_mode && typeof p.collaboration_mode === "object" ? p.collaboration_mode as Record<string, unknown> : undefined;
+      const settings = collab?.settings && typeof collab.settings === "object" ? collab.settings as Record<string, unknown> : undefined;
+      const rawModel = typeof p.model === "string" ? p.model : typeof settings?.model === "string" ? settings.model : "";
+      if (rawModel.trim()) meta.model = cleanLabel(rawModel, "");
+    } else if (record.type === "event_msg" && p.type === "token_count") {
+      if (meta.contextTokens === undefined || meta.contextLimit === undefined) {
+        const info = p.info && typeof p.info === "object" ? p.info as Record<string, unknown> : undefined;
+        const lastUsage = info?.last_token_usage && typeof info.last_token_usage === "object" ? info.last_token_usage as Record<string, unknown> : undefined;
+        const tot = typeof lastUsage?.total_tokens === "number" && Number.isSafeInteger(lastUsage.total_tokens) && lastUsage.total_tokens >= 0
+          ? lastUsage.total_tokens
+          : typeof lastUsage?.input_tokens === "number" && Number.isSafeInteger(lastUsage.input_tokens) && lastUsage.input_tokens >= 0
+            ? lastUsage.input_tokens
+            : undefined;
+        const lim = typeof info?.model_context_window === "number" && Number.isSafeInteger(info.model_context_window) && info.model_context_window > 0
+          ? info.model_context_window
+          : undefined;
+        if (tot !== undefined && meta.contextTokens === undefined) meta.contextTokens = tot;
+        if (lim !== undefined && meta.contextLimit === undefined) meta.contextLimit = lim;
+      }
+      if (!meta.modelQuota) {
+        const q = parseRateLimits(p.rate_limits, parseTimestamp(record.timestamp));
+        if (q) meta.modelQuota = q;
+      }
+    }
+    if (meta.model && meta.contextTokens !== undefined && meta.contextLimit !== undefined && meta.modelQuota) break;
+  }
+  return meta;
 }
 
 function parseTimestamp(value: unknown): number | undefined {
@@ -359,7 +461,9 @@ export class CodexLocalRuntime {
   private readonly enableSend: boolean;
   private readonly activeTurns = new Map<string, ActiveTurn>();
   private readonly recentCreated = new Map<string, { row: ThreadRow; expiresAt: number }>();
+  private readonly rolloutCache = new Map<string, { mtimeMs: number; size: number; meta: RolloutMeta }>();
   private readonly events: Array<{ event: RuntimeTaskEvent; expiresAt: number }> = [];
+  private latestQuota?: ModelQuota;
   private closed = false;
 
   constructor(options: CodexLocalRuntimeOptions) {
@@ -463,6 +567,25 @@ export class CodexLocalRuntime {
     return [...seen.values()].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
   }
 
+  private readRolloutMeta(rolloutPath: string): RolloutMeta {
+    if (!rolloutPath) return {};
+    try {
+      if (!existsSync(rolloutPath)) return {};
+      const st = statSync(rolloutPath);
+      const cached = this.rolloutCache.get(rolloutPath);
+      if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) return cached.meta;
+      const meta = extractRolloutMeta(rolloutPath);
+      if (this.rolloutCache.size > 200) this.rolloutCache.clear();
+      this.rolloutCache.set(rolloutPath, { mtimeMs: st.mtimeMs, size: st.size, meta });
+      if (meta.modelQuota && (!this.latestQuota || (meta.modelQuota.updatedAt ?? 0) >= (this.latestQuota.updatedAt ?? 0))) {
+        this.latestQuota = meta.modelQuota;
+      }
+      return meta;
+    } catch {
+      return {};
+    }
+  }
+
   private toEntry(row: ThreadRow, counts?: [number, number], readOnlyChild = false): { project: DshDirectoryProject; session: RuntimeSession; archived: boolean } {
     const project = projectForCwd(row.cwd);
     const archived = row.archived === 1;
@@ -473,6 +596,14 @@ export class CodexLocalRuntime {
         ? row.updated_at * 1000
         : undefined;
     const rawTitle = cleanLabel(row.name || row.agent_nickname || row.title || row.first_user_message, `Codex ${row.id.slice(-8)}`);
+    const meta = this.readRolloutMeta(row.rollout_path);
+    const baseModel = typeof row.model === "string" && row.model.trim() ? cleanLabel(row.model, "") : meta.model;
+    const model = baseModel
+      ? (typeof row.reasoning_effort === "string" && row.reasoning_effort.trim() && !baseModel.includes("(")
+        ? `${baseModel} (${row.reasoning_effort.trim()})`
+        : baseModel)
+      : undefined;
+    const quota = meta.modelQuota ?? this.latestQuota;
     return {
       project: { runtime: "codex", id: project.id, title: project.title },
       archived,
@@ -481,6 +612,10 @@ export class CodexLocalRuntime {
         title: rawTitle,
         state,
         canSend: !readOnlyChild && this.enableSend && !archived && state !== "running" && state !== "attention" && !!row.cwd && existsSync(row.cwd),
+        ...(model ? { model } : {}),
+        ...(meta.contextTokens !== undefined ? { contextTokens: meta.contextTokens } : {}),
+        ...(meta.contextLimit !== undefined ? { contextLimit: meta.contextLimit } : {}),
+        ...(quota ? { modelQuota: quota } : {}),
         ...(updatedAt !== undefined ? { updatedAt } : {}),
         ...(counts?.[0] ? { subagents: counts[0], subagentsWorking: counts[1] } : {}),
       },

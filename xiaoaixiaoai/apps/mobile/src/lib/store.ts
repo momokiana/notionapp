@@ -129,6 +129,8 @@ interface LiveState {
   /** Agents keyed by host deviceId. */
   agents: Record<string, Agent[]>;
   lastError: string | null;
+  reconnectAttempt: number;
+  nextRetryAt: number | null;
   reset: () => void;
 }
 
@@ -140,7 +142,20 @@ export const useLive = create<LiveState>()((set) => ({
   devices: {},
   agents: {},
   lastError: null,
-  reset: () => set({ link: "idle", rttMs: null, self: null, runtimeTaskNotices: false, devices: {}, agents: {}, lastError: null }),
+  reconnectAttempt: 0,
+  nextRetryAt: null,
+  reset: () =>
+    set({
+      link: "idle",
+      rttMs: null,
+      self: null,
+      runtimeTaskNotices: false,
+      devices: {},
+      agents: {},
+      lastError: null,
+      reconnectAttempt: 0,
+      nextRetryAt: null,
+    }),
 }));
 
 export function allAgents(agents: Record<string, Agent[]>): Agent[] {

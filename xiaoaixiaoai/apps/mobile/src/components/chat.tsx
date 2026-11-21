@@ -639,6 +639,10 @@ function SessionChatView({
   const [liveEvents, setLiveEvents] = useState<ConvEvent[]>([]);
   const [streamState, setStreamState] = useState<"connecting" | "live" | "stale" | "error">("connecting");
   const linkOnline = useLive((s) => s.link === "online");
+  const refetch = q.refetch;
+  useEffect(() => {
+    if (linkOnline && active) void refetch();
+  }, [linkOnline, active, refetch]);
   useEffect(() => {
     const page = q.data?.events;
     if (!page?.length) return;

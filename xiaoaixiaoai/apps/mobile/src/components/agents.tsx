@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 import { Text } from "react-native-paper";
 import { router } from "expo-router";
@@ -6,8 +6,9 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { effectiveAgentStatus, type Agent, type AgentStatus } from "@xiaoaixiaoai/protocol";
 import { usePalette } from "../theme/theme";
 import { agentStatusLabel, fonts, radius, space, spaceColors, statusColors } from "../theme/tokens";
-import { agentSpace, agentTitle, relTime, stableHash } from "../lib/format";
+import { agentSpace, agentTitle, quotaChip, relTime, stableHash, type QuotaTone } from "../lib/format";
 import { harnessLook } from "../lib/harness";
+import { reconnectNow } from "../lib/relay";
 import { Card, HarnessAvatar, StatusPill } from "./ui";
 import { useLive, type LinkStatus } from "../lib/store";
 import { signOut } from "../lib/session";
@@ -52,6 +53,13 @@ export function QueuedChip({ agent }: { agent: Agent }) {
   );
 }
 
+function quotaChipColors(tone: QuotaTone, dark: boolean): { fg: string; bg: string } {
+  if (tone === "ok") return statusColors("working", dark);
+  if (tone === "low") return statusColors("blocked", dark);
+  if (tone === "warn") return { fg: dark ? "#FFD28A" : "#9A4E04", bg: dark ? "#402E14" : "#FFEDD5" };
+  return statusColors("idle", dark);
+}
+
 export const AgentRow = memo(function AgentRow({
   agent,
   offline,
@@ -66,9 +74,11 @@ export const AgentRow = memo(function AgentRow({
   onLongPress?: () => void;
 }) {
   const p = usePalette();
-  const sub = [harnessLook(agent.harness, agent.isShell).label, deviceName, agent.turn ? `第 ${agent.turn} 轮` : null]
+  const sub = [harnessLook(agent.harness, agent.isShell).label, deviceName, agent.model, agent.turn ? `第 ${agent.turn} 轮` : null]
     .filter(Boolean)
     .join(" · ");
+  const quota = offline ? null : quotaChip(agent.modelQuota);
+  const qColors = quota ? quotaChipColors(quota.tone, p.dark) : null;
   const summaryLine = (agent.statusNote || agent.preview || "").replace(/\s+/g, " ").trim();
   const needsYou = agent.status === "blocked" && !offline;
   const c = statusColors("blocked", p.dark);
@@ -76,7 +86,7 @@ export const AgentRow = memo(function AgentRow({
     <Card
       onPress={() => openAgent(agent.key)}
       onLongPress={onLongPress}
-      accessibilityLabel={`${spacedTitle(agent)}，${agent.harness}${offline ? "，电脑离线" : ""}`}
+      accessibilityLabel={`${spacedTitle(agent)}，${agent.harness}${agent.model ? `，${agent.model}` : ""}${quota ? `，${quota.text}` : ""}${offline ? "，电脑离线" : ""}`}
       style={{
         flexDirection: "row",
         alignItems: "center",
@@ -107,10 +117,15 @@ export const AgentRow = memo(function AgentRow({
             {summaryLine}
           </Text>
         ) : null}
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
           <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: 12.5, color: offline ? p.faint : p.muted }}>
             {sub}
           </Text>
+          {quota && qColors ? (
+            <View style={{ backgroundColor: qColors.bg, borderRadius: radius.pill, paddingHorizontal: 7, paddingVertical: 1 }}>
+              <Text style={{ color: qColors.fg, fontFamily: fonts.bodySemi, fontSize: 11 }}>{quota.text}</Text>
+            </View>
+          ) : null}
           {agent.subagents ? (
             <View
               accessibilityLabel={`${agent.subagents} 个子 agent${agent.subagentsWorking ? `，${agent.subagentsWorking} 个在忙` : ""}`}
@@ -194,17 +209,39 @@ const LINK_COPY: Record<LinkStatus, { text: string; icon: "wifi-off" | "sync" | 
 export function ConnectionBanner() {
   const p = usePalette();
   const link = useLive((s) => s.link);
+  const nextRetryAt = useLive((s) => s.nextRetryAt);
+  const reconnectAttempt = useLive((s) => s.reconnectAttempt);
+  const [secsLeft, setSecsLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (link !== "offline" || nextRetryAt === null) return;
+    const update = () => setSecsLeft(Math.max(1, Math.ceil((nextRetryAt - Date.now()) / 1000)));
+    const first = setTimeout(update, 0);
+    const id = setInterval(update, 1000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
+  }, [link, nextRetryAt]);
   const copy = LINK_COPY[link];
   if (!copy) return null;
-  const warn = link !== "connecting";
+  const warn = link === "offline" || link === "unauthorized";
   const fg = warn ? p.error : p.ink;
   const repair = link === "unauthorized";
+  let text = copy.text;
+  if (link === "offline") {
+    const secs = nextRetryAt !== null ? secsLeft : null;
+    text = secs && secs > 0
+      ? `连不上服务器，${secs} 秒后自动重连（点此重试）`
+      : `和服务器断开了，正在自动重连（第 ${Math.max(1, reconnectAttempt)} 次）`;
+  } else if (link === "connecting" && reconnectAttempt > 0) {
+    text = `正在尝试重连服务器（第 ${reconnectAttempt} 次）…`;
+  }
   return (
     <Pressable
-      disabled={!repair}
-      accessibilityRole={repair ? "button" : undefined}
+      accessibilityRole="button"
       onPress={() => {
-        signOut().then(() => router.replace("/connect"));
+        if (repair) void signOut().then(() => router.replace("/connect"));
+        else reconnectNow();
       }}
       accessibilityLiveRegion="polite"
       style={{
@@ -220,8 +257,8 @@ export function ConnectionBanner() {
       }}
     >
       <MaterialCommunityIcons name={copy.icon} size={16} color={fg} />
-      <Text style={{ flex: 1, fontSize: 13.5, color: fg }}>{copy.text}</Text>
-      {repair ? <MaterialCommunityIcons name="chevron-right" size={18} color={fg} /> : null}
+      <Text style={{ flex: 1, fontSize: 13.5, color: fg }}>{text}</Text>
+      {repair ? <MaterialCommunityIcons name="chevron-right" size={18} color={fg} /> : <MaterialCommunityIcons name="refresh" size={16} color={fg} />}
     </Pressable>
   );
 }

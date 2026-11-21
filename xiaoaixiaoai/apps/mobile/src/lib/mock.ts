@@ -134,7 +134,11 @@ function makeAgents(): Agent[] {
     }),
     ag(HOST_A, "t4m", "omp", "working", "博客平台 登录鉴权重构", "博客平台 / 1", "/Users/me/code/blog-platform", 3 * MIN, { sessionKey: "omp:demo-3", model: "gpt-5.5", turn: 2 }),
     ag(HOST_A, "t4q", "omp", "done", "notes-cli 0.2.8 发布检查", "notes-cli / 1", "/Users/me/code/notes-cli", 25 * MIN, { sessionKey: "omp:demo-4", turn: 6 }),
-    ag(HOST_A, "t52", "codex", "idle", "API 网关用量面板", "api-gateway / 2", "/Users/me/code/api-gateway", 70 * MIN, { turn: 1 }),
+    ag(HOST_A, "t52", "codex", "idle", "API 网关用量面板", "api-gateway / 2", "/Users/me/code/api-gateway", 70 * MIN, {
+      model: "gpt-6.2-sol",
+      turn: 1,
+      modelQuota: { available: true, primary: { remainingPercent: 21, windowMinutes: 10080, resetsAt: now() + 3 * 3_600_000, label: "7天" }, balance: "25422.92" },
+    }),
     // Harnesses without a sticker: bundled glyph (qodercli, kiro-cli), or a mark the computer sends (workbuddy, droid).
     ag(HOST_A, "t5a", "qodercli", "idle", "README 中英对照", "notes-cli / 3", "/Users/me/code/notes-cli", 95 * MIN, { turn: 2 }),
     ag(HOST_A, "t5b", "kiro-cli", "idle", "接口文档补全", "api-gateway / 3", "/Users/me/code/api-gateway", 2 * 3_600_000, { turn: 4 }),

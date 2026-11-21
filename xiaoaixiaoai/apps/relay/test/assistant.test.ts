@@ -1024,3 +1024,40 @@ test("idle or done parent with working subagents is listed as working and emits 
   const finished = await push.next((f) => f.type === "notice");
   assert.equal(finished.notice.body, "子任务也都结束了。");
 });
+
+test("runtime-only hosts skip herdr.layout in list_spaces and agents expose modelQuota", async () => {
+  const { host, h, publish, calls } = await fakeHost("RuntimePC");
+  h.send({ type: "hello", version: 1, platform: "win32", sources: ["runtime", "runtime-sessions"] });
+  const phone = await pair("viewer", "QuotaPhone");
+  const p = await Sock.open("/v1/ws", phone.token);
+  await p.next((f) => f.type === "snapshot");
+
+  publish([
+    agent("rt1", "idle", "模型额度测试", {
+      model: "gpt-6.2-sol",
+      modelQuota: { available: true, primary: { remainingPercent: 21, windowMinutes: 10080, label: "7天" }, balance: "25423" },
+    }),
+  ]);
+  await sleep(30);
+
+  let listedOut = "";
+  let spacesOut = "";
+  script = (req) => {
+    const res = toolResults(req);
+    if (!res.length) return call("list_agents", {});
+    if (res.length === 1 && !listedOut) {
+      listedOut = res[0]!;
+      return call("list_spaces", { device: "RuntimePC" });
+    }
+    spacesOut = res[res.length - 1]!;
+    return text("查到了。");
+  };
+  await api("/v1/assistant/messages", { token: phone.token, body: { text: "看看模型额度和空间" } });
+  await p.next((f) => f.type === "assistant_busy" && f.busy === false);
+
+  assert.match(listedOut, /模型 gpt-6\.2-sol/);
+  assert.match(listedOut, /余 21%\(7天\)/);
+  assert.match(spacesOut, /仅共享项目会话（没有桌面终端空间）/);
+  assert.equal(calls.filter((c) => c.method === "herdr.layout").length, 0);
+  void host;
+});

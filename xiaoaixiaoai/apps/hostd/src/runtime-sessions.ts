@@ -8,7 +8,7 @@ import {
   isRuntimeId, isRuntimeRequestId, RUNTIME_DETAIL_LIMIT, RUNTIME_SESSION_TEXT_LIMIT,
   RUNTIME_TASK_EVENTS_LIMIT, RUNTIME_TASK_EVENT_KINDS,
   type DshDirectoryProject, type DshDirectoryReply, type DshDirectoryRequest,
-  type LaunchOption, type RpcErrorCode, type RuntimeCatalog, type RuntimePendingQuestion, type RuntimeProject, type RuntimeQuestionItem,
+  type LaunchOption, type ModelQuota, type QuotaWindow, type RpcErrorCode, type RuntimeCatalog, type RuntimePendingQuestion, type RuntimeProject, type RuntimeQuestionItem,
   type RuntimeSession, type RuntimeSessionAnswer, type RuntimeSessionDetail, type RuntimeSessionMessage,
   type RuntimeSessionReceipt, type RuntimeSessionSend, type RuntimeTaskEvent, type SessionRuntime, type SpaceInfo, type SubSession,
 } from "@xiaoaixiaoai/protocol";
@@ -134,6 +134,53 @@ function readPrivateText(rawPath: string, limit: number): string {
 }
 function readPrivate(path: string, limit: number): unknown { return JSON.parse(readPrivateText(path, limit)); }
 
+function sanitizeQuotaWindow(raw: unknown): QuotaWindow | undefined {
+  const w = row(raw);
+  if (!w || typeof w.remainingPercent !== "number" || !Number.isFinite(w.remainingPercent)) return undefined;
+  const remainingPercent = Math.max(0, Math.min(100, Math.round(w.remainingPercent * 10) / 10));
+  return {
+    remainingPercent,
+    ...(typeof w.windowMinutes === "number" && Number.isSafeInteger(w.windowMinutes) && w.windowMinutes > 0 ? { windowMinutes: w.windowMinutes } : {}),
+    ...(typeof w.resetsAt === "number" && Number.isSafeInteger(w.resetsAt) && w.resetsAt > 0 ? { resetsAt: w.resetsAt } : {}),
+    ...(typeof w.label === "string" && w.label.trim() ? { label: label(w.label, "") } : {}),
+  };
+}
+
+function sanitizeModelQuota(raw: unknown): ModelQuota | undefined {
+  const q = row(raw);
+  if (!q || typeof q.available !== "boolean") return undefined;
+  const primary = sanitizeQuotaWindow(q.primary);
+  const secondary = sanitizeQuotaWindow(q.secondary);
+  const balance = typeof q.balance === "string" && q.balance.trim() ? label(q.balance, "").slice(0, 32) : undefined;
+  const plan = typeof q.plan === "string" && q.plan.trim() ? label(q.plan, "").slice(0, 60) : undefined;
+  const updatedAt = typeof q.updatedAt === "number" && Number.isSafeInteger(q.updatedAt) && q.updatedAt > 0 ? q.updatedAt : undefined;
+  const note = typeof q.note === "string" && q.note.trim() ? label(q.note, "").slice(0, 120) : undefined;
+  if (!q.available && !note && !plan) return undefined;
+  if (q.available && !primary && !secondary && !balance) return undefined;
+  return {
+    available: q.available,
+    ...(primary ? { primary } : {}),
+    ...(secondary ? { secondary } : {}),
+    ...(balance ? { balance } : {}),
+    ...(plan ? { plan } : {}),
+    ...(updatedAt !== undefined ? { updatedAt } : {}),
+    ...(note ? { note } : {}),
+  };
+}
+
+function sessionTelemetry(raw: Record<string, unknown>): Pick<RuntimeSession, "model" | "contextTokens" | "contextLimit" | "modelQuota"> {
+  const model = typeof raw.model === "string" && raw.model.trim() ? label(raw.model, "").slice(0, 80) : undefined;
+  const contextTokens = typeof raw.contextTokens === "number" && Number.isSafeInteger(raw.contextTokens) && raw.contextTokens >= 0 ? raw.contextTokens : undefined;
+  const contextLimit = typeof raw.contextLimit === "number" && Number.isSafeInteger(raw.contextLimit) && raw.contextLimit > 0 ? raw.contextLimit : undefined;
+  const modelQuota = sanitizeModelQuota(raw.modelQuota);
+  return {
+    ...(model ? { model } : {}),
+    ...(contextTokens !== undefined ? { contextTokens } : {}),
+    ...(contextLimit !== undefined ? { contextLimit } : {}),
+    ...(modelQuota ? { modelQuota } : {}),
+  };
+}
+
 function subagentCounts(raw: Record<string, unknown>): { subagents?: number; subagentsWorking?: number } {
   const out: { subagents?: number; subagentsWorking?: number } = {};
   if (typeof raw.subagents === "number" && Number.isSafeInteger(raw.subagents) && raw.subagents >= 0) {
@@ -164,6 +211,7 @@ function projects(runtime: SessionRuntime, value: unknown, allowAntigravitySend 
         title: label(s.title, "未命名会话"),
         state: s.state as RuntimeSession["state"],
         canSend: (runtime !== "antigravity" || allowAntigravitySend) && s.canSend === true,
+        ...sessionTelemetry(s),
         ...(typeof s.updatedAt === "number" && Number.isSafeInteger(s.updatedAt) && s.updatedAt > 0 ? { updatedAt: s.updatedAt } : {}),
         ...subagentCounts(s),
       };
@@ -253,7 +301,7 @@ function directoryReply(value: unknown, input: DshDirectoryRequest, allowAntigra
     return {
       ...(item.runtime !== undefined ? { runtime: item.runtime as SessionRuntime } : {}),
       project,
-      session: { id: sessionName.id, title: sessionName.title, state, canSend, ...(updatedAt !== undefined ? { updatedAt } : {}), ...subagentCounts(s) },
+      session: { id: sessionName.id, title: sessionName.title, state, canSend, ...sessionTelemetry(s), ...(updatedAt !== undefined ? { updatedAt } : {}), ...subagentCounts(s) },
       archived: item.archived,
     };
   });
@@ -502,6 +550,7 @@ function sanitizeDetail(runtime: SessionRuntime, raw: Record<string, unknown>, a
       title: label(session.title, "未命名会话"),
       state: session.state as RuntimeSession["state"],
       canSend,
+      ...sessionTelemetry(session),
       ...(updatedAt !== undefined ? { updatedAt } : {}),
       ...subagentCounts(session),
     },
