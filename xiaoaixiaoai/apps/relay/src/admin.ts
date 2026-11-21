@@ -32,6 +32,7 @@ export function adminPage(): string {
     --shadow:0 8px 24px rgba(0, 0, 0, 0.35);
   }
   * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
   body { margin:0; font:14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; background:var(--bg); color:var(--ink); }
   button, input, select, textarea { font:inherit; color:var(--ink); }
   button { border:0; border-radius:10px; padding:7px 13px; background:var(--pink); color:#fff; cursor:pointer; font-weight:500; transition:background .15s, opacity .15s; }
@@ -75,6 +76,7 @@ export function adminPage(): string {
   .topbar-greet { font-size:15px; font-weight:600; margin-right:auto; }
   .topbar-greet small { font-weight:400; color:var(--muted); margin-left:8px; font-size:13px; }
   main { padding:18px 20px 64px; max-width:1360px; width:100%; margin:0 auto; display:grid; gap:16px; }
+  .tab-view { display:grid; gap:14px; }
 
   .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:12px; }
   .kpi { background:var(--card); border:1px solid var(--line); border-radius:15px; padding:14px 16px; box-shadow:var(--shadow); cursor:pointer; transition:transform .12s; }
@@ -191,7 +193,7 @@ export function adminPage(): string {
       </header>
 
       <main>
-        <section id="view-overview" class="tab-view" style="display:grid;gap:14px">
+        <section id="view-overview" class="tab-view">
           <div class="kpi-grid" id="kpis"></div>
           <div class="card">
             <h2>
@@ -214,7 +216,7 @@ export function adminPage(): string {
         </section>
 
         <section id="view-devices" class="tab-view" hidden>
-          <div class="card" style="margin-bottom:14px">
+          <div class="card">
             <h2><span>生成配对码</span><span class="muted" style="font-size:12px">可用于加入新电脑或手机</span></h2>
             <div class="row-wrap">
               <select id="pairKind"><option value="">不限类型</option><option value="viewer">手机</option><option value="host">电脑</option></select>
@@ -229,7 +231,7 @@ export function adminPage(): string {
         </section>
 
         <section id="view-models" class="tab-view" hidden>
-          <div class="split-2" style="margin-bottom:14px">
+          <div class="split-2">
             <div class="card">
               <h2><span>文字模型链与连通测速</span><button class="sm" id="probeBtn">一键测速</button></h2>
               <div id="modelList" style="display:grid;gap:8px"></div>
@@ -246,7 +248,7 @@ export function adminPage(): string {
         </section>
 
         <section id="view-data" class="tab-view" hidden>
-          <div class="split-2" style="margin-bottom:14px">
+          <div class="split-2">
             <div class="card">
               <h2><span>助理人设配置</span><span class="muted" id="profileHint" style="font-size:12px"></span></h2>
               <div class="field-grid">
@@ -412,6 +414,7 @@ export function adminPage(): string {
     activeTab = tab;
     for (const b of document.querySelectorAll("[data-tab]")) b.classList.toggle("active", b.dataset.tab === tab);
     for (const s of document.querySelectorAll(".tab-view")) s.hidden = s.id !== "view-" + tab;
+    window.scrollTo(0, 0);
     if (tab === "logs") loadLogs().catch(() => {});
     else if (tab === "data") loadDataTab().catch(() => {});
   }

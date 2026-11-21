@@ -72,6 +72,8 @@ test("adminPage HTML serves valid CSP and syntax-clean inline script", async () 
   assert.equal(res.status, 200);
   assert.match(res.headers.get("content-type") ?? "", /^text\/html/);
   assert.match(res.headers.get("content-security-policy") ?? "", /connect-src 'self'/);
+  assert.match(res.text, /\[hidden\]\s*\{\s*display:\s*none\s*!important;/);
+  assert.doesNotMatch(res.text, /class="tab-view"[^>]*style="[^"]*display:/);
   assert.match(res.text, /导出 AI 排障包/);
   assert.match(res.text, /一键测速/);
 });
