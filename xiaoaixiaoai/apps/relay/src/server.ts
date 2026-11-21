@@ -1185,7 +1185,7 @@ export class Relay {
           system: "Reply with OK only.",
           messages: [{ role: "user", content: "ping" }],
           tools: [],
-          maxTokens: 16,
+          maxTokens: 512,
         });
         const latencyMs = Date.now() - t0;
         const reply = res.content

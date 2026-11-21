@@ -14,11 +14,15 @@ let dir = "";
 let relay: Relay;
 let base = "";
 
-const mockLlm: Llm = async () => ({
-  content: [{ type: "text", text: "OK" }],
-  stopReason: "end_turn",
-  model: "mock-fast",
-});
+let lastProbeMaxTokens = 0;
+const mockLlm: Llm = async (req) => {
+  lastProbeMaxTokens = req.maxTokens ?? 0;
+  return {
+    content: [{ type: "text", text: "OK" }],
+    stopReason: "end_turn",
+    model: "mock-fast",
+  };
+};
 
 async function req(path: string, token?: string, opts: { method?: string; body?: unknown } = {}) {
   const res = await fetch(`${base}${path}`, {
@@ -135,6 +139,7 @@ test("diagnostics endpoints enforce auth boundaries, probe models, capture tri-t
   assert.equal(probe.json.results.length, 1);
   assert.equal(probe.json.results[0].ok, true);
   assert.equal(probe.json.results[0].reply, "OK");
+  assert.ok(lastProbeMaxTokens >= 256);
 
   // Overview + admin/agents check.
   const ov = await req("/v1/admin/overview", ADMIN);
