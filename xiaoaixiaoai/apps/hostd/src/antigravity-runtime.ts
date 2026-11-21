@@ -295,7 +295,11 @@ function summarizeToolArgs(args: unknown): string {
   for (const key of ["toolSummary", "Path", "file_path", "path", "CommandLine", "command", "Description", "Role", "query", "SearchPath", "Target"]) {
     const val = o[key];
     if (typeof val === "string" && val.trim()) {
-      const cleaned = cleanLabel(val, "");
+      let raw = val.trim();
+      if (raw.length >= 2 && raw.startsWith("\"") && raw.endsWith("\"")) {
+        try { const parsed = JSON.parse(raw); if (typeof parsed === "string") raw = parsed; } catch { raw = raw.slice(1, -1); }
+      }
+      const cleaned = cleanLabel(raw, "");
       if (cleaned) return cleaned;
     }
   }
