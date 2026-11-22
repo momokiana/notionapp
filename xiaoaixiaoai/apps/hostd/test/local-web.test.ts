@@ -109,13 +109,18 @@ test("LocalWebBridge serves /app/ statically and proxies subpath HTTP + WebSocke
   assert.deepEqual([...binReply], [1, 2, 3, 42]);
   ws.close();
 
-  // Upstream 401 rejection propagates cleanly before WS upgrade
+  // Upstream 401 rejection propagates cleanly before WS upgrade, and abrupt client teardown never crashes bridge
   const badWs = new WebSocket(`ws://127.0.0.1:${bridge.port}/v1/ws?token=bad`);
   const badStatus = await new Promise<number>((resolveStatus, rejectStatus) => {
-    badWs.once("unexpected-response", (_r, res) => resolveStatus(res.statusCode ?? 0));
+    badWs.once("unexpected-response", (req, res) => {
+      const status = res.statusCode ?? 0;
+      req.destroy(new Error("abrupt client reset"));
+      resolveStatus(status);
+    });
     badWs.once("error", rejectStatus);
   });
   assert.equal(badStatus, 401);
+  assert.equal((await fetch(`${base}/v1/health`)).status, 200);
 });
 
 test("resolveLocalWebPort supports default, custom ports, and disabling", () => {

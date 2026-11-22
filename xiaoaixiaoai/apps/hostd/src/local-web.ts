@@ -251,14 +251,14 @@ export async function startLocalWebBridge(opts: LocalWebOptions): Promise<LocalW
         upstream.terminate();
       } catch {}
     };
+    // Keep a persistent error listener on raw upgrade socket so client RST / ECONNRESET after 401 never crashes hostd.
+    socket.on("error", onClientAbort);
     socket.once("close", onClientAbort);
-    socket.once("error", onClientAbort);
 
     upstream.once("unexpected-response", (_uReq, uRes) => {
       if (upgraded || settled) return;
       settled = true;
       socket.removeListener("close", onClientAbort);
-      socket.removeListener("error", onClientAbort);
       uRes.resume();
       if (socket.writable && !socket.writableEnded && !socket.destroyed) {
         socket.end(`HTTP/1.1 ${uRes.statusCode ?? 502} ${uRes.statusMessage || "Bad Gateway"}\r\n\r\n`);
@@ -272,7 +272,6 @@ export async function startLocalWebBridge(opts: LocalWebOptions): Promise<LocalW
       if (upgraded || settled) return;
       settled = true;
       socket.removeListener("close", onClientAbort);
-      socket.removeListener("error", onClientAbort);
       log(`[local-web] ws upstream connect error ${reqUrl.pathname}: ${err.message}`);
       if (socket.writable && !socket.writableEnded && !socket.destroyed) {
         socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
@@ -284,7 +283,6 @@ export async function startLocalWebBridge(opts: LocalWebOptions): Promise<LocalW
       if (settled) return;
       settled = true;
       socket.removeListener("close", onClientAbort);
-      socket.removeListener("error", onClientAbort);
       if (clientClosedBeforeOpen || socket.destroyed) {
         upstream.terminate();
         return;
