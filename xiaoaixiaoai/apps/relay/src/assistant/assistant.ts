@@ -88,6 +88,8 @@ export interface AssistantOptions {
   voice?: boolean;
   /** Local host GPU ASR/TTS available for normal chat dual-track & push-to-talk (`provider === "local"`). */
   chatVoice?: boolean;
+  /** Default speech speed forwarded to local voice synthesis for chat dual-track replies. */
+  chatVoiceSpeed?: number;
   /** Ask before acting, until the app changes it (POCKET_ASSISTANT_CONFIRM). Default `never`. */
   confirm?: AssistantConfirm;
   /** Times are tunable for tests. */
@@ -658,7 +660,16 @@ export class Assistant {
           }
           const reqId = randomUUID().toLowerCase();
           cur.reqId = reqId;
-          const res = await this.callVoiceHost(host.id, "voice.synthesize", { requestId: reqId, text: sentence }, 90_000);
+          const res = await this.callVoiceHost(
+            host.id,
+            "voice.synthesize",
+            {
+              requestId: reqId,
+              text: sentence,
+              ...(typeof this.opts.chatVoiceSpeed === "number" ? { speed: this.opts.chatVoiceSpeed } : {}),
+            },
+            90_000,
+          );
           if (this.closed || cur.ac.signal.aborted || this.activeChatSpeech?.utteranceId !== utteranceId || res.cancelled || this.voices.size > 0) {
             return;
           }

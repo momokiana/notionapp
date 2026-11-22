@@ -128,6 +128,13 @@ test("voice: POCKET_VOICE_* and the older POCKET_MOSS_* names; a MOSS key never 
   const unknown = loadModelSetup({ POCKET_VOICE_PROVIDER: "something", POCKET_VOICE_KEY: "k" });
   assert.equal(unknown.live, undefined);
   assert.ok(unknown.warnings.some((w) => /"something" is unknown/.test(w)));
+
+  const localDefault = loadModelSetup({ POCKET_VOICE_PROVIDER: "local" });
+  assert.deepEqual(localDefault.live, { provider: "local", model: "aemeath-v2proplus", speed: 0.85 });
+  assert.deepEqual(localDefault.summary.voice, "local");
+
+  const localCustom = loadModelSetup({ POCKET_VOICE_PROVIDER: "local", POCKET_VOICE_SPEED: "0.95" });
+  assert.deepEqual(localCustom.live, { provider: "local", model: "aemeath-v2proplus", speed: 0.95 });
 });
 
 test("assistant display identity and optional style work without a model, with per-setting precedence", () => {
