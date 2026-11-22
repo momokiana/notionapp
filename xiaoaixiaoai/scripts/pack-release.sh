@@ -32,6 +32,9 @@ done
 for d in "$root"/packages/*/; do copy "packages/$(basename "$d")"; done
 copy apps/relay
 copy apps/hostd
+if [ -d "$root/apps/web/dist" ]; then
+  copy apps/web/dist
+fi
 mkdir -p "$stage/docs"
 cp "$root/docs/runtime-sessions.md" "$stage/docs/"
 copy deploy

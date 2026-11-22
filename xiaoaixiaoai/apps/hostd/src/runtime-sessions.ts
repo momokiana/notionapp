@@ -598,6 +598,8 @@ export class RuntimeSessions {
   private ledger: DispatchLedger;
   private sent = 0;
   readonly viewerId: string;
+  readonly viewerIds: readonly string[];
+  readonly allowAllViewers: boolean;
   readonly publishAgents: boolean;
   readonly allowAssistant: boolean;
   readonly localVoice?: LocalVoiceBridge;
@@ -606,14 +608,20 @@ export class RuntimeSessions {
     viewerId: string,
     adapters: Partial<Record<SessionRuntime, RuntimeAdapter>>,
     ledgerDir: string,
-    options: { publishAgents?: boolean; allowAssistant?: boolean; localVoice?: LocalVoiceBridge } = {},
+    options: { publishAgents?: boolean; allowAssistant?: boolean; allowAllViewers?: boolean; viewerIds?: string[]; localVoice?: LocalVoiceBridge } = {},
   ) {
     this.viewerId = viewerId;
+    this.viewerIds = Array.isArray(options.viewerIds) ? [...options.viewerIds] : [];
+    this.allowAllViewers = options.allowAllViewers === true;
     this.adapters = { ...adapters };
     this.ledger = new DispatchLedger(ledgerDir);
     this.publishAgents = options.publishAgents === true;
     this.allowAssistant = options.allowAssistant === true;
     this.localVoice = options.localVoice;
+  }
+
+  isAllowedViewer(id: string): boolean {
+    return this.allowAllViewers || id === this.viewerId || this.viewerIds.includes(id);
   }
 
   /** Collect non-archived sessions across configured runtimes, prioritized by live state and recency. */
@@ -958,8 +966,14 @@ export class RuntimeSessions {
 export function loadRuntimeSessions(path: string | undefined): RuntimeSessions | undefined {
   if (path === undefined) return undefined;
   try {
-    const cfg = exact(readPrivate(path, MAX_CONFIG), ["viewerId", "dsh", "codex", "codexLocal", "antigravity", "publishAgents", "allowAssistant", "localVoice"]);
+    const cfg = exact(readPrivate(path, MAX_CONFIG), ["viewerId", "viewerIds", "allowAllViewers", "dsh", "codex", "codexLocal", "antigravity", "publishAgents", "allowAssistant", "localVoice"]);
     if (!isRuntimeId(cfg.viewerId)) throw INVALID();
+    let viewerIds: string[] = [];
+    if (cfg.viewerIds !== undefined) {
+      if (!Array.isArray(cfg.viewerIds) || cfg.viewerIds.length > 16 || !cfg.viewerIds.every(isRuntimeId)) throw INVALID();
+      viewerIds = cfg.viewerIds as string[];
+    }
+    if (cfg.allowAllViewers !== undefined && typeof cfg.allowAllViewers !== "boolean") throw INVALID();
     if (cfg.publishAgents !== undefined && typeof cfg.publishAgents !== "boolean") throw INVALID();
     if (cfg.allowAssistant !== undefined && typeof cfg.allowAssistant !== "boolean") throw INVALID();
     if (cfg.codex !== undefined && cfg.codexLocal !== undefined) throw INVALID();
@@ -1036,6 +1050,8 @@ export function loadRuntimeSessions(path: string | undefined): RuntimeSessions |
     return new RuntimeSessions(cfg.viewerId, adapters, join(dirname(path), "runtime-dispatch"), {
       publishAgents: cfg.publishAgents === true,
       allowAssistant: cfg.allowAssistant === true,
+      allowAllViewers: cfg.allowAllViewers === true,
+      ...(viewerIds.length ? { viewerIds } : {}),
       ...(localVoice ? { localVoice } : {}),
     });
   } catch {

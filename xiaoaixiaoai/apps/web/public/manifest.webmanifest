@@ -1,0 +1,17 @@
+{
+  "name": "小爱小爱 · 爱弥斯桌面端",
+  "short_name": "小爱小爱",
+  "description": "爱弥斯 AI 伴侣与多 Agent 桌面总控台",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F5F6FE",
+  "theme_color": "#F3AFD0",
+  "icons": [
+    {
+      "src": "./icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

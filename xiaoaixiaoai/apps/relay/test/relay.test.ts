@@ -1,6 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
@@ -331,4 +331,48 @@ test("revoking a device closes its socket and invalidates the token", async () =
   assert.equal(await closed, 4001);
   assert.equal((await api("/v1/devices", { token: phone.token })).status, 401);
   await assert.rejects(Client.open(phone.token));
+});
+
+test("desktop web bundle is served at /app/ with SPA fallback and traversal protection", async (t) => {
+  const webRoot = mkdtempSync(join(tmpdir(), "pocket-web-"));
+  const relayDir = mkdtempSync(join(tmpdir(), "pocket-web-relay-"));
+  t.after(() => {
+    rmSync(webRoot, { recursive: true, force: true });
+    rmSync(relayDir, { recursive: true, force: true });
+  });
+  mkdirSync(join(webRoot, "assets"), { recursive: true });
+  writeFileSync(join(webRoot, "index.html"), "<!doctype html><title>WebDesktop</title>");
+  writeFileSync(join(webRoot, "assets", "app.js"), "console.log('ok');");
+  writeFileSync(join(relayDir, "secret.txt"), "top-secret");
+
+  const webRelay = new Relay({ dbPath: join(relayDir, "w.db"), adminToken: ADMIN, webDir: webRoot, log: () => {} });
+  const port = await webRelay.listen(0, "127.0.0.1");
+  t.after(async () => {
+    await webRelay.close();
+  });
+  const webBase = `http://127.0.0.1:${port}`;
+
+  const redir = await fetch(`${webBase}/app`, { redirect: "manual" });
+  assert.equal(redir.status, 302);
+  assert.equal(redir.headers.get("location"), "app/");
+
+  const idx = await fetch(`${webBase}/app/`);
+  assert.equal(idx.status, 200);
+  assert.match(idx.headers.get("content-type") ?? "", /text\/html/);
+  assert.match(await idx.text(), /WebDesktop/);
+
+  const js = await fetch(`${webBase}/app/assets/app.js`);
+  assert.equal(js.status, 200);
+  assert.match(js.headers.get("content-type") ?? "", /javascript/);
+  assert.equal(await js.text(), "console.log('ok');");
+
+  const spa = await fetch(`${webBase}/app/ledger/2026`);
+  assert.equal(spa.status, 200);
+  assert.match(await spa.text(), /WebDesktop/);
+
+  const missAsset = await fetch(`${webBase}/app/assets/missing.js`);
+  assert.equal(missAsset.status, 404);
+
+  const traversal = await fetch(`${webBase}/app/%2e%2e/secret.txt`);
+  assert.notEqual(traversal.status, 200);
 });

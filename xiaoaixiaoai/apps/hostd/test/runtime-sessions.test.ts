@@ -281,3 +281,25 @@ test("runtime bridge helpers encode targets, convert events cleanly, and parse a
   assert.deepEqual(await rsWritable.answer({ runtime: "antigravity", projectId: "ag-p1", sessionId: "ag-s1", requestId: ansReq, callId: "ag-call-1", answers: [{ id: "q1", selected: ["x"] }] }), receipt(ansReq));
   assert.equal(agAnswerCalls, 1);
 });
+
+test("RuntimeSessions viewer allowlist defaults to viewerId and supports opt-in viewerIds and allowAllViewers", (t) => {
+  const dir = folder();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const cfgPath = join(dir, "runtime-viewers.json");
+
+  writeFileSync(cfgPath, JSON.stringify({ viewerId: "phone-1", antigravity: { brainDir: dir } }), { mode: 0o600 });
+  const single = loadRuntimeSessions(cfgPath)!;
+  assert.equal(single.isAllowedViewer("phone-1"), true);
+  assert.equal(single.isAllowedViewer("desktop-2"), false);
+
+  writeFileSync(cfgPath, JSON.stringify({ viewerId: "phone-1", viewerIds: ["desktop-2"], antigravity: { brainDir: dir } }), { mode: 0o600 });
+  const multi = loadRuntimeSessions(cfgPath)!;
+  assert.equal(multi.isAllowedViewer("phone-1"), true);
+  assert.equal(multi.isAllowedViewer("desktop-2"), true);
+  assert.equal(multi.isAllowedViewer("stranger-3"), false);
+
+  writeFileSync(cfgPath, JSON.stringify({ viewerId: "phone-1", allowAllViewers: true, antigravity: { brainDir: dir } }), { mode: 0o600 });
+  const all = loadRuntimeSessions(cfgPath)!;
+  assert.equal(all.isAllowedViewer("phone-1"), true);
+  assert.equal(all.isAllowedViewer("any-paired-viewer"), true);
+});

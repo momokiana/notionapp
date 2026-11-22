@@ -533,6 +533,9 @@ export class Host {
     if (from === "relay" && (allow.includes("assistant") || allow.includes("relay") || this.opts.runtimeSessions?.allowAssistant === true)) {
       return true;
     }
+    if (this.opts.runtimeSessions?.isAllowedViewer(from) && this.devices.get(from)?.kind === "viewer") {
+      return true;
+    }
     return false;
   }
 
@@ -1057,7 +1060,7 @@ export class Host {
     }
     if (from === "relay" && view.allowAssistant === true) return view;
     // The relay derives `from` from the authenticated connection, never client parameters.
-    if (from !== view.viewerId || this.devices.get(from)?.kind !== "viewer") throw new RpcFailure("forbidden", "这部手机没有获得项目会话授权。");
+    if (!view.isAllowedViewer(from) || this.devices.get(from)?.kind !== "viewer") throw new RpcFailure("forbidden", "这个客户端没有获得项目会话授权。");
     return view;
   }
 

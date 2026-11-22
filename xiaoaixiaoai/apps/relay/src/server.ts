@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createReadStream, lstatSync } from "node:fs";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   PROTOCOL_VERSION,
@@ -61,6 +62,8 @@ export interface RelayOptions {
   dbPath: string;
   /** Optional local directory holding verified release bundles & signed APKs for direct downloads. */
   releasesDir?: string;
+  /** Optional directory containing the prebuilt desktop Web/PWA bundle served at `/app/`. */
+  webDir?: string;
   /** Admin token: may mint pair codes. Required to bootstrap the first device. */
   adminToken?: string;
   /** Public base URL put into pairing links, e.g. https://xiaoaixiaoai.example.com */
@@ -269,13 +272,25 @@ export class Relay {
   private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
     if (req.method === "OPTIONS") {
       res.writeHead(204).end();
       return;
     }
     const url = new URL(req.url ?? "/", "http://relay");
-    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const rawPathname = url.pathname || "/";
+    const path = rawPathname.replace(/\/+$/, "") || "/";
+
+    // Desktop Web / PWA client served at `/app/`.
+    if ((req.method === "GET" || req.method === "HEAD") && (path === "/app" || path.startsWith("/app/"))) {
+      if (rawPathname === "/app") {
+        // Relative redirect preserves reverse-proxy subpaths (e.g. /xiaoaixiaoai/app -> /xiaoaixiaoai/app/).
+        res.writeHead(302, { Location: "app/" }).end();
+        return;
+      }
+      await this.serveWebApp(res, rawPathname.slice("/app/".length), req.method === "HEAD");
+      return;
+    }
 
     // QR landing pages: they echo the URL and never look the code or request up.
     const lm = /^\/(p|j)\/([^/]+)$/.exec(path);
@@ -633,6 +648,94 @@ export class Relay {
     }
 
     sendError(res, 404, "not_found", "not found");
+  }
+
+  private async serveWebApp(res: ServerResponse, rawSubpath: string, headOnly: boolean): Promise<void> {
+    const rootDir = resolve(this.opts.webDir ?? join(dirname(fileURLToPath(import.meta.url)), "../../web/dist"));
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(rawSubpath);
+    } catch {
+      sendError(res, 400, "bad_request", "invalid path");
+      return;
+    }
+    if (decoded.includes("\0") || decoded.includes("\\")) {
+      sendError(res, 400, "bad_request", "invalid path");
+      return;
+    }
+    const cleanRel = decoded.replace(/^\/+/, "") || "index.html";
+    let targetPath = resolve(rootDir, cleanRel);
+    const insideRoot = (p: string) => p === rootDir || p.startsWith(`${rootDir}/`) || p.startsWith(`${rootDir}\\`);
+    if (!insideRoot(targetPath)) {
+      sendError(res, 403, "forbidden", "forbidden");
+      return;
+    }
+    const statSafe = (p: string) => {
+      try {
+        const st = lstatSync(p);
+        return !st.isSymbolicLink() && st.isFile() ? st : null;
+      } catch {
+        return null;
+      }
+    };
+    let st = statSafe(targetPath);
+    if (!st && !extname(cleanRel)) {
+      targetPath = resolve(rootDir, "index.html");
+      st = statSafe(targetPath);
+    }
+    if (!st) {
+      if (cleanRel === "index.html") {
+        res.writeHead(404, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+        res.end(headOnly ? undefined : "<!doctype html><meta charset='utf-8'><title>小爱小爱桌面端</title><body style='font-family:system-ui;padding:40px'><h2>小爱小爱桌面端尚未构建</h2><p>请先构建 <code>apps/web</code> 后重试。</p></body>");
+      } else {
+        sendError(res, 404, "not_found", "asset not found");
+      }
+      return;
+    }
+    const ext = extname(targetPath).toLowerCase();
+    const mime: Record<string, string> = {
+      ".html": "text/html; charset=utf-8",
+      ".js": "application/javascript; charset=utf-8",
+      ".mjs": "application/javascript; charset=utf-8",
+      ".css": "text/css; charset=utf-8",
+      ".json": "application/json; charset=utf-8",
+      ".webmanifest": "application/manifest+json; charset=utf-8",
+      ".svg": "image/svg+xml",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".webp": "image/webp",
+      ".ico": "image/x-icon",
+      ".woff2": "font/woff2",
+      ".ttf": "font/ttf",
+    };
+    const isHtml = ext === ".html";
+    const isHashedAsset = cleanRel.startsWith("assets/");
+    const headers: Record<string, string> = {
+      "Content-Type": mime[ext] ?? "application/octet-stream",
+      "Content-Length": String(st.size),
+      "Cache-Control": isHtml ? "no-store" : isHashedAsset ? "public, max-age=31536000, immutable" : "public, max-age=3600",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+    };
+    if (isHtml) {
+      headers["X-Frame-Options"] = "DENY";
+      headers["Content-Security-Policy"] =
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' ws: wss: http: https:; frame-ancestors 'none'";
+    }
+    res.writeHead(200, headers);
+    if (headOnly) {
+      res.end();
+      return;
+    }
+    await new Promise<void>((done) => {
+      const stream = createReadStream(targetPath);
+      const cleanup = () => { stream.destroy(); done(); };
+      stream.on("error", cleanup);
+      res.on("close", cleanup);
+      res.on("finish", done);
+      stream.pipe(res);
+    });
   }
 
   private async handleLedger(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
