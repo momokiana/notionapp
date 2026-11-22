@@ -35,6 +35,10 @@ test("LocalWebBridge serves /app/ statically and proxies subpath HTTP + WebSocke
     res.end("missing");
   });
   upstream.on("upgrade", (req, sock, head) => {
+    if (req.url === "/xiaoaixiaoai/v1/ws?token=bad") {
+      sock.end("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      return;
+    }
     if (req.url?.startsWith("/xiaoaixiaoai/v1/ws")) {
       wss.handleUpgrade(req, sock, head, (ws) => {
         ws.on("message", (data, isBinary) => {
@@ -104,6 +108,14 @@ test("LocalWebBridge serves /app/ statically and proxies subpath HTTP + WebSocke
   const binReply = await new Promise<Buffer>((r) => ws.once("message", (d) => r(d as Buffer)));
   assert.deepEqual([...binReply], [1, 2, 3, 42]);
   ws.close();
+
+  // Upstream 401 rejection propagates cleanly before WS upgrade
+  const badWs = new WebSocket(`ws://127.0.0.1:${bridge.port}/v1/ws?token=bad`);
+  const badStatus = await new Promise<number>((resolveStatus, rejectStatus) => {
+    badWs.once("unexpected-response", (_r, res) => resolveStatus(res.statusCode ?? 0));
+    badWs.once("error", rejectStatus);
+  });
+  assert.equal(badStatus, 401);
 });
 
 test("resolveLocalWebPort supports default, custom ports, and disabling", () => {

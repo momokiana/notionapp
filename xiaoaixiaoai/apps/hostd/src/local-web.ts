@@ -110,7 +110,7 @@ export async function startLocalWebBridge(opts: LocalWebOptions): Promise<LocalW
   const webRoot = resolve(opts.webDir ?? defaultWebDir());
   const log = opts.log ?? (() => {});
 
-  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024, perMessageDeflate: false });
   const sockets = new Set<WebSocket>();
 
   const upstreamPath = (reqUrl: URL) => `${relayBasePath}${reqUrl.pathname}${reqUrl.search}`;
@@ -228,87 +228,129 @@ export async function startLocalWebBridge(opts: LocalWebOptions): Promise<LocalW
   server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const reqUrl = new URL(req.url ?? "/", "http://127.0.0.1");
     if (!reqUrl.pathname.startsWith("/v1/")) {
-      socket.destroy();
+      socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
       return;
     }
-    wss.handleUpgrade(req, socket, head, (client) => {
-      sockets.add(client);
-      const wsProto = isHttps ? "wss:" : "ws:";
-      const portPart = relayUrl.port ? `:${relayUrl.port}` : "";
-      const targetUrl = `${wsProto}//${relayUrl.hostname}${portPart}${upstreamPath(reqUrl)}`;
-      const upstream = new WebSocket(targetUrl, {
-        perMessageDeflate: false,
-        ...(isHttps && opts.relayAgent ? { agent: opts.relayAgent } : {}),
-      });
-      sockets.add(upstream);
+    const wsProto = isHttps ? "wss:" : "ws:";
+    const portPart = relayUrl.port ? `:${relayUrl.port}` : "";
+    const targetUrl = `${wsProto}//${relayUrl.hostname}${portPart}${upstreamPath(reqUrl)}`;
+    const upstream = new WebSocket(targetUrl, {
+      maxPayload: 16 * 1024 * 1024,
+      perMessageDeflate: false,
+      ...(isHttps && opts.relayAgent ? { agent: opts.relayAgent } : {}),
+    });
 
-      const pending: Array<{ data: Buffer | string | ArrayBuffer | Buffer[]; isBinary: boolean }> = [];
-      let cleaned = false;
-      const cleanup = () => {
-        if (cleaned) return;
-        cleaned = true;
-        sockets.delete(client);
-        sockets.delete(upstream);
-        pending.length = 0;
-      };
+    let upgraded = false;
+    let settled = false;
+    let clientClosedBeforeOpen = false;
+    const onClientAbort = () => {
+      if (upgraded || settled) return;
+      settled = true;
+      clientClosedBeforeOpen = true;
+      try {
+        upstream.terminate();
+      } catch {}
+    };
+    socket.once("close", onClientAbort);
+    socket.once("error", onClientAbort);
 
-      client.on("message", (data, isBinary) => {
-        if (upstream.readyState === WebSocket.OPEN) {
-          upstream.send(data, { binary: isBinary });
-        } else if (upstream.readyState === WebSocket.CONNECTING && pending.length < 128) {
-          pending.push({ data, isBinary });
-        }
-      });
+    upstream.once("unexpected-response", (_uReq, uRes) => {
+      if (upgraded || settled) return;
+      settled = true;
+      socket.removeListener("close", onClientAbort);
+      socket.removeListener("error", onClientAbort);
+      uRes.resume();
+      if (socket.writable && !socket.writableEnded && !socket.destroyed) {
+        socket.end(`HTTP/1.1 ${uRes.statusCode ?? 502} ${uRes.statusMessage || "Bad Gateway"}\r\n\r\n`);
+      }
+      try {
+        upstream.terminate();
+      } catch {}
+    });
 
-      upstream.on("open", () => {
-        for (const item of pending) {
-          if (upstream.readyState !== WebSocket.OPEN) break;
-          upstream.send(item.data, { binary: item.isBinary });
-        }
-        pending.length = 0;
-      });
+    const onPreUpgradeError = (err: Error) => {
+      if (upgraded || settled) return;
+      settled = true;
+      socket.removeListener("close", onClientAbort);
+      socket.removeListener("error", onClientAbort);
+      log(`[local-web] ws upstream connect error ${reqUrl.pathname}: ${err.message}`);
+      if (socket.writable && !socket.writableEnded && !socket.destroyed) {
+        socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+      }
+    };
+    upstream.on("error", onPreUpgradeError);
 
-      upstream.on("message", (data, isBinary) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(data, { binary: isBinary });
-        }
-      });
+    upstream.once("open", () => {
+      if (settled) return;
+      settled = true;
+      socket.removeListener("close", onClientAbort);
+      socket.removeListener("error", onClientAbort);
+      if (clientClosedBeforeOpen || socket.destroyed) {
+        upstream.terminate();
+        return;
+      }
+      upgraded = true;
+      wss.handleUpgrade(req, socket, head, (client) => {
+        sockets.add(client);
+        sockets.add(upstream);
+        upstream.removeListener("error", onPreUpgradeError);
 
-      client.on("close", (code, reason) => {
-        cleanup();
-        if (upstream.readyState === WebSocket.OPEN || upstream.readyState === WebSocket.CONNECTING) {
-          try {
-            upstream.close(safeCloseCode(code), reason?.toString("utf8").slice(0, 120));
-          } catch {
-            upstream.terminate();
+        let cleaned = false;
+        const cleanup = () => {
+          if (cleaned) return;
+          cleaned = true;
+          sockets.delete(client);
+          sockets.delete(upstream);
+        };
+
+        client.on("message", (data, isBinary) => {
+          if (upstream.readyState === WebSocket.OPEN) {
+            upstream.send(data, { binary: isBinary });
           }
-        }
-      });
+        });
 
-      upstream.on("close", (code, reason) => {
-        cleanup();
-        if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
+        upstream.on("message", (data, isBinary) => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.send(data, { binary: isBinary });
+          }
+        });
+
+        client.on("close", (code, reason) => {
+          cleanup();
+          if (upstream.readyState === WebSocket.OPEN || upstream.readyState === WebSocket.CONNECTING) {
+            try {
+              upstream.close(safeCloseCode(code), reason?.toString("utf8").slice(0, 120));
+            } catch {
+              upstream.terminate();
+            }
+          }
+        });
+
+        upstream.on("close", (code, reason) => {
+          cleanup();
+          if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
+            try {
+              client.close(safeCloseCode(code), reason?.toString("utf8").slice(0, 120));
+            } catch {
+              client.terminate();
+            }
+          }
+        });
+
+        client.on("error", () => {
+          cleanup();
+          upstream.terminate();
+        });
+
+        upstream.on("error", (err) => {
+          log(`[local-web] ws upstream error ${reqUrl.pathname}: ${err.message}`);
+          cleanup();
           try {
-            client.close(safeCloseCode(code), reason?.toString("utf8").slice(0, 120));
+            client.close(1011, "upstream error");
           } catch {
             client.terminate();
           }
-        }
-      });
-
-      client.on("error", () => {
-        cleanup();
-        upstream.terminate();
-      });
-
-      upstream.on("error", (err) => {
-        log(`[local-web] ws upstream error ${reqUrl.pathname}: ${err.message}`);
-        cleanup();
-        try {
-          client.close(1011, "upstream error");
-        } catch {
-          client.terminate();
-        }
+        });
       });
     });
   });
