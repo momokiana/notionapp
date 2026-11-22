@@ -865,14 +865,82 @@ button {
   gap: 8px;
 }
 
+.call-orb {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.14s ease;
+}
+
+.call-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  border: 2px solid color-mix(in srgb, var(--primary) 55%, transparent);
+  opacity: 0.5;
+  transform: scale(1);
+}
+
+.call-ring.ring-b {
+  border-color: color-mix(in srgb, var(--sky) 55%, transparent);
+}
+
+.call-orb.phase-speaking .call-ring.ring-a {
+  animation: orbPulseOut 1.4s ease-out infinite;
+}
+
+.call-orb.phase-speaking .call-ring.ring-b {
+  animation: orbPulseOut 1.4s ease-out 0.65s infinite;
+}
+
+.call-orb.phase-listening .call-ring.ring-a {
+  border-color: var(--sky);
+  animation: orbPulseIn 1.5s ease-in-out infinite;
+}
+
+.call-orb.phase-thinking .call-ring.ring-b {
+  border-color: var(--lavender);
+  animation: orbSpinPulse 2s linear infinite;
+}
+
+.call-orb.phase-connecting .call-mascot {
+  opacity: 0.78;
+}
+
+.call-orb.phase-muted .call-mascot {
+  filter: grayscale(0.45) brightness(0.92);
+}
+
+@keyframes orbPulseOut {
+  0% { transform: scale(0.94); opacity: 0.85; }
+  100% { transform: scale(1.24); opacity: 0; }
+}
+
+@keyframes orbPulseIn {
+  0%, 100% { transform: scale(1.16); opacity: 0.35; }
+  50% { transform: scale(0.98); opacity: 0.8; }
+}
+
+@keyframes orbSpinPulse {
+  0% { transform: scale(1.06) rotate(0deg); border-style: dashed; opacity: 0.75; }
+  100% { transform: scale(1.12) rotate(360deg); border-style: dashed; opacity: 0.75; }
+}
+
 .call-mascot {
-  width: 120px;
-  height: 120px;
+  position: relative;
+  z-index: 2;
+  width: 118px;
+  height: 118px;
   border-radius: 50%;
   object-fit: cover;
   border: 3px solid var(--primary);
-  box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 22%, transparent);
-  transition: transform 0.12s ease;
+  background: var(--surface);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 20%, transparent);
+  transition: filter 0.2s ease, opacity 0.2s ease;
 }
 
 .call-captions {

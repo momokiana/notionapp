@@ -11,20 +11,11 @@ interface Props {
 
 const PHASE_LABEL: Record<LiveCallPhase, string> = {
   connecting: "正在接通语音…",
-  speaking: "正在说话…",
+  speaking: "爱弥斯正在说话…",
   thinking: "正在查看电脑与思考…",
-  muted: "已静音",
+  muted: "麦克风已静音",
   listening: "正在听你说…",
   idle: "随时可以开口说话",
-};
-
-const PHASE_MASCOT: Record<LiveCallPhase, string> = {
-  connecting: "./call/connecting.webp",
-  speaking: "./call/speaking.webp",
-  thinking: "./call/thinking.webp",
-  muted: "./call/muted.webp",
-  listening: "./call/listening.webp",
-  idle: "./call/idle.webp",
 };
 
 function fmtDuration(sec: number): string {
@@ -55,6 +46,12 @@ export function CallOverlay({ name, snapshot, onToggleMute, onHangup }: Props) {
   }, [snapshot.lines]);
 
   const bars = [0.35, 0.7, 1, 0.75, 0.4];
+  const dynamicScale =
+    snapshot.phase === "listening"
+      ? 1 + snapshot.level * 0.06
+      : snapshot.phase === "speaking"
+        ? 1.03
+        : 1;
 
   return (
     <div className="call-modal" role="dialog" aria-label="实时语音通话">
@@ -79,15 +76,16 @@ export function CallOverlay({ name, snapshot, onToggleMute, onHangup }: Props) {
       </div>
 
       <div className="call-orb-wrap">
-        <img
-          src={PHASE_MASCOT[snapshot.phase]}
-          alt={name}
-          className="call-mascot"
-          style={{
-            transform: snapshot.phase === "speaking" ? "scale(1.04)" : snapshot.phase === "listening" ? `scale(${1 + snapshot.level * 0.05})` : "scale(1)",
-          }}
-        />
-        <div style={{ fontSize: 16, fontWeight: 800 }}>{name}</div>
+        <div className={`call-orb phase-${snapshot.phase}`} style={{ transform: `scale(${dynamicScale})` }}>
+          <span className="call-ring ring-a" />
+          <span className="call-ring ring-b" />
+          <img
+            src="./aimisi-avatar.png"
+            alt={name}
+            className="call-mascot"
+          />
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 800, marginTop: 4 }}>{name}</div>
         <div style={{ fontSize: 12.5, color: "var(--muted)", display: "flex", alignItems: "center", gap: 6 }}>
           {snapshot.task && <Sparkles size={13} style={{ color: "var(--primary-strong)" }} />}
           <span>{snapshot.task ? snapshot.task.title : snapshot.message || PHASE_LABEL[snapshot.phase]}</span>
