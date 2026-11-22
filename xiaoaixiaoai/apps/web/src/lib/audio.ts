@@ -1,5 +1,100 @@
 import { toWsUrl } from "./relay-ws";
 
+const MIC_PREF_KEY = "xiaoaixiaoai.web.micId.v1";
+const VIRTUAL_MIC_RE = /uu远程|virtual|虚拟|cable|stereo mix|loopback|voicemeeter|what u hear/i;
+
+export interface AudioInputDevice {
+  deviceId: string;
+  label: string;
+  isVirtual: boolean;
+}
+
+export function getPreferredMicId(): string {
+  try {
+    return localStorage.getItem(MIC_PREF_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setPreferredMicId(deviceId: string): void {
+  try {
+    if (!deviceId) localStorage.removeItem(MIC_PREF_KEY);
+    else localStorage.setItem(MIC_PREF_KEY, deviceId);
+  } catch {}
+}
+
+export async function listAudioInputs(): Promise<AudioInputDevice[]> {
+  if (!navigator.mediaDevices?.enumerateDevices) return [];
+  const all = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+  const inputs = all.filter((d) => d.kind === "audioinput");
+  return inputs.map((d, idx) => {
+    const label = d.label?.trim() || `麦克风 ${idx + 1}`;
+    return {
+      deviceId: d.deviceId,
+      label,
+      isVirtual: VIRTUAL_MIC_RE.test(label),
+    };
+  });
+}
+
+function buildAudioConstraints(deviceId?: string): MediaTrackConstraints {
+  return {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+  };
+}
+
+/**
+ * Acquires a microphone stream, honoring user preference or automatically escaping virtual
+ * remote-desktop audio devices (e.g. UU远程) when a real hardware microphone is present.
+ */
+async function acquireBestMicStream(requestedId?: string): Promise<{
+  stream: MediaStream;
+  mics: AudioInputDevice[];
+  activeMicId: string;
+  activeMicLabel: string;
+}> {
+  const preferred = requestedId ?? getPreferredMicId();
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: buildAudioConstraints(preferred || undefined) });
+  } catch (err) {
+    if (!preferred) throw err;
+    // Saved mic might have been unplugged; fall back to browser default.
+    setPreferredMicId("");
+    stream = await navigator.mediaDevices.getUserMedia({ audio: buildAudioConstraints() });
+  }
+
+  const mics = await listAudioInputs();
+  const track = stream.getAudioTracks()[0];
+  let activeMicId = track?.getSettings?.().deviceId || "";
+  let activeMicLabel = track?.label || mics.find((m) => m.deviceId === activeMicId)?.label || "默认麦克风";
+
+  // If user didn't force a specific mic and the browser defaulted to a silent virtual mic, switch to first physical mic.
+  if (!preferred && VIRTUAL_MIC_RE.test(activeMicLabel)) {
+    const physical = mics.find((m) => m.deviceId && m.deviceId !== activeMicId && !m.isVirtual);
+    if (physical) {
+      try {
+        const nextStream = await navigator.mediaDevices.getUserMedia({ audio: buildAudioConstraints(physical.deviceId) });
+        stream.getTracks().forEach((t) => t.stop());
+        stream = nextStream;
+        const nt = stream.getAudioTracks()[0];
+        activeMicId = nt?.getSettings?.().deviceId || physical.deviceId;
+        activeMicLabel = nt?.label || physical.label;
+        setPreferredMicId(activeMicId);
+      } catch {
+        // Keep original stream if fallback failed.
+      }
+    }
+  }
+
+  return { stream, mics, activeMicId, activeMicLabel };
+}
+
 /** Convert Float32 [-1, 1] at sourceRate to 16 kHz mono PCM16LE bytes. */
 export function downsampleToPcm16k(input: Float32Array, sourceRate: number, targetRate = 16_000): Int16Array {
   if (sourceRate === targetRate) {
@@ -62,7 +157,7 @@ export function rmsLevel(pcm: Int16Array): number {
     const s = pcm[i]! / 32768;
     sum += s * s;
   }
-  return Math.min(1, Math.sqrt(sum / pcm.length) * 4);
+  return Math.min(1, Math.sqrt(sum / pcm.length) * 5);
 }
 
 /**
@@ -164,6 +259,8 @@ export class VoiceNoteRecorder {
   private ctx: AudioContext | null = null;
   private processor: ScriptProcessorNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
+  private inputGain: GainNode | null = null;
+  private silentOut: GainNode | null = null;
   private chunks: Int16Array[] = [];
   private totalSamples = 0;
   private startedAt = 0;
@@ -171,19 +268,34 @@ export class VoiceNoteRecorder {
   async start(onLevel: (level: number) => void): Promise<void> {
     this.cancel();
     if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("当前浏览器不支持麦克风采集（请确认使用 HTTPS 或 localhost）");
+      throw new Error("当前浏览器不支持麦克风采集（请确认使用 HTTPS 或 127.0.0.1 访问）");
     }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-    });
     const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new AC();
-    const source = ctx.createMediaStreamSource(stream);
+    if (ctx.state === "suspended") void ctx.resume().catch(() => {});
+
+    let acquired: Awaited<ReturnType<typeof acquireBestMicStream>>;
+    try {
+      acquired = await acquireBestMicStream();
+    } catch (err) {
+      void ctx.close().catch(() => {});
+      throw err;
+    }
+    if (ctx.state === "suspended") await ctx.resume().catch(() => {});
+
+    const source = ctx.createMediaStreamSource(acquired.stream);
+    const inputGain = ctx.createGain();
+    inputGain.gain.value = 1.8;
     const processor = ctx.createScriptProcessor(4096, 1, 1);
-    this.stream = stream;
+    const silentOut = ctx.createGain();
+    silentOut.gain.value = 0;
+
+    this.stream = acquired.stream;
     this.ctx = ctx;
     this.source = source;
+    this.inputGain = inputGain;
     this.processor = processor;
+    this.silentOut = silentOut;
     this.chunks = [];
     this.totalSamples = 0;
     this.startedAt = Date.now();
@@ -195,8 +307,10 @@ export class VoiceNoteRecorder {
       this.totalSamples += pcm.length;
       onLevel(rmsLevel(pcm));
     };
-    source.connect(processor);
-    processor.connect(ctx.destination);
+    source.connect(inputGain);
+    inputGain.connect(processor);
+    processor.connect(silentOut);
+    silentOut.connect(ctx.destination);
   }
 
   stop(): { audioBase64: string; sampleRate: number; durationMs: number } {
@@ -218,10 +332,14 @@ export class VoiceNoteRecorder {
 
   private cleanup(): void {
     try { this.processor?.disconnect(); } catch {}
+    try { this.inputGain?.disconnect(); } catch {}
+    try { this.silentOut?.disconnect(); } catch {}
     try { this.source?.disconnect(); } catch {}
     try { this.stream?.getTracks().forEach((t) => t.stop()); } catch {}
     try { void this.ctx?.close(); } catch {}
     this.processor = null;
+    this.inputGain = null;
+    this.silentOut = null;
     this.source = null;
     this.stream = null;
     this.ctx = null;
@@ -250,6 +368,11 @@ export interface LiveCallSnapshot {
   message: string | null;
   task: { id: string; title: string } | null;
   lines: LiveCallLine[];
+  mics: AudioInputDevice[];
+  activeMicId: string;
+  activeMicLabel: string;
+  audioState: AudioContextState | "closed";
+  heardAnyAudio: boolean;
 }
 
 interface AudioRef {
@@ -264,7 +387,9 @@ export class WebLiveCall {
   private stream: MediaStream | null = null;
   private micCtx: AudioContext | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
+  private inputGain: GainNode | null = null;
   private processor: ScriptProcessorNode | null = null;
+  private silentOut: GainNode | null = null;
   private player = new PcmStreamPlayer();
   private contexts: AudioRef[] = [];
   private activeRunId: string | null = null;
@@ -282,6 +407,11 @@ export class WebLiveCall {
   private task: { id: string; title: string } | null = null;
   private lines: LiveCallLine[] = [];
   private level = 0;
+  private mics: AudioInputDevice[] = [];
+  private activeMicId = "";
+  private activeMicLabel = "";
+  private heardAnyAudio = false;
+  private lastLevelEmit = 0;
   private readonly onChange: (snap: LiveCallSnapshot) => void;
 
   constructor(onChange: (snap: LiveCallSnapshot) => void) {
@@ -311,6 +441,11 @@ export class WebLiveCall {
       message: this.message,
       task: this.task,
       lines: this.lines.slice(-24),
+      mics: this.mics,
+      activeMicId: this.activeMicId,
+      activeMicLabel: this.activeMicLabel,
+      audioState: this.micCtx?.state ?? "closed",
+      heardAnyAudio: this.heardAnyAudio,
     });
   }
 
@@ -325,9 +460,40 @@ export class WebLiveCall {
     }
   }
 
+  async resumeAudio(): Promise<void> {
+    this.player.unlock();
+    if (this.micCtx && this.micCtx.state === "suspended") {
+      await this.micCtx.resume().catch(() => {});
+      this.emit();
+    }
+  }
+
+  async switchMic(deviceId: string): Promise<void> {
+    if (this.ended || !this.micCtx || !this.inputGain) return;
+    setPreferredMicId(deviceId);
+    const acquired = await acquireBestMicStream(deviceId);
+    if (this.ended) {
+      acquired.stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    try { this.source?.disconnect(); } catch {}
+    try { this.stream?.getTracks().forEach((t) => t.stop()); } catch {}
+    const source = this.micCtx.createMediaStreamSource(acquired.stream);
+    source.connect(this.inputGain);
+    this.stream = acquired.stream;
+    this.source = source;
+    this.mics = acquired.mics;
+    this.activeMicId = acquired.activeMicId;
+    this.activeMicLabel = acquired.activeMicLabel;
+    this.heardAnyAudio = false;
+    this.residual = new Uint8Array(0);
+    await this.resumeAudio();
+    this.emit();
+  }
+
   async start(server: string, token: string): Promise<void> {
     if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("当前浏览器不支持麦克风权限（请使用 HTTPS 或 localhost 访问）");
+      throw new Error("当前浏览器不支持麦克风权限（请使用 HTTPS 或 127.0.0.1 访问）");
     }
     this.ended = false;
     this.ready = false;
@@ -340,45 +506,87 @@ export class WebLiveCall {
     this.task = null;
     this.lines = [];
     this.contexts = [];
+    this.heardAnyAudio = false;
     this.player.unlock();
-    this.emit("connecting");
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-    });
+    // Create AudioContext synchronously inside click activation before awaiting getUserMedia.
     const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const micCtx = new AC();
-    const source = micCtx.createMediaStreamSource(stream);
-    const processor = micCtx.createScriptProcessor(2048, 1, 1);
-    this.stream = stream;
+    if (micCtx.state === "suspended") void micCtx.resume().catch(() => {});
     this.micCtx = micCtx;
+    micCtx.onstatechange = () => {
+      if (!this.ended) this.emit();
+    };
+    this.emit("connecting");
+
+    let acquired: Awaited<ReturnType<typeof acquireBestMicStream>>;
+    try {
+      acquired = await acquireBestMicStream();
+    } catch (err) {
+      this.close("无法打开麦克风，请检查浏览器权限");
+      throw err;
+    }
+    if (this.ended) {
+      acquired.stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    if (micCtx.state === "suspended") {
+      await micCtx.resume().catch(() => {});
+    }
+
+    const source = micCtx.createMediaStreamSource(acquired.stream);
+    const inputGain = micCtx.createGain();
+    inputGain.gain.value = 1.8;
+    const processor = micCtx.createScriptProcessor(2048, 1, 1);
+    const silentOut = micCtx.createGain();
+    silentOut.gain.value = 0;
+
+    this.stream = acquired.stream;
     this.source = source;
+    this.inputGain = inputGain;
     this.processor = processor;
+    this.silentOut = silentOut;
+    this.mics = acquired.mics;
+    this.activeMicId = acquired.activeMicId;
+    this.activeMicLabel = acquired.activeMicLabel;
 
     const ws = new WebSocket(toWsUrl(server, `/v1/assistant/live?token=${encodeURIComponent(token)}`));
     ws.binaryType = "arraybuffer";
     this.ws = ws;
 
     processor.onaudioprocess = (ev) => {
-      if (this.ended || !this.ready || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      if (this.ended) return;
       const input = ev.inputBuffer.getChannelData(0);
       const pcm = downsampleToPcm16k(input, micCtx.sampleRate, 16_000);
-      this.level = this.muted ? 0 : rmsLevel(pcm);
-      const bytes = this.muted ? new Uint8Array(pcm.byteLength) : new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-      const merged = new Uint8Array(this.residual.length + bytes.length);
-      merged.set(this.residual, 0);
-      merged.set(bytes, this.residual.length);
-      let off = 0;
-      const frameSize = 1280; // 40ms @ 16kHz PCM16
-      while (off + frameSize <= merged.length) {
-        this.ws.send(merged.subarray(off, off + frameSize));
-        off += frameSize;
+      const lvl = this.muted ? 0 : rmsLevel(pcm);
+      this.level = lvl;
+      const prevHeard = this.heardAnyAudio;
+      if (lvl > 0.015) this.heardAnyAudio = true;
+
+      if (this.ready && this.ws && this.ws.readyState === WebSocket.OPEN) {
+        const bytes = this.muted ? new Uint8Array(pcm.byteLength) : new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+        const merged = new Uint8Array(this.residual.length + bytes.length);
+        merged.set(this.residual, 0);
+        merged.set(bytes, this.residual.length);
+        let off = 0;
+        const frameSize = 1280; // 40ms @ 16kHz PCM16
+        while (off + frameSize <= merged.length) {
+          this.ws.send(merged.slice(off, off + frameSize).buffer);
+          off += frameSize;
+        }
+        this.residual = merged.slice(off);
       }
-      this.residual = merged.subarray(off);
-      this.emit();
+      const now = Date.now();
+      if (this.heardAnyAudio !== prevHeard || now - this.lastLevelEmit >= 90) {
+        this.lastLevelEmit = now;
+        this.emit();
+      }
     };
-    source.connect(processor);
-    processor.connect(micCtx.destination);
+    source.connect(inputGain);
+    inputGain.connect(processor);
+    processor.connect(silentOut);
+    silentOut.connect(micCtx.destination);
+    this.emit();
 
     ws.onmessage = (ev) => {
       if (this.ended) return;
@@ -426,6 +634,7 @@ export class WebLiveCall {
             this.ready = true;
             this.startedAt = Date.now();
             this.sendJson({ action: "mic_state", enabled: !this.muted });
+            void this.resumeAudio();
             this.emit("ready");
           } else if (d.state === "error" || d.state === "closed") {
             this.close(typeof d.message === "string" && d.message ? d.message : "通话结束了");
@@ -555,11 +764,16 @@ export class WebLiveCall {
     this.message = reason;
     this.player.stop();
     try { this.processor?.disconnect(); } catch {}
+    try { this.inputGain?.disconnect(); } catch {}
+    try { this.silentOut?.disconnect(); } catch {}
     try { this.source?.disconnect(); } catch {}
     try { this.stream?.getTracks().forEach((t) => t.stop()); } catch {}
+    if (this.micCtx) this.micCtx.onstatechange = null;
     try { void this.micCtx?.close(); } catch {}
     try { this.ws?.close(1000, "bye"); } catch {}
     this.processor = null;
+    this.inputGain = null;
+    this.silentOut = null;
     this.source = null;
     this.stream = null;
     this.micCtx = null;

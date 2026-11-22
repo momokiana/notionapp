@@ -1063,6 +1063,10 @@ export function App() {
           name={assistantName}
           snapshot={callSnap}
           onToggleMute={() => liveCallRef.current?.setMuted(!callSnap.muted)}
+          onSwitchMic={(deviceId) => {
+            void liveCallRef.current?.switchMic(deviceId).catch((err) => showToast(`切换麦克风失败：${(err as Error).message}`));
+          }}
+          onResumeAudio={() => void liveCallRef.current?.resumeAudio()}
           onHangup={() => liveCallRef.current?.hangup()}
         />
       )}

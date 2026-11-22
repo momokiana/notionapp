@@ -21,8 +21,8 @@ const INPUT_SAMPLE_RATE = 16_000;
 const OUTPUT_SAMPLE_RATE = 48_000;
 /** 40 ms at 16 kHz mono PCM16LE = 640 samples = 1280 bytes. */
 const VAD_FRAME_BYTES = 1280;
-const VAD_START_RMS = 0.018;
-const VAD_STOP_RMS = 0.012;
+const VAD_START_RMS = 0.010;
+const VAD_STOP_RMS = 0.006;
 const VAD_START_FRAMES = 3;
 const VAD_STOP_FRAMES = 19; // ~760 ms silence hang-time
 const VAD_MAX_FRAMES = 500; // 20 s max single utterance
@@ -249,6 +249,7 @@ export class LocalVoiceCall {
     this.turnSeq++;
 
     this.interruptActiveTurn();
+    this.log(`local-call: speech start turn=${this.turnSeq} dev=${this.deviceId}`);
     this.toPhone({ action: "input.speech.started", data: { turn: this.turnSeq } });
   }
 
