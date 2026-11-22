@@ -267,7 +267,7 @@ export class Host {
           seen.add(localId);
           const subagentsWorking = entry.session.subagentsWorking ?? 0;
           const prevState = this.runtimeState.get(localId);
-          const state = nextRuntimeState(prevState, entry.session.state, now, entry.session.updatedAt, subagentsWorking);
+          const state = nextRuntimeState(prevState, entry.session.state, now, entry.session.updatedAt, subagentsWorking, 8_000);
           this.runtimeState.set(localId, state);
           const key = agentKey(this.deviceId, "runtime", localId);
           if (

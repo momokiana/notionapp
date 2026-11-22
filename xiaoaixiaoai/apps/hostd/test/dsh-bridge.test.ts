@@ -800,3 +800,34 @@ fixtureTest("idle DSH parent session reports active subagent counts when origin=
   assert.equal(parent.subagents, 1);
   assert.equal(parent.subagentsWorking, 1);
 });
+
+fixtureTest("POST /v4/detail includes DSH command tool outputs/exit codes and preserves user/assistant context over tool bursts", async (t) => {
+  const f = await setup(t);
+  const ctx = f.ctx as Record<string, unknown>;
+  (ctx.sessionController as Record<string, unknown>).inspect = async () => ({
+    events: [
+      { type: "user/message", seq: 1, time: 1000, data: { source: { kind: "orchestrator" }, content: [{ type: "text", text: "跑完工程规划并验证测试" }] } },
+      { type: "assistant/message", seq: 2, time: 1100, data: { message: { content: [{ type: "text", text: "好的，先执行验证脚本。" }] } } },
+      ...Array.from({ length: 12 }, (_, idx) => ([
+        { type: "tool/call", seq: 10 + idx * 2, time: 1200 + idx, data: { callId: `c-${idx}`, name: "bash", arguments: JSON.stringify({ command: `npm test #${idx + 1}` }) } },
+        { type: "tool/result", seq: 11 + idx * 2, time: 1201 + idx, data: { message: { toolCallId: `c-${idx}`, isError: false, content: [{ type: "text", text: `exit_code: 0\nPASS 42/42 tests (#${idx + 1})` }] } } },
+      ])).flat(),
+    ],
+  });
+  await f.start({ enableSend: true });
+
+  const res = await exchange(f.socketPath, "POST", "/v4/detail", JSON.stringify({ projectId: "second", sessionId: "live", limit: 6 }), json);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const body = res.body as { messages: Array<{ role: string; text: string; isError?: boolean }> };
+  assert.equal(body.messages.length, 6);
+  assert.equal(body.messages[0]!.role, "user");
+  assert.match(body.messages[0]!.text, /跑完工程规划并验证测试/);
+  assert.equal(body.messages[1]!.role, "assistant");
+  assert.match(body.messages[1]!.text, /先执行验证脚本/);
+  const lastTool = body.messages[body.messages.length - 1]!;
+  assert.equal(lastTool.role, "tool");
+  assert.equal(lastTool.isError, false);
+  assert.match(lastTool.text, /bash：npm test #12/);
+  assert.match(lastTool.text, /exit=0/);
+  assert.match(lastTool.text, /PASS 42\/42 tests/);
+});

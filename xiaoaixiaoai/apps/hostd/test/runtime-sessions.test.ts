@@ -195,6 +195,23 @@ test("runtime bridge helpers encode targets, convert events cleanly, and parse a
   assert.equal(sub.status, "done");
   assert.equal(sub.since, 9000);
 
+  // idleGraceMs debounces transient working -> idle -> working flashes without flipping done or bumping turn.
+  let debounced = nextRuntimeState(undefined, "running", 10_000, undefined, 0, 8_000);
+  assert.equal(debounced.status, "working");
+  assert.equal(debounced.turn, 1);
+  debounced = nextRuntimeState(debounced, "idle", 14_000, undefined, 0, 8_000);
+  assert.equal(debounced.status, "working");
+  assert.equal(debounced.idleSince, 14_000);
+  debounced = nextRuntimeState(debounced, "running", 18_000, undefined, 0, 8_000);
+  assert.equal(debounced.status, "working");
+  assert.equal(debounced.turn, 1);
+  assert.equal(debounced.idleSince, undefined);
+  debounced = nextRuntimeState(debounced, "idle", 22_000, undefined, 0, 8_000);
+  assert.equal(debounced.status, "working");
+  debounced = nextRuntimeState(debounced, "idle", 30_000, undefined, 0, 8_000);
+  assert.equal(debounced.status, "done");
+  assert.equal(debounced.turn, 1);
+
   const tracker = new RuntimeEventSeqTracker();
   const detail = {
     runtime: "dsh" as const,

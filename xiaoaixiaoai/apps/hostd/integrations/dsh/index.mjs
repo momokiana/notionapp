@@ -9,8 +9,9 @@ const PAGE_SIZE = 32;
 const SEARCH_LIMIT = 120;
 const DETAIL_LIMIT_DEFAULT = 60;
 const DETAIL_LIMIT_MAX = 100;
-const MAX_MESSAGE_TEXT = 32_000;
-const MAX_DETAIL_BYTES = 460 * 1024;
+const MAX_MESSAGE_TEXT = 64_000;
+const MAX_DETAIL_BYTES = 900 * 1024;
+const MAX_TOOL_OUTPUT_CHARS = 3_600;
 const UNFILED = "dsh:unfiled";
 const ARCHIVE = "dsh:archive";
 const synthetic = (id) => id === UNFILED || id === ARCHIVE;
@@ -426,9 +427,78 @@ function formatQuestionReplyText(content) {
   return blocksText(content);
 }
 
+function headTailText(text, head, tail) {
+  const chars = Array.from(text);
+  if (chars.length <= head + tail) return text;
+  return `${chars.slice(0, head).join("")}\n…（中间省略 ${chars.length - head - tail} 字）…\n${chars.slice(-tail).join("")}`;
+}
+
+function summarizeDshToolArgs(rawArgs) {
+  let obj = rawArgs;
+  if (typeof rawArgs === "string") {
+    const trimmed = rawArgs.trim();
+    if (!trimmed) return "";
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      return cleanText(trimmed.replace(/\s+/g, " "), 120);
+    }
+  }
+  if (!isRecord(obj)) return "";
+  for (const key of ["summary", "description", "command", "cmd", "script", "code", "file_path", "path", "query", "pattern"]) {
+    const v = obj[key];
+    if (typeof v === "string" && v.trim()) {
+      return cleanText(v.replace(/\s+/g, " "), 120);
+    }
+  }
+  return "";
+}
+
+function isCommandLikeTool(toolName, output) {
+  const lower = String(toolName || "").toLowerCase();
+  if (/^(?:bash|shell|sh|exec|exec_command|run_command|run_shell_command|terminal|command|powershell|pwsh|python|node|ptc|code_execution|test|verify)$/i.test(lower)) {
+    return true;
+  }
+  if (/(?:bash|shell|exec|command|terminal|script|test|verify|build)/i.test(lower)) return true;
+  return /\b(?:exit(?:_code|\s+code)?|passed|failed|PASS|FAIL|AssertionError|BUILD SUCCESSFUL|ℹ tests|error TS)\b/i.test(output);
+}
+
+function extractExitCodeFromText(output) {
+  const m = /(?:exit(?:_code|\s+code)?\s*[:=]\s*|exited with code\s+)(-?\d+)/i.exec(output);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return Number.isSafeInteger(n) ? n : undefined;
+}
+
+function sliceMessagesPreservingContext(messages, limit) {
+  if (messages.length <= limit) return messages;
+  const tail = messages.slice(-limit);
+  const head = messages.slice(0, messages.length - limit);
+  const hasUser = tail.some((m) => m.role === "user");
+  const hasAssistant = tail.some((m) => m.role === "assistant");
+  if (hasUser && hasAssistant) return tail;
+  const extraIndices = [];
+  if (!hasUser) {
+    for (let i = head.length - 1; i >= 0; i--) {
+      if (head[i].role === "user") { extraIndices.push(i); break; }
+    }
+  }
+  if (!hasAssistant) {
+    for (let i = head.length - 1; i >= 0; i--) {
+      if (head[i].role === "assistant") { extraIndices.push(i); break; }
+    }
+  }
+  if (!extraIndices.length) return tail;
+  extraIndices.sort((a, b) => a - b);
+  const prefix = extraIndices.map((idx) => head[idx]);
+  const keepFromTail = Math.max(0, limit - prefix.length);
+  return [...prefix, ...tail.slice(-keepFromTail)];
+}
+
 function foldSessionDetail(events, foregroundEntries, agent, canSend, limit) {
   const messages = [];
   const toolNames = new Map();
+  const toolArgs = new Map();
   const activeTimed = new Map();
   let timed = false;
   for (let i = 0; i < events.length; i++) {
@@ -447,6 +517,8 @@ function foldSessionDetail(events, foregroundEntries, agent, canSend, limit) {
       case "tool/call": {
         if (!isRecord(data) || typeof data.callId !== "string" || typeof data.name !== "string") break;
         toolNames.set(data.callId, data.name);
+        const summary = summarizeDshToolArgs(data.arguments);
+        if (summary) toolArgs.set(data.callId, summary);
         if (timed && data.name === "ask_user_question" && typeof data.arguments === "string") {
           try {
             const args = JSON.parse(data.arguments);
@@ -468,11 +540,32 @@ function foldSessionDetail(events, foregroundEntries, agent, canSend, limit) {
           }
         }
         const toolName = cleanText(toolNames.get(callId) ?? "tool", 80) || "tool";
-        const isError = data?.error !== undefined || msg?.isError === true;
+        const argSummary = typeof callId === "string" ? (toolArgs.get(callId) ?? "") : "";
+        const rawOutput = blocksText(msg?.content);
+        const errText = isRecord(data?.error) && typeof data.error.message === "string"
+          ? cleanText(data.error.message, 1000)
+          : "";
+        const combinedOutput = [errText, rawOutput].filter(Boolean).join("\n").trim();
+        const exitCode = combinedOutput ? extractExitCodeFromText(combinedOutput) : undefined;
+        const isError = data?.error !== undefined || msg?.isError === true || (exitCode !== undefined && exitCode !== 0);
+        const includeBody = Boolean(combinedOutput) && (isError || isCommandLikeTool(toolName, combinedOutput));
+        let text;
+        if (includeBody) {
+          const header = argSummary ? `${toolName}：${argSummary}` : `${toolName}${isError ? "（失败）" : "（完成）"}`;
+          const statusLabel = exitCode !== undefined
+            ? (exitCode === 0 ? "已完成 (exit=0)" : `失败 (exit=${exitCode})`)
+            : (isError ? "失败" : "已完成");
+          const clipped = headTailText(combinedOutput, 1000, MAX_TOOL_OUTPUT_CHARS - 1000);
+          text = `${header}\n状态：${statusLabel}\n输出：\n${clipped}`;
+        } else if (argSummary) {
+          text = `${toolName}：${argSummary}${isError ? "（失败）" : "（完成）"}`;
+        } else {
+          text = `${toolName}${isError ? "（失败）" : "（完成）"}`;
+        }
         messages.push({
           id: `dsh-t-${seq}`,
           role: "tool",
-          text: `${toolName}${isError ? "（失败）" : "（完成）"}`,
+          text,
           ...(ts !== undefined ? { ts } : {}),
           toolName,
           isError,
@@ -493,7 +586,7 @@ function foldSessionDetail(events, foregroundEntries, agent, canSend, limit) {
           if (typeof source.callId === "string") activeTimed.delete(source.callId);
           const text = formatQuestionReplyText(data?.content);
           if (text) messages.push({ id: `dsh-u-${seq}`, role: "user", text, ...(ts !== undefined ? { ts } : {}) });
-        } else if (source?.kind === "user") {
+        } else if (source?.kind === "user" || source?.kind === "task" || source?.kind === "orchestrator" || source?.kind === "subagent") {
           const text = blocksText(data?.content);
           if (text) messages.push({ id: `dsh-u-${seq}`, role: "user", text, ...(ts !== undefined ? { ts } : {}) });
         }
@@ -519,7 +612,7 @@ function foldSessionDetail(events, foregroundEntries, agent, canSend, limit) {
     seenCalls.add(item.callId);
     pendingQuestions.push({ callId: item.callId, state: canSend ? item.state : "readonly", questions: item.questions });
   }
-  return { messages: messages.slice(-limit), pendingQuestions };
+  return { messages: sliceMessagesPreservingContext(messages, limit), pendingQuestions };
 }
 
 function detailTargetProject(ctx, config, projectId, sessionId) {

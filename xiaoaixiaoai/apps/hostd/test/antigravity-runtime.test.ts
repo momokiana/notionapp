@@ -776,3 +776,53 @@ test("AntigravityRuntime exposes run_command exit codes, stdout/stderr, backgrou
   const reply = detail.messages.find((m) => m.role === "assistant")?.text ?? "";
   assert.equal(reply, longReply);
 });
+
+test("AntigravityRuntime keeps session running while not_fully_idle=1 or an open background task exists", async (t) => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const root = mkdtempSync(join(tmpdir(), "xa-ag-notidle-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const brainDir = join(root, "brain");
+  const logs1 = join(brainDir, "ag-bg-1", ".system_generated", "logs");
+  const logs2 = join(brainDir, "ag-nfi-2", ".system_generated", "logs");
+  mkdirSync(logs1, { recursive: true });
+  mkdirSync(logs2, { recursive: true });
+
+  const dbPath = join(root, "conversation_summaries.db");
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE conversation_summaries (
+      conversation_id TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT "",
+      workspace_uris TEXT NOT NULL DEFAULT "[]",
+      status TEXT NOT NULL DEFAULT "",
+      parent_conversation_id TEXT NOT NULL DEFAULT "",
+      nesting_depth INTEGER NOT NULL DEFAULT 0,
+      killed NUMERIC NOT NULL DEFAULT false,
+      not_fully_idle INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  const ins = db.prepare(`INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, '', 0, 0, ?)`);
+  ins.run("ag-bg-1", "BG Task Running", '["file:///work/proj-bg"]', "CASCADE_RUN_STATUS_IDLE", 0);
+  ins.run("ag-nfi-2", "Not Fully Idle", '["file:///work/proj-bg"]', "CASCADE_RUN_STATUS_IDLE", 1);
+  db.close();
+
+  writeFileSync(join(logs1, "transcript.jsonl"), [
+    { step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>构建 APK</USER_REQUEST>" },
+    { step_index: 2, type: "PLANNER_RESPONSE", status: "DONE", content: "开始后台编译", tool_calls: [{ name: "default_api:run_command", args: { toolSummary: "Build APK" } }] },
+    { step_index: 3, type: "GENERIC", status: "RUNNING", content: "Tool is running as a background task with task id: ag-bg-1/task-77" },
+  ].map((s) => JSON.stringify(s)).join("\n") + "\n");
+
+  writeFileSync(join(logs2, "transcript.jsonl"), [
+    { step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>跑全量测试</USER_REQUEST>" },
+    { step_index: 2, type: "PLANNER_RESPONSE", status: "DONE", content: "等待唤醒" },
+  ].map((s) => JSON.stringify(s)).join("\n") + "\n");
+
+  const rt = new AntigravityRuntime({ brainDir, summaryDbPath: dbPath });
+  const [proj] = await rt.list();
+  assert.ok(proj);
+  const s1 = proj.sessions.find((s) => s.id === "ag-bg-1");
+  const s2 = proj.sessions.find((s) => s.id === "ag-nfi-2");
+  assert.equal(s1?.state, "running");
+  assert.equal(s2?.state, "running");
+});

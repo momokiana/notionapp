@@ -1267,7 +1267,7 @@ export class Assistant {
           });
           return { out: `${this.agentLine(a)}\n终端最后 ${lines} 行${page.note ? ` ${page.note}` : ""}：\n${page.body}`, step: `看了「${titleOf(a)}」的终端` };
         }
-        const limit = Math.min(Math.max(Number(input.limit ?? 24) || 24, 4), 80);
+        const limit = Math.min(Math.max(Number(input.limit ?? 40) || 40, 4), 80);
         const r = await this.host.call(a.deviceId, "session.events", { agent: a.key, limit }, 15_000);
         const extra: string[] = [];
         if (r.pendingQuestions?.length) {
@@ -2499,7 +2499,7 @@ const TOOLS: ToolDef[] = [
       properties: {
         agent: { type: "string", description: "agent 的 key（现况和 list_agents 里都有），也可以是叫法或标题" },
         what: { type: "string", enum: ["conversation", "terminal"] },
-        limit: { type: "number", description: "对话条数，默认 24" },
+        limit: { type: "number", description: "对话条数，默认 40，最大 80" },
         lines: { type: "number", description: "终端行数，默认 60" },
         offset: { type: "number", description: "分页读取的起始字符偏移（从 0 开始）；不填默认返回最新一页" },
         max_chars: { type: "number", description: "单页最多返回字符数，默认 20000，最大 28000" },
@@ -2953,10 +2953,17 @@ function renderEvents(events: ConvEvent[]): string {
           const isCommandTool =
             toolName === "run_command" ||
             toolName === "exec_command" ||
+            toolName === "exec" ||
             toolName === "bash" ||
             toolName === "shell" ||
+            toolName === "sh" ||
             toolName === "terminal" ||
-            /\n状态：|\bCommand exited with code\b|\bexit=\d+/i.test(rawOut);
+            toolName === "powershell" ||
+            toolName === "run_shell_command" ||
+            toolName === "ptc" ||
+            toolName === "code_execution" ||
+            toolName === "python" ||
+            /\n状态：|\n输出：|\bCommand exited with code\b|\bexit=\d+/i.test(rawOut);
           const isPlaceholder = rawOut === `${e.name ?? "tool"}（调用）` || !rawOut.includes("\n");
           if (isCommandTool && !isPlaceholder) {
             out.push(`[工具输出:${e.name || "command"}]\n${clip(rawOut, 4000)}`);

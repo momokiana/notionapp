@@ -473,3 +473,54 @@ test("CodexLocalRuntime reports live weekly-only account quota and never falls b
   assert.equal(qErr?.primary, undefined);
   assert.equal(qErr?.balance, undefined);
 });
+
+test("CodexLocalRuntime parses custom_tool_call_output exit codes/stdout and detects running across >64KB output", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "xa-codex-out-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const codexHome = join(dir, "codex-home");
+  const cwd = join(dir, "repo-out");
+  mkdirSync(codexHome, { recursive: true });
+  mkdirSync(cwd, { recursive: true });
+
+  const rolloutPath = join(codexHome, "rollout-out.jsonl");
+  const bigChunk = "L".repeat(90_000);
+  const lines = [
+    { type: "event_msg", payload: { type: "task_started" } },
+    { type: "response_item", timestamp: "2026-11-22T09:00:00.000Z", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "运行验证测试" }] } },
+    { type: "response_item", timestamp: "2026-11-22T09:00:01.000Z", payload: { type: "custom_tool_call", call_id: "c1", name: "exec", input: 'tools.exec_command({cmd:"npm test"})' } },
+    {
+      type: "response_item",
+      timestamp: "2026-11-22T09:00:02.000Z",
+      payload: {
+        type: "custom_tool_call_output",
+        call_id: "c1",
+        output: [
+          { type: "input_text", text: `Script completed\n${bigChunk}\n` },
+          { type: "input_text", text: '[{"status":"fulfilled","value":{"exit_code":0,"output":"ALL 99 TESTS PASSED"}}]' },
+        ],
+      },
+    },
+  ];
+  writeFileSync(rolloutPath, `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
+
+  const db = new DatabaseSync(join(codexHome, "state_5.sqlite"));
+  db.exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, cwd TEXT, title TEXT, name TEXT, first_user_message TEXT, archived INTEGER DEFAULT 0, updated_at INTEGER, updated_at_ms INTEGER, source TEXT, thread_source TEXT, attached_thread_parent_id TEXT, agent_nickname TEXT, agent_role TEXT, model TEXT, reasoning_effort TEXT);`);
+  const now = Math.floor(Date.now() / 1000);
+  db.prepare(`INSERT INTO threads (id, rollout_path, cwd, title, name, first_user_message, archived, updated_at, updated_at_ms) VALUES (?, ?, ?, ?, NULL, ?, 0, ?, ?)`).run("cx-out-1", rolloutPath, cwd, "验证测试", "运行验证测试", now, now * 1000);
+  db.close();
+
+  const rt = new CodexLocalRuntime({ codexHome, enableSend: false });
+  t.after(() => rt.close());
+  const [proj] = await rt.list();
+  assert.ok(proj);
+  // >90KB output after task_started must still be detected as running thanks to 512KB probe tail.
+  assert.equal(proj.sessions[0]!.state, "running");
+
+  const detail = await rt.detail(proj.id, "cx-out-1", 20);
+  const tool = detail.messages.find((m) => m.role === "tool");
+  assert.ok(tool);
+  assert.equal(tool.isError, false);
+  assert.match(tool.text, /exec：npm test/);
+  assert.match(tool.text, /exit=0/);
+  assert.match(tool.text, /ALL 99 TESTS PASSED/);
+});

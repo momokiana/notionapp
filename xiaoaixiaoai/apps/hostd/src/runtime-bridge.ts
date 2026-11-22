@@ -15,6 +15,8 @@ export interface RuntimeAgentState {
   turn: number;
   seenTurn: number;
   subagentsWorking?: number;
+  /** First timestamp an active session polled idle, used to debounce transient working -> idle flashes. */
+  idleSince?: number;
 }
 
 /** Tracks monotonic stringified numeric `pos` values and stable timestamps for runtime session messages. */
@@ -102,6 +104,7 @@ export function nextRuntimeState(
   now: number,
   updatedAt?: number,
   subagentsWorking = 0,
+  idleGraceMs = 0,
 ): RuntimeAgentState {
   const mapped: AgentStatus = state === "attention" ? "blocked" : state === "running" ? "working" : "idle";
   const hasWorkingSubs = subagentsWorking > 0;
@@ -119,6 +122,15 @@ export function nextRuntimeState(
   let status: AgentStatus = mapped;
   const wasBusy = prev.status === "working" || (prev.subagentsWorking ?? 0) > 0;
   const nowBusy = mapped === "working" || hasWorkingSubs;
+  if (wasBusy && mapped === "idle" && !hasWorkingSubs && idleGraceMs > 0) {
+    const idleSince = prev.idleSince ?? now;
+    if (now - idleSince < idleGraceMs) {
+      return {
+        ...prev,
+        idleSince,
+      };
+    }
+  }
   if (nowBusy && !wasBusy) {
     turn++;
   } else if (mapped === "idle" && (wasBusy || prev.status === "done")) {

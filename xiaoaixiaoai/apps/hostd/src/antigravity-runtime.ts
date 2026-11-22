@@ -103,6 +103,7 @@ interface BrainMeta {
   hasLock: boolean;
   mtimeMs: number;
   dbStatus?: string;
+  notFullyIdle?: boolean;
   project: { id: string; title: string };
   cwd?: string;
   title: string;
@@ -579,8 +580,26 @@ function parseAskQuestionTool(calls: ParsedStep["tool_calls"], prefixId: string)
   return undefined;
 }
 
-function summarizeTail(steps: ParsedStep[], hasLock: boolean, mtimeMs: number): { state: RuntimeSessionState; pendingQuestions: RuntimePendingQuestion[] } {
+function hasOpenBackgroundTask(steps: ParsedStep[], mtimeMs: number): boolean {
+  if (Date.now() - mtimeMs > BACKGROUND_TURN_IDLE_TIMEOUT_MS) return false;
+  const completed = collectBackgroundTaskCompletions(steps);
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i]!;
+    if (s.type === "SYSTEM_MESSAGE" && typeof s.content === "string" && /All your subagents and background tasks have been stopped/i.test(s.content)) {
+      // Any background tasks started before this system reset notice are no longer active.
+      return false;
+    }
+    if (s.type === "GENERIC" && s.status === "RUNNING" && typeof s.content === "string") {
+      const m = /Tool is running as a background task with task id:\s*([^\s]+)/i.exec(s.content);
+      if (m && !completed.has(m[1]!.trim())) return true;
+    }
+  }
+  return false;
+}
+
+function summarizeTail(steps: ParsedStep[], hasLock: boolean, mtimeMs: number): { state: RuntimeSessionState; pendingQuestions: RuntimePendingQuestion[]; hasOpenBgTask: boolean } {
   const pendingQuestions: RuntimePendingQuestion[] = [];
+  const openBg = hasOpenBackgroundTask(steps, mtimeMs);
   let sawPostAskUserInput = false;
   let lastMeaningful: ParsedStep | undefined;
   for (let i = steps.length - 1; i >= 0; i--) {
@@ -594,14 +613,14 @@ function summarizeTail(steps: ParsedStep[], hasLock: boolean, mtimeMs: number): 
       const ask = parseAskQuestionTool(s.tool_calls, `ag-${i}`);
       if (ask && !sawPostAskUserInput) {
         pendingQuestions.push(ask);
-        return { state: "attention", pendingQuestions };
+        return { state: "attention", pendingQuestions, hasOpenBgTask: openBg };
       }
       break;
     }
   }
-  const activeWrite = hasLock || (Date.now() - mtimeMs <= RECENT_RUNNING_WINDOW_MS &&
+  const activeWrite = hasLock || openBg || (Date.now() - mtimeMs <= RECENT_RUNNING_WINDOW_MS &&
     lastMeaningful !== undefined && (lastMeaningful.status !== "DONE" || (Array.isArray(lastMeaningful.tool_calls) && lastMeaningful.tool_calls.length > 0)));
-  return { state: activeWrite ? "running" : "idle", pendingQuestions: [] };
+  return { state: activeWrite ? "running" : "idle", pendingQuestions: [], hasOpenBgTask: openBg };
 }
 
 function pageAfter<T extends { id: string }>(items: T[], after?: string): { page: T[]; next?: string } {
@@ -660,11 +679,13 @@ export class AntigravityRuntime {
     hasLock: boolean,
     dbStatus?: string,
     sessionId?: string,
+    notFullyIdle = false,
+    hasOpenBgTask = false,
   ): RuntimeSessionState {
     const active = sessionId ? this.activeTurns.get(sessionId) : undefined;
     if (active) return active.attention ? "attention" : "running";
     if (hasPendingQuestion) return "attention";
-    if (dbStatus === "CASCADE_RUN_STATUS_RUNNING" || hasLock) return "running";
+    if (dbStatus === "CASCADE_RUN_STATUS_RUNNING" || hasLock || notFullyIdle || hasOpenBgTask) return "running";
     if (dbStatus === "CASCADE_RUN_STATUS_IDLE") return "idle";
     return tailState;
   }
@@ -767,7 +788,7 @@ export class AntigravityRuntime {
         const isChild = Boolean(pid || (summary && typeof summary.nesting_depth === "number" && summary.nesting_depth > 0));
         if (isChild) {
           if (!pid) continue;
-          const working = this.activeTurns.has(id) || Boolean(diskEntry?.hasLock) || summary?.status === "CASCADE_RUN_STATUS_RUNNING";
+          const working = this.activeTurns.has(id) || Boolean(diskEntry?.hasLock) || summary?.status === "CASCADE_RUN_STATUS_RUNNING" || Number(summary?.not_fully_idle) === 1;
           if (!diskEntry && !working && !summary) continue;
           const rec: ChildRecord = {
             sessionId: id,
@@ -833,14 +854,18 @@ export class AntigravityRuntime {
           const summaryTitle = cleanLabel(item.summary?.title, "");
           const title = summaryTitle || cleanLabel(transcriptTitle, `Antigravity ${item.sessionId.slice(0, 8)}`);
           const tail = summarizeTail(tailSteps, item.hasLock, item.mtimeMs);
-          const state = this.resolveState(tail.state, tail.pendingQuestions.length > 0, item.hasLock, item.summary?.status, item.sessionId);
           const counts = countsByParent.get(item.sessionId);
+          // When subagentsWorking > 0, Antigravity sets not_fully_idle=1 for the child subagents;
+          // keep parent state as idle so UI/effectiveAgentStatus distinguishes "子 agent 工作中".
+          const notFullyIdle = Number(item.summary?.not_fully_idle) === 1 && !((counts?.[1] ?? 0) > 0);
+          const state = this.resolveState(tail.state, tail.pendingQuestions.length > 0, item.hasLock, item.summary?.status, item.sessionId, notFullyIdle, tail.hasOpenBgTask);
           out.push({
             sessionId: item.sessionId,
             transcriptPath: item.transcriptPath,
             hasLock: item.hasLock,
             mtimeMs: item.mtimeMs,
             dbStatus: item.summary?.status,
+            notFullyIdle,
             project,
             ...(workspace.cwd ? { cwd: workspace.cwd } : {}),
             title,
@@ -1085,7 +1110,9 @@ export class AntigravityRuntime {
             const genericStep = followingGenerics[j];
             if (toolName === "run_command") {
               const formatted = formatRunCommandResult(toolHeader, genericStep, bgCompletions, meta.transcriptPath);
-              messages.push({ id: `ag-t-${i}-${j}`, role: "tool", text: formatted.text, ...(ts !== undefined ? { ts } : {}), toolName, isError: formatted.isError });
+              const inFlight = !genericStep && (step.status === "RUNNING" || meta.hasLock || meta.dbStatus === "CASCADE_RUN_STATUS_RUNNING") && i >= steps.length - 2;
+              const finalText = inFlight ? `${formatted.text}\n状态：执行中` : formatted.text;
+              messages.push({ id: `ag-t-${i}-${j}`, role: "tool", text: finalText, ...(ts !== undefined ? { ts } : {}), toolName, isError: formatted.isError });
             } else if (genericStep?.status === "ERROR") {
               const errMsg = cleanText(stripStepTimestamps(genericStep.content ?? ""), 800);
               const text = errMsg ? `${toolHeader}\n错误：${errMsg}` : toolHeader;
@@ -1104,7 +1131,7 @@ export class AntigravityRuntime {
       messages.push({ id: `ag-init-${sessionId}`, role: "user", text: cleanText(createdFirst, MAX_MESSAGE_TEXT) || createdFirst });
     }
     const tailSummary = summarizeTail(steps, meta.hasLock, meta.mtimeMs);
-    const state = this.resolveState(tailSummary.state, tailSummary.pendingQuestions.length > 0, meta.hasLock, meta.dbStatus, meta.sessionId);
+    const state = this.resolveState(tailSummary.state, tailSummary.pendingQuestions.length > 0, meta.hasLock, meta.dbStatus, meta.sessionId, Boolean(meta.notFullyIdle), tailSummary.hasOpenBgTask);
     const canSend = !isChild && this.canSendMeta(meta, state);
     const pendingQuestions = tailSummary.pendingQuestions.map((pq) => ({
       ...pq,

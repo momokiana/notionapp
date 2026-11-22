@@ -32,10 +32,11 @@ import { RuntimeError } from "./runtime-sessions.ts";
 import { lineSplitter } from "./util.ts";
 
 const THREAD_LIST_LIMIT = 80;
-const STATUS_TAIL_BYTES = 64 * 1024;
+const STATUS_TAIL_BYTES = 512 * 1024;
 const DETAIL_TAIL_BYTES = 2 * 1024 * 1024;
 const MAX_MESSAGE_TEXT = 64_000;
 const MAX_DETAIL_BYTES = 900 * 1024;
+const MAX_CMD_OUTPUT_CHARS = 3_600;
 const RECENT_ACTIVE_WINDOW_MS = 15 * 60_000;
 const MAX_CONCURRENT_TURNS = 2;
 const BACKGROUND_TURN_TIMEOUT_MS = 30 * 60_000;
@@ -393,9 +394,84 @@ function probeState(row: ThreadRow, active?: ActiveTurn): RuntimeSessionState {
   return "idle";
 }
 
+function headTailText(text: string, head: number, tail: number): string {
+  const chars = Array.from(text);
+  if (chars.length <= head + tail) return text;
+  return `${chars.slice(0, head).join("")}\n…（中间省略 ${chars.length - head - tail} 字）…\n${chars.slice(-tail).join("")}`;
+}
+
+function summarizeCodexToolInput(p: Record<string, unknown>): string {
+  const raw = typeof p.arguments === "string" ? p.arguments : typeof p.input === "string" ? p.input : "";
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      for (const k of ["cmd", "command", "summary", "description", "path", "file_path", "query", "pattern"]) {
+        if (typeof parsed[k] === "string" && (parsed[k] as string).trim()) {
+          return cleanLabel(parsed[k], "");
+        }
+      }
+    }
+  } catch { /* raw script/input string */ }
+  const cmdMatch = /cmd\s*:\s*"([^"]{1,160})"/.exec(trimmed);
+  if (cmdMatch) return cleanLabel(cmdMatch[1], "");
+  return cleanLabel(trimmed, "");
+}
+
+function extractCodexToolOutput(rawOutput: unknown): { text: string; exitCode?: number } {
+  let raw = "";
+  if (typeof rawOutput === "string") {
+    raw = rawOutput;
+  } else if (Array.isArray(rawOutput)) {
+    const parts: string[] = [];
+    for (const item of rawOutput) {
+      if (item && typeof item === "object" && typeof (item as Record<string, unknown>).text === "string") {
+        parts.push((item as Record<string, unknown>).text as string);
+      }
+    }
+    raw = parts.join("\n");
+  }
+  const cleaned = raw.replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\p{Cf}]/gu, " ").trim();
+  if (!cleaned) return { text: "" };
+  let exitCode: number | undefined;
+  const exitMatch = /(?:"exit_code"\s*:\s*|Process exited with code\s+|Exit code:\s*|exit(?:_code|\s+code)?\s*[:=]\s*)(-?\d+)/i.exec(cleaned);
+  if (exitMatch) {
+    const n = Number(exitMatch[1]);
+    if (Number.isSafeInteger(n)) exitCode = n;
+  }
+  return { text: headTailText(cleaned, 1000, MAX_CMD_OUTPUT_CHARS - 1000), ...(exitCode !== undefined ? { exitCode } : {}) };
+}
+
+function sliceCodexMessagesPreservingContext(messages: RuntimeSessionMessage[], limit: number): RuntimeSessionMessage[] {
+  if (messages.length <= limit) return messages;
+  const tail = messages.slice(-limit);
+  const head = messages.slice(0, messages.length - limit);
+  const hasUser = tail.some((m) => m.role === "user");
+  const hasAssistant = tail.some((m) => m.role === "assistant");
+  if (hasUser && hasAssistant) return tail;
+  const extraIndices: number[] = [];
+  if (!hasUser) {
+    for (let i = head.length - 1; i >= 0; i--) {
+      if (head[i]!.role === "user") { extraIndices.push(i); break; }
+    }
+  }
+  if (!hasAssistant) {
+    for (let i = head.length - 1; i >= 0; i--) {
+      if (head[i]!.role === "assistant") { extraIndices.push(i); break; }
+    }
+  }
+  if (!extraIndices.length) return tail;
+  extraIndices.sort((a, b) => a - b);
+  const prefix = extraIndices.map((idx) => head[idx]!);
+  const keepFromTail = Math.max(0, limit - prefix.length);
+  return [...prefix, ...tail.slice(-keepFromTail)];
+}
+
 function parseRolloutMessages(rolloutPath: string, limit: number): RuntimeSessionMessage[] {
   const lines = readTailLines(rolloutPath, DETAIL_TAIL_BYTES);
   const messages: RuntimeSessionMessage[] = [];
+  const toolIdxByCallId = new Map<string, number>();
   for (let i = 0; i < lines.length; i++) {
     let record: Record<string, unknown>;
     try { record = JSON.parse(lines[i]!) as Record<string, unknown>; } catch { continue; }
@@ -436,10 +512,27 @@ function parseRolloutMessages(rolloutPath: string, limit: number): RuntimeSessio
       }
     } else if (p.type === "function_call" || p.type === "custom_tool_call") {
       const toolName = cleanLabel(p.name, "tool");
-      messages.push({ id: `cx-t-${idPrefix}`, role: "tool", text: `${toolName}（调用）`, ...(ts !== undefined ? { ts } : {}), toolName, isError: false });
+      const summary = summarizeCodexToolInput(p);
+      const text = summary ? `${toolName}：${summary}` : `${toolName}（调用）`;
+      const callId = typeof p.call_id === "string" ? p.call_id : "";
+      if (callId) toolIdxByCallId.set(callId, messages.length);
+      messages.push({ id: `cx-t-${idPrefix}`, role: "tool", text, ...(ts !== undefined ? { ts } : {}), toolName, isError: false });
+    } else if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
+      const callId = typeof p.call_id === "string" ? p.call_id : "";
+      const targetIdx = callId ? toolIdxByCallId.get(callId) : undefined;
+      if (targetIdx === undefined) continue;
+      const target = messages[targetIdx]!;
+      const parsed = extractCodexToolOutput(p.output);
+      if (!parsed.text) continue;
+      const isError = parsed.exitCode !== undefined ? parsed.exitCode !== 0 : /"status"\s*:\s*"rejected"|Traceback|Error:/i.test(parsed.text);
+      const statusLabel = parsed.exitCode !== undefined
+        ? (parsed.exitCode === 0 ? "已完成 (exit=0)" : `失败 (exit=${parsed.exitCode})`)
+        : (isError ? "失败" : "已完成");
+      target.text = `${target.text}\n状态：${statusLabel}\n输出：\n${parsed.text}`;
+      target.isError = isError;
     }
   }
-  return messages.slice(-limit);
+  return sliceCodexMessagesPreservingContext(messages, limit);
 }
 
 function pageAfter<T extends { id: string }>(items: T[], after?: string): { page: T[]; next?: string } {
