@@ -102,6 +102,9 @@ class XiaoaiService : Service() {
   /** Notifier on or off per settings; the service ends when nothing needs it. */
   private fun refresh(keepalive: Boolean = false) {
     val p = Prefs(this)
+    if (p.ledgerEnabled && p.ledgerPairing() != null) {
+      Thread({ LedgerSync.flushPending(applicationContext) }, "ledger-flush").start()
+    }
     if (p.notify && !p.token.isNullOrEmpty()) {
       foreground(call = VoiceCall.current != null)
       val n = notifier ?: Notifier(applicationContext).also { notifier = it }
@@ -199,7 +202,11 @@ class XiaoaiService : Service() {
 /** Brings the alert channel back after a reboot or an app update. */
 class BootReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
-    if (Prefs(context).notify) {
+    val p = Prefs(context)
+    if (p.ledgerEnabled && p.ledgerPairing() != null) {
+      Thread({ LedgerSync.flushPending(context.applicationContext) }, "ledger-boot-flush").start()
+    }
+    if (p.notify) {
       try {
         XiaoaiService.sync(context)
       } catch (_: Throwable) {

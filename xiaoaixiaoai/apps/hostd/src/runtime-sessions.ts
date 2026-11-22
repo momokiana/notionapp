@@ -18,7 +18,7 @@ import { CodexRuntime, CodexRuntimeError } from "./codex-runtime.ts";
 import { LocalVoiceBridge, type LocalVoiceOptions } from "./local-voice.ts";
 
 const MAX_CONFIG = 48 * 1024;
-const MAX_REPLY = 512 * 1024;
+const MAX_REPLY = 1024 * 1024;
 const MAX_CLAIMS = 10_000;
 const states = new Set(["running", "idle", "inactive", "attention", "unknown"]);
 const RUNTIMES: readonly SessionRuntime[] = ["dsh", "codex", "antigravity"];
@@ -467,7 +467,7 @@ export class DshRuntime implements RuntimeAdapter {
   }
 }
 
-function clipMessageText(value: unknown, max = 32_000): string {
+function clipMessageText(value: unknown, max = 64_000): string {
   if (typeof value !== "string") return "";
   const chars = Array.from(value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\p{Cf}]/gu, " "));
   return (chars.length > max ? `${chars.slice(0, max - 1).join("")}…` : chars.join("")).trim();
@@ -488,7 +488,7 @@ function sanitizeDetail(runtime: SessionRuntime, raw: Record<string, unknown>, a
   for (const item of rawMessages) {
     const m = row(item);
     if (!m || typeof m.id !== "string" || (m.role !== "user" && m.role !== "assistant" && m.role !== "tool" && m.role !== "system")) continue;
-    const text = clipMessageText(m.text, 32_000);
+    const text = clipMessageText(m.text, 64_000);
     if (!text) continue;
     messages.push({
       id: m.id.slice(0, 128),

@@ -37,9 +37,10 @@ const SCAN_SESSION_LIMIT = 60;
 const HEAD_BYTES = 128 * 1024;
 const SUMMARY_TAIL_BYTES = 256 * 1024;
 const DETAIL_TAIL_BYTES = 2 * 1024 * 1024;
-const FULL_DETAIL_TAIL_BYTES = 8 * 1024 * 1024;
-const MAX_MESSAGE_TEXT = 32_000;
-const MAX_DETAIL_BYTES = 460 * 1024;
+const FULL_DETAIL_TAIL_BYTES = 16 * 1024 * 1024;
+const MAX_MESSAGE_TEXT = 64_000;
+const MAX_DETAIL_BYTES = 900 * 1024;
+const MAX_CMD_OUTPUT_CHARS = 3_600;
 const RECENT_RUNNING_WINDOW_MS = 90_000;
 const MAX_CONCURRENT_TURNS = 3;
 const BACKGROUND_TURN_IDLE_TIMEOUT_MS = 20 * 60_000;
@@ -287,6 +288,174 @@ function formatAnswerValue(selected: readonly string[], custom?: string): string
   const cus = custom?.trim() ?? "";
   if (sel && cus) return `${sel}（补充：${cus}）`;
   return sel || cus;
+}
+
+function headTailText(text: string, head: number, tail: number): string {
+  const chars = Array.from(text);
+  if (chars.length <= head + tail) return text;
+  return `${chars.slice(0, head).join("")}\n…（中间省略 ${chars.length - head - tail} 字）…\n${chars.slice(-tail).join("")}`;
+}
+
+function stripStepTimestamps(raw: string): string {
+  return raw
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter((line) => !/^(?:Created At|Completed At):\s+/i.test(line.trim()))
+    .join("\n")
+    .trim();
+}
+
+function fileUriToLocalPath(uri: string): string {
+  let decoded = uri.trim();
+  try { decoded = decodeURIComponent(decoded); } catch {}
+  return decoded.replace(/^file:\/\//i, "").replace(/^\/([A-Za-z]:)/, "$1");
+}
+
+function readTailFileSnippet(filePath: string, maxBytes = 12 * 1024, maxChars = MAX_CMD_OUTPUT_CHARS): string {
+  try {
+    if (!existsSync(filePath)) return "";
+    const fd = openSync(filePath, "r");
+    try {
+      const size = fstatSync(fd).size;
+      if (size <= 0) return "";
+      const start = Math.max(0, size - maxBytes);
+      const len = size - start;
+      const buf = Buffer.allocUnsafe(len);
+      let read = 0;
+      while (read < len) {
+        const n = readSync(fd, buf, read, len - read, start + read);
+        if (n <= 0) break;
+        read += n;
+      }
+      const raw = cleanText(buf.subarray(0, read).toString("utf8"), maxChars + 512);
+      if (!raw) return "";
+      const body = start > 0 ? `…${raw}` : raw;
+      return headTailText(body, 1200, Math.max(800, maxChars - 1200));
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+
+interface BgTaskCompletion {
+  status: "finished" | "canceled";
+  exitCode?: number;
+  output?: string;
+  logPath?: string;
+}
+
+function collectBackgroundTaskCompletions(steps: ParsedStep[]): Map<string, BgTaskCompletion> {
+  const map = new Map<string, BgTaskCompletion>();
+  for (const step of steps) {
+    if (step.type !== "SYSTEM_MESSAGE" || typeof step.content !== "string") continue;
+    const re = /Task id "([^"]+)" (finished|was canceled) with result:\s*([\s\S]*?)(?=<\/SYSTEM_MESSAGE>|\[Message\]|$)/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(step.content)) !== null) {
+      const taskId = m[1]!.trim();
+      const status = m[2]!.toLowerCase().includes("cancel") ? "canceled" : "finished";
+      const body = m[3]!.trim();
+      const exitMatch = /Command exited with code (-?\d+)\./i.exec(body);
+      const exitCode = exitMatch ? Number(exitMatch[1]) : undefined;
+      const logMatch = /Log:\s*(file:\/\/\/[^\s<]+)/i.exec(body);
+      const logPath = logMatch ? fileUriToLocalPath(logMatch[1]!) : undefined;
+      let output = "";
+      const outMatch = /Command output:\s*([\s\S]*?)(?:\nLog:\s*file:\/\/\/|$)/i.exec(body);
+      if (outMatch) {
+        output = cleanText(outMatch[1]!, MAX_CMD_OUTPUT_CHARS * 2);
+      } else {
+        const stripped = body
+          .replace(/Command exited with code -?\d+\./gi, "")
+          .replace(/Log:\s*file:\/\/\/[^\s<]+/gi, "")
+          .trim();
+        output = cleanText(stripped, MAX_CMD_OUTPUT_CHARS * 2);
+      }
+      map.set(taskId, {
+        status,
+        ...(exitCode !== undefined && Number.isFinite(exitCode) ? { exitCode } : {}),
+        ...(output ? { output: headTailText(output, 1200, MAX_CMD_OUTPUT_CHARS - 1200) } : {}),
+        ...(logPath ? { logPath } : {}),
+      });
+    }
+  }
+  return map;
+}
+
+function formatRunCommandResult(
+  toolHeader: string,
+  genericStep: ParsedStep | undefined,
+  completions: Map<string, BgTaskCompletion>,
+  transcriptPath: string,
+): { text: string; isError: boolean } {
+  if (!genericStep) return { text: toolHeader, isError: false };
+  const rawContent = typeof genericStep.content === "string" ? genericStep.content : "";
+  const cleaned = stripStepTimestamps(rawContent);
+  const bgMatch = /Tool is running as a background task with task id:\s*([^\s]+)/i.exec(cleaned);
+  if (bgMatch) {
+    const taskId = bgMatch[1]!.trim();
+    const shortTask = taskId.split("/").pop() ?? taskId;
+    const explicitLog = /Task logs are available at:\s*(file:\/\/\/[^\s]+)/i.exec(cleaned);
+    const derivedLog = transcriptPath ? join(dirname(dirname(transcriptPath)), "tasks", `${shortTask}.log`) : "";
+    const comp = completions.get(taskId);
+    const logPath = comp?.logPath ?? (explicitLog ? fileUriToLocalPath(explicitLog[1]!) : (derivedLog && existsSync(derivedLog) ? derivedLog : undefined));
+    if (comp) {
+      const statusText = comp.status === "canceled"
+        ? "后台任务已取消"
+        : comp.exitCode !== undefined
+          ? `后台任务已完成 (exit=${comp.exitCode})`
+          : "后台任务已完成";
+      const isError = comp.status === "canceled" || (comp.exitCode !== undefined && comp.exitCode !== 0);
+      let output = comp.output ?? "";
+      if ((!output || /No output from the command/i.test(output)) && logPath) {
+        const diskTail = readTailFileSnippet(logPath);
+        if (diskTail) output = diskTail;
+      }
+      const lines = [toolHeader, `状态：${statusText}${logPath ? ` | 日志：${logPath}` : ""}`];
+      if (output) lines.push(`输出：\n${output}`);
+      return { text: lines.join("\n"), isError };
+    }
+    const diskTail = logPath ? readTailFileSnippet(logPath, 8 * 1024, 2_400) : "";
+    const lines = [toolHeader, `状态：后台运行中 (${shortTask})${logPath ? ` | 日志：${logPath}` : ""}`];
+    if (diskTail) lines.push(`最新输出：\n${diskTail}`);
+    return { text: lines.join("\n"), isError: false };
+  }
+
+  const exitMatch = /Command exited with code (-?\d+)\./i.exec(cleaned);
+  const exitCode = exitMatch ? Number(exitMatch[1]) : undefined;
+  const truncLogMatch = /You can find the full output in a file at\s*(file:\/\/\/[^\s]+)\.?/i.exec(cleaned);
+  const logPath = truncLogMatch ? fileUriToLocalPath(truncLogMatch[1]!) : undefined;
+  const errStepMatch = /Encountered error in (?:step|tool) execution:\s*([\s\S]+)/i.exec(cleaned);
+  const isError = genericStep.status === "ERROR" || (exitCode !== undefined && exitCode !== 0) || Boolean(errStepMatch);
+
+  let statusText = genericStep.status === "RUNNING"
+    ? "运行中"
+    : exitCode !== undefined
+      ? (exitCode === 0 ? "已完成 (exit=0)" : `失败 (exit=${exitCode})`)
+      : isError
+        ? "执行出错"
+        : "已完成";
+
+  let output = "";
+  const cmdOutMatch = /Command output:\s*([\s\S]*)$/i.exec(cleaned);
+  if (cmdOutMatch) {
+    output = cleanText(cmdOutMatch[1]!, MAX_CMD_OUTPUT_CHARS * 2);
+  } else if (errStepMatch) {
+    output = cleanText(errStepMatch[1]!, MAX_CMD_OUTPUT_CHARS);
+  } else if (/No output from the command/i.test(cleaned)) {
+    output = "（无输出）";
+  } else {
+    output = cleanText(cleaned, MAX_CMD_OUTPUT_CHARS * 2);
+  }
+  if (output) output = headTailText(output, 1200, MAX_CMD_OUTPUT_CHARS - 1200);
+  if (logPath && (!output || output.length < 120)) {
+    const diskTail = readTailFileSnippet(logPath);
+    if (diskTail) output = diskTail;
+  }
+
+  const lines = [toolHeader, `状态：${statusText}${logPath ? ` | 日志：${logPath}` : ""}`];
+  if (output) lines.push(`输出：\n${output}`);
+  return { text: lines.join("\n"), isError };
 }
 
 function summarizeToolArgs(args: unknown): string {
@@ -890,6 +1059,7 @@ export class AntigravityRuntime {
       : [];
     if (meta.transcriptPath && steps.length > 0) hydrateTruncatedSteps(meta.transcriptPath, steps);
     const messages: RuntimeSessionMessage[] = [];
+    const bgCompletions = collectBackgroundTaskCompletions(steps);
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i]!;
       const parsedTs = typeof step.created_at === "string" ? Date.parse(step.created_at) : NaN;
@@ -899,14 +1069,30 @@ export class AntigravityRuntime {
         if (text) messages.push({ id: `ag-u-${i}`, role: "user", text, ...(ts !== undefined ? { ts } : {}) });
       } else if (step.type === "PLANNER_RESPONSE") {
         if (Array.isArray(step.tool_calls)) {
+          const followingGenerics: ParsedStep[] = [];
+          for (let k = i + 1; k < steps.length && followingGenerics.length < step.tool_calls.length; k++) {
+            const nextStep = steps[k]!;
+            if (nextStep.type === "GENERIC") followingGenerics.push(nextStep);
+            else if (nextStep.type === "PLANNER_RESPONSE" || nextStep.type === "USER_INPUT") break;
+          }
           for (let j = 0; j < step.tool_calls.length; j++) {
             const rawName = step.tool_calls[j]?.name;
             if (typeof rawName !== "string" || !rawName) continue;
             const shortName = rawName.includes(":") ? rawName.split(":").pop()! : rawName;
             const toolName = cleanLabel(shortName, "tool");
             const argSummary = summarizeToolArgs(step.tool_calls[j]?.args);
-            const toolText = argSummary ? `${toolName}：${argSummary}` : `${toolName}（调用）`;
-            messages.push({ id: `ag-t-${i}-${j}`, role: "tool", text: toolText, ...(ts !== undefined ? { ts } : {}), toolName, isError: false });
+            const toolHeader = argSummary ? `${toolName}：${argSummary}` : `${toolName}（调用）`;
+            const genericStep = followingGenerics[j];
+            if (toolName === "run_command") {
+              const formatted = formatRunCommandResult(toolHeader, genericStep, bgCompletions, meta.transcriptPath);
+              messages.push({ id: `ag-t-${i}-${j}`, role: "tool", text: formatted.text, ...(ts !== undefined ? { ts } : {}), toolName, isError: formatted.isError });
+            } else if (genericStep?.status === "ERROR") {
+              const errMsg = cleanText(stripStepTimestamps(genericStep.content ?? ""), 800);
+              const text = errMsg ? `${toolHeader}\n错误：${errMsg}` : toolHeader;
+              messages.push({ id: `ag-t-${i}-${j}`, role: "tool", text, ...(ts !== undefined ? { ts } : {}), toolName, isError: true });
+            } else {
+              messages.push({ id: `ag-t-${i}-${j}`, role: "tool", text: toolHeader, ...(ts !== undefined ? { ts } : {}), toolName, isError: false });
+            }
           }
         }
         const replyText = cleanText(step.content, MAX_MESSAGE_TEXT);

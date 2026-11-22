@@ -1,6 +1,8 @@
 package dev.notifier.xiaoaixiaoai.bridge
 
 import android.content.Context
+import android.os.Build
+import android.os.Bundle
 import android.os.PowerManager
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -22,7 +24,7 @@ class WeChatNotificationListener : NotificationListenerService() {
     if ((flags and Notification.FLAG_ONGOING_EVENT) != 0) return
 
     val prefs = Prefs(this)
-    if (!prefs.ledgerEnabled || prefs.pairing() == null) return
+    if (!prefs.ledgerEnabled || prefs.ledgerPairing() == null) return
 
     val extras = notification.extras ?: return
     val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()
@@ -31,18 +33,20 @@ class WeChatNotificationListener : NotificationListenerService() {
     val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
       ?.mapNotNull { it?.toString()?.trim()?.takeIf { line -> line.isNotEmpty() } }
       .orEmpty()
+    val messagingLines = extractMessagingLines(extras)
+    val multiLines = if (messagingLines.size >= textLines.size) messagingLines else textLines
 
-    if (isSummary && textLines.isEmpty()) return
+    if (isSummary && multiLines.isEmpty()) return
 
     val bestBody = if (!bigText.isNullOrBlank() && bigText.length >= (text?.length ?: 0)) bigText else text
     val collapsedCount = maxOf(
       WeChatBillParser.extractCollapsedCount(text),
       WeChatBillParser.extractCollapsedCount(bigText),
-      textLines.size.coerceAtLeast(1),
+      multiLines.size.coerceAtLeast(1),
     )
 
-    val candidateLines = if (textLines.isNotEmpty()) {
-      textLines.map { WeChatBillParser.stripCollapsedPrefix(it) }.filter { it.isNotEmpty() }
+    val candidateLines = if (multiLines.isNotEmpty()) {
+      multiLines.map { WeChatBillParser.stripCollapsedPrefix(it) }.filter { it.isNotEmpty() }
     } else {
       val single = bestBody?.let { WeChatBillParser.stripCollapsedPrefix(it) }?.takeIf { it.isNotEmpty() }
       if (single != null) listOf(single) else emptyList()
@@ -64,10 +68,13 @@ class WeChatNotificationListener : NotificationListenerService() {
       if (isSummary) {
         // Group summary only backfills lines whose child notification was missed by the OS.
         if (!prefs.rememberWeChatTx(childSig, ts)) continue
-      } else {
+      } else if (item.countDelta <= 0) {
         prefs.rememberWeChatTx(childSig, ts)
+      } else {
+        // Distinct incremented folded count (e.g. [1条] -> [2条] back-to-back identical ¥5.00 bills): always record.
+        prefs.rememberWeChatTx("$childSig:c$collapsedCount:$idx", ts)
       }
-      val externalId = "wc-$ts-$idx-${parsed.direction}-${parsed.amountCents}-${(cardKey + ":" + item.text).hashCode().toUInt()}"
+      val externalId = "wc-$ts-c$collapsedCount-$idx-${parsed.direction}-${parsed.amountCents}-${(cardKey + ":" + item.text).hashCode().toUInt()}"
       parsedEntries.add(parsed to externalId)
     }
     if (parsedEntries.isEmpty()) return
@@ -87,6 +94,23 @@ class WeChatNotificationListener : NotificationListenerService() {
         try { if (wl?.isHeld == true) wl.release() } catch (_: Throwable) {}
       }
     }
+  }
+
+  private fun extractMessagingLines(extras: Bundle): List<String> {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return emptyList()
+    val raw = try {
+      @Suppress("DEPRECATION")
+      extras.getParcelableArray(Notification.EXTRA_MESSAGES)
+    } catch (_: Throwable) {
+      null
+    } ?: return emptyList()
+    val out = ArrayList<String>(raw.size)
+    for (entry in raw) {
+      val b = entry as? Bundle ?: continue
+      val t = b.getCharSequence("text")?.toString()?.trim()
+      if (!t.isNullOrEmpty()) out.add(t)
+    }
+    return out
   }
 
   override fun onNotificationRemoved(sbn: StatusBarNotification?) {

@@ -189,15 +189,50 @@ test("LocalVoiceCall bridges warmup, VAD, transcribe, LLM turn, 48kHz audio chun
   await live.next((f) => f.action === "input.speech.stopped");
   const inDone = await live.next((f) => f.action === "input.transcript.done");
   assert.equal(inDone.data.text, "现在几个项目在忙");
-  await live.next((f) => f.action === "response.audio.started");
-  await live.next((f) => f.action === "response.audio.context");
+  const started1 = await live.next((f) => f.action === "response.audio.started");
+  const ctx1 = await live.next((f) => f.action === "response.audio.context");
   const outDone = await live.next((f) => f.action === "output.transcript.done");
   assert.equal(outDone.data.text, "一切正常，三个项目都在空闲状态。继续吗？");
   await live.next((f) => f.action === "response.audio.done");
   await live.next((f) => f.action === "response.ended" && f.data?.status === "completed");
   assert.ok(live.binary.some((b) => b.length === 15360));
+  // Phone acknowledges playback completion -> assistant records full spoken text.
+  live.ws.send(JSON.stringify({ action: "playback.chunk.completed", chunk_id: ctx1.data.chunk_id, run_id: started1.data.run_id, turn_id: started1.data.turn_id }));
+  live.ws.send(JSON.stringify({ action: "playback.completed", run_id: started1.data.run_id, turn_id: started1.data.turn_id }));
+  await delay(40);
+  const thread1 = await api("/v1/assistant", { token: viewer.token });
+  assert.ok(
+    thread1.json.items.some((it: any) => it.role === "assistant" && it.text === "一切正常，三个项目都在空闲状态。继续吗？"),
+    "full reply should be recorded after playback.completed",
+  );
 
-  // Turn 2: barge-in while TTS synthesize is slow.
+  // Turn 2: barge-in AFTER response.audio.done while phone has NOT sent playback.completed yet.
+  nextReply = "第一句先告诉你，第二句还没来得及说出口就已经被打断了。";
+  live.ws.send(makeLoudPcm16k(8), { binary: true });
+  live.ws.send(makeSilencePcm16k(22), { binary: true });
+  await live.next((f) => f.action === "input.transcript.done");
+  const started2 = await live.next((f) => f.action === "response.audio.started");
+  await live.next((f) => f.action === "response.audio.done");
+  await live.next((f) => f.action === "response.ended" && f.data?.status === "completed");
+  // Phone still playing chunk 0 (no playback.completed sent yet): user interrupts!
+  live.ws.send(makeLoudPcm16k(6), { binary: true });
+  const stopAfterDone = await live.next((f) => f.action === "response.audio.stop" && f.data?.run_id === started2.data.run_id);
+  assert.equal(stopAfterDone.data.reason, "interrupted");
+  const interrupted2 = await live.next((f) => f.action === "response.interrupted" && f.data?.run_id === started2.data.run_id);
+  assert.ok(typeof interrupted2.data.text === "string" && interrupted2.data.text.length > 0 && interrupted2.data.text.length < nextReply.length);
+  // Finish that interrupting utterance with silence, then check thread only kept the interrupted prefix.
+  live.ws.send(makeSilencePcm16k(22), { binary: true });
+  const started3 = await live.next((f) => f.action === "response.audio.started");
+  await live.next((f) => f.action === "response.audio.done");
+  live.ws.send(JSON.stringify({ action: "playback.completed", run_id: started3.data.run_id, turn_id: started3.data.turn_id }));
+  await delay(40);
+  const thread2 = await api("/v1/assistant", { token: viewer.token });
+  assert.ok(
+    thread2.json.items.some((it: any) => it.role === "assistant" && typeof it.text === "string" && it.text.endsWith("…") && it.text.length < nextReply.length),
+    "interrupted reply should record only spoken prefix with ellipsis",
+  );
+
+  // Turn 3: barge-in while TTS synthesize is slow.
   slowSynth = true;
   nextReply = "好的，我正在帮你查看所有项目的最新状态，请稍等一下。";
   live.ws.send(makeLoudPcm16k(8), { binary: true });

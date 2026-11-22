@@ -1091,7 +1091,7 @@ export type ServerFrame =
  * channel for a phone's background service, separate from the main socket so
  * it never replaces it. Server -> phone only, JSON text frames.
  */
-export type NotifyFrame = { type: "notice"; notice: Notice } | { type: "hello"; ts: number };
+export type NotifyFrame = { type: "notice"; notice: Notice } | { type: "hello"; ts: number } | { type: "pong"; ts: number };
 
 /**
  * GET /v1/assistant/live?token=... (WebSocket, viewers only): a voice call.

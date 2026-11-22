@@ -1448,15 +1448,23 @@ export class Relay {
     const devName = this.store.getDevice(deviceId)?.name ?? deviceId;
     const sub = { ws, deviceId, alive: true };
     this.notifySubs.add(sub);
+    const send = (f: NotifyFrame) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(f));
     ws.on("pong", () => (sub.alive = true));
-    ws.on("message", () => (sub.alive = true));
+    ws.on("message", (raw) => {
+      sub.alive = true;
+      try {
+        const msg = JSON.parse(raw.toString()) as { type?: string };
+        if (msg.type === "ping") send({ type: "pong", ts: Date.now() });
+      } catch {
+        /* ignore non-JSON frames */
+      }
+    });
     ws.on("close", (code) => {
       this.notifySubs.delete(sub);
       if (this.closing) return;
       this.events.record({ kind: "notify", level: "debug", msg: `notify close "${devName}" code=${code} subs=${this.notifySubs.size}`, device: deviceId });
     });
     ws.on("error", () => this.notifySubs.delete(sub));
-    const send = (f: NotifyFrame) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(f));
     const now = Date.now();
     send({ type: "hello", ts: now });
     let replayed = 0;

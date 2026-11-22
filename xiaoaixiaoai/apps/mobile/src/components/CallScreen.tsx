@@ -11,7 +11,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import Animated, { FadeIn, FadeInDown, FadeOut, LinearTransition } from "react-native-reanimated";
 import type { Notice } from "@xiaoaixiaoai/protocol";
-import { callPhase, hangup, toggleMute, useVoice, type CallLine, type CallPhase } from "../lib/voice";
+import { callPhase, dismissCallMessage, hangup, toggleMute, useVoice, type CallLine, type CallPhase } from "../lib/voice";
 import { useAssistant } from "../lib/assistant";
 import { findAgent } from "../lib/store";
 import { usePalette } from "../theme/theme";
@@ -93,10 +93,17 @@ export function CallScreen({ name, onMinimize }: { name: string; onMinimize: () 
   const muted = useVoice((s) => s.muted);
   const task = useVoice((s) => s.task);
   const lines = useVoice((s) => s.lines);
+  const callMessage = useVoice((s) => s.message);
   const clock = useCallClock();
   const notice = useCallNotice();
   const [captions, setCaptions] = useState(true);
   const scroller = useRef<ComponentRef<typeof ScrollView>>(null);
+
+  useEffect(() => {
+    if (!callMessage) return;
+    const t = setTimeout(() => dismissCallMessage(), 5_000);
+    return () => clearTimeout(t);
+  }, [callMessage]);
 
   // Back leaves the call running and goes to the chat, like the button does.
   useEffect(() => {
@@ -160,6 +167,20 @@ export function CallScreen({ name, onMinimize }: { name: string; onMinimize: () 
       </View>
 
       <View style={{ minHeight: 44, alignItems: "center", justifyContent: "center", paddingHorizontal: space.lg, paddingBottom: space.sm, gap: space.sm }}>
+        {callMessage ? (
+          <Animated.View entering={FadeInDown.duration(200)} exiting={FadeOut.duration(160)} style={{ maxWidth: "100%" }}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${callMessage}，点击关闭`}
+              onPress={dismissCallMessage}
+              style={{ flexDirection: "row", alignItems: "center", gap: space.sm, backgroundColor: p.errorContainer, borderRadius: radius.pill, paddingHorizontal: space.lg, paddingVertical: 8 }}
+            >
+              <Text numberOfLines={2} style={{ color: p.error, fontSize: 13, fontFamily: fonts.bodySemi }}>
+                {callMessage}
+              </Text>
+            </Pressable>
+          </Animated.View>
+        ) : null}
         {notice ? <CallNotice notice={notice} onOpen={onMinimize} /> : null}
         {task ? (
           <Animated.View

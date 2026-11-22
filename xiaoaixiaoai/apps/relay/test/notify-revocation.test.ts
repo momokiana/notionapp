@@ -174,6 +174,15 @@ test("valid since replay keeps the original hello/notice wire shape without subs
   assert.deepEqual(Object.keys(hello).sort(), ["ts", "type"]);
 });
 
+test("notify socket responds to app-level ping with pong and stays open", async (t) => {
+  const f = await fixture(t);
+  const a = await f.open(f.a);
+  a.ws.send(JSON.stringify({ type: "ping" }));
+  const pong = await a.frame((x) => x.type === "pong");
+  assert.equal(typeof pong.ts, "number");
+  assert.equal(a.ws.readyState, WebSocket.OPEN);
+});
+
 test("relay shutdown still reclaims all current notification sockets", async (t) => {
   const f = await fixture(t);
   const sockets = [await f.open(f.a), await f.open(f.a), await f.open(f.b)];

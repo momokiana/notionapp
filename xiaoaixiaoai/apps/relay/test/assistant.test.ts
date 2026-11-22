@@ -1310,3 +1310,57 @@ test("phone terminal.send marks agent touched, idle within delay does not drop t
   const notice2 = await push.next((f) => f.type === "notice");
   assert.equal(notice2.notice.body, "第二轮也做完啦。");
 });
+
+test("read_agent renders run_command stdout/stderr/exit/log output and supports raised 28k page limit", async () => {
+  const giantReply = `HEAD_GIANT_${"星".repeat(38_000)}_TAIL_GIANT`;
+  const { host, publish } = await fakeHost("CmdOutPC", (method) =>
+    method === "session.events"
+      ? {
+          sessionKey: "runtime~antigravity~p1~cmd1",
+          more: false,
+          events: [
+            { id: "u1", session: "runtime~antigravity~p1~cmd1", ts: 1, kind: "user_message", text: "跑全量测试" },
+            { id: "t1:call", session: "runtime~antigravity~p1~cmd1", ts: 2, kind: "tool_call", call_id: "t1", name: "run_command", input: { summary: "Run full verify" } },
+            {
+              id: "t1:res",
+              session: "runtime~antigravity~p1~cmd1",
+              ts: 3,
+              kind: "tool_result",
+              call_id: "t1",
+              name: "run_command",
+              is_error: false,
+              output: "run_command：Run full verify\n状态：已完成 (exit=0) | 日志：/tmp/batch2-verify.log\n输出：\nℹ tests 125\nℹ pass 125\nℹ fail 0",
+            },
+            { id: "a1", session: "runtime~antigravity~p1~cmd1", ts: 4, kind: "assistant_message", text: giantReply },
+          ],
+        }
+      : undefined,
+  );
+  const phone = await pair("viewer", "CmdOutPhone");
+  const p = await Sock.open("/v1/ws", phone.token);
+  await p.next((f) => f.type === "snapshot");
+
+  publish([agent("cmd1", "idle", "命令输出验证", { source: "runtime", sessionKey: "runtime~antigravity~p1~cmd1" })]);
+  await sleep(30);
+
+  const pages: string[] = [];
+  script = (req) => {
+    const res = toolResults(req);
+    if (res.length) pages.push(res[res.length - 1]!);
+    if (pages.length === 0) return call("read_agent", { agent: "命令输出验证", offset: 0, max_chars: 25_000 });
+    if (pages.length === 1) return call("read_agent", { agent: "命令输出验证", offset: 25_000, max_chars: 25_000 });
+    return text("看到了命令输出和完整长回复。");
+  };
+  await api("/v1/assistant/messages", { token: phone.token, body: { text: "看看命令输出验证" } });
+  await p.next((f) => f.type === "assistant_busy" && f.busy === false);
+
+  assert.equal(pages.length, 2);
+  assert.match(pages[0]!, /\[工具输出:run_command\]/);
+  assert.match(pages[0]!, /exit=0/);
+  assert.match(pages[0]!, /pass 125/);
+  assert.match(pages[0]!, /\/tmp\/batch2-verify\.log/);
+  assert.match(pages[0]!, /HEAD_GIANT_/);
+  assert.match(pages[1]!, /_TAIL_GIANT/);
+  assert.match(pages[1]!, /已到末尾/);
+  void host;
+});

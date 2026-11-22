@@ -31,7 +31,7 @@ class Prefs(ctx: Context) {
     p.edit().putString("ledgerSnapshot", json).apply()
   }
 
-  data class WeChatCardLine(val text: String, val collapsedHintCount: Int = 0)
+  data class WeChatCardLine(val text: String, val collapsedHintCount: Int = 0, val countDelta: Int = 0)
 
   fun consumeWeChatCardLines(cardKey: String, postTime: Long, rawLines: List<String>, collapsedCount: Int): List<WeChatCardLine> = synchronized(lock) {
     val lines = rawLines.map { it.trim() }.filter { it.isNotEmpty() }
@@ -54,16 +54,16 @@ class Prefs(ctx: Context) {
       val line = lines[0]
       if (collapsedCount > 1) {
         if (prevObj == null) {
-          result.add(WeChatCardLine(line, collapsedHintCount = collapsedCount))
+          result.add(WeChatCardLine(line, collapsedHintCount = collapsedCount, countDelta = collapsedCount))
         } else if (collapsedCount > prevCount) {
           val delta = collapsedCount - prevCount
-          result.add(WeChatCardLine(line, collapsedHintCount = if (delta > 1) collapsedCount else 0))
+          result.add(WeChatCardLine(line, collapsedHintCount = if (delta > 1) collapsedCount else 0, countDelta = delta))
         } else if (line != prevLines.firstOrNull() || postTime - prevTs >= 2_500L) {
-          result.add(WeChatCardLine(line, collapsedHintCount = 0))
+          result.add(WeChatCardLine(line, collapsedHintCount = 0, countDelta = 1))
         }
       } else {
         if (prevObj == null || line != prevLines.firstOrNull() || postTime - prevTs >= 2_500L) {
-          result.add(WeChatCardLine(line, collapsedHintCount = 0))
+          result.add(WeChatCardLine(line, collapsedHintCount = 0, countDelta = 1))
         }
       }
     } else {
@@ -79,7 +79,7 @@ class Prefs(ctx: Context) {
         overlap = lines.size
       }
       for (i in overlap until lines.size) {
-        result.add(WeChatCardLine(lines[i], collapsedHintCount = 0))
+        result.add(WeChatCardLine(lines[i], collapsedHintCount = 0, countDelta = 1))
       }
     }
 
@@ -173,6 +173,13 @@ class Prefs(ctx: Context) {
     if (notify && !s.isNullOrEmpty() && !t.isNullOrEmpty()) Pairing(s, t) else null
   }
 
+  /** Pairing credentials for WeChat ledger capture, independent of the agent notification toggle. */
+  fun ledgerPairing(): Pairing? = synchronized(lock) {
+    val s = server
+    val t = token
+    if (!s.isNullOrEmpty() && !t.isNullOrEmpty()) Pairing(s, t) else null
+  }
+
   fun matches(pair: Pairing): Boolean = synchronized(lock) { notify && server == pair.server && token == pair.token }
 
   fun revoke(pair: Pairing) = synchronized(lock) {
@@ -181,8 +188,8 @@ class Prefs(ctx: Context) {
 
   fun since(pair: Pairing): Long? = synchronized(lock) {
     if (!matches(pair)) return@synchronized null
-    // Include the last millisecond to recover a second notice with the same timestamp.
-    (lastTs.takeIf { it > 0 } ?: System.currentTimeMillis()).minus(1).coerceAtLeast(1)
+    // Server notice timestamps are monotonic; querying `ts > lastTs` avoids replaying the last notice on every reconnect.
+    (lastTs.takeIf { it > 0 } ?: System.currentTimeMillis()).coerceAtLeast(1)
   }
 
   fun seedCursor(pair: Pairing, since: Long) = synchronized(lock) {

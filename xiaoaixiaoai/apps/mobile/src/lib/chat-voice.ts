@@ -34,10 +34,21 @@ export const useChatVoice = create<ChatVoiceStore>()(() => ({
 }));
 
 const utteranceToItem = new Map<string, string>();
+const finishedUtterances = new Set<string>();
 let pttSeq = 0;
 let pttStarting = false;
 let pttCancelledSeq = 0;
 let pttFinishRequestedSeq = 0;
+
+function markUtteranceFinished(utteranceId: string): void {
+  if (!utteranceId) return;
+  utteranceToItem.delete(utteranceId);
+  finishedUtterances.add(utteranceId);
+  if (finishedUtterances.size > 64) {
+    const oldest = finishedUtterances.values().next().value;
+    if (oldest) finishedUtterances.delete(oldest);
+  }
+}
 
 function inLiveCall(): boolean {
   const s = useVoice.getState().status;
@@ -48,7 +59,7 @@ function wire(): void {
   if (XiaoaiNative) {
     XiaoaiNative.addListener("onSpeech", (e) => {
       if (e.state === "ended" || e.state === "stopped") {
-        utteranceToItem.delete(e.utteranceId);
+        markUtteranceFinished(e.utteranceId);
         const cur = useChatVoice.getState();
         if (cur.activeUtteranceId === e.utteranceId) {
           useChatVoice.setState({ speakingItemId: null, activeUtteranceId: null });
@@ -91,7 +102,7 @@ wire();
 export function onAssistantSpeechFrame(f: ServerFrame): boolean {
   if (f.type !== "assistant_speech") return false;
   if (f.phase === "stop") {
-    utteranceToItem.delete(f.utteranceId);
+    markUtteranceFinished(f.utteranceId);
     XiaoaiNative?.stopSpeech?.(f.utteranceId);
     const cur = useChatVoice.getState();
     if (!cur.activeUtteranceId || cur.activeUtteranceId === f.utteranceId) {
@@ -102,10 +113,17 @@ export function onAssistantSpeechFrame(f: ServerFrame): boolean {
   }
 
   if (inLiveCall() || AppState.currentState !== "active") {
+    markUtteranceFinished(f.utteranceId);
+    XiaoaiNative?.stopSpeech?.(f.utteranceId);
+    const cur = useChatVoice.getState();
+    if (cur.activeUtteranceId === f.utteranceId) {
+      useChatVoice.setState({ speakingItemId: null, activeUtteranceId: null });
+    }
     return true;
   }
 
   if (f.phase === "start") {
+    finishedUtterances.delete(f.utteranceId);
     utteranceToItem.set(f.utteranceId, f.itemId);
     useChatVoice.setState({ speakingItemId: f.itemId, activeUtteranceId: f.utteranceId });
     XiaoaiNative?.startSpeech?.(f.utteranceId, f.sampleRate ?? 48_000);
@@ -128,7 +146,7 @@ export function onAssistantSpeechFrame(f: ServerFrame): boolean {
     if (XiaoaiNative?.finishSpeech) {
       XiaoaiNative.finishSpeech(f.utteranceId);
     } else {
-      utteranceToItem.delete(f.utteranceId);
+      markUtteranceFinished(f.utteranceId);
       const cur = useChatVoice.getState();
       if (cur.activeUtteranceId === f.utteranceId) {
         useChatVoice.setState({ speakingItemId: null, activeUtteranceId: null });
@@ -159,8 +177,13 @@ export async function playAssistantItem(itemId: string, text?: string): Promise<
   try {
     const utteranceId = await requestAssistantSpeak(itemId, text);
     if (utteranceId) {
-      utteranceToItem.set(utteranceId, itemId);
-      useChatVoice.setState({ speakingItemId: itemId, activeUtteranceId: utteranceId });
+      if (inLiveCall() || AppState.currentState !== "active") {
+        markUtteranceFinished(utteranceId);
+        XiaoaiNative?.stopSpeech?.(utteranceId);
+      } else if (!finishedUtterances.has(utteranceId)) {
+        utteranceToItem.set(utteranceId, itemId);
+        useChatVoice.setState({ speakingItemId: itemId, activeUtteranceId: utteranceId });
+      }
     }
     return null;
   } catch (e) {
@@ -171,7 +194,7 @@ export async function playAssistantItem(itemId: string, text?: string): Promise<
 
 export function stopAssistantSpeech(): void {
   const prevUtt = useChatVoice.getState().activeUtteranceId;
-  if (prevUtt) utteranceToItem.delete(prevUtt);
+  if (prevUtt) markUtteranceFinished(prevUtt);
   useChatVoice.setState({ speakingItemId: null, activeUtteranceId: null });
   XiaoaiNative?.stopSpeech?.(null);
   void stopAssistantSpeakRemote();
@@ -193,11 +216,10 @@ export async function beginVoiceNote(): Promise<string | null> {
   }
   if (AppState.currentState !== "active") return null;
 
-  const seq = ++pttSeq;
-  pttStarting = true;
-  pttCancelledSeq = 0;
-  pttFinishRequestedSeq = 0;
-  try {
+  // Check permission BEFORE arming pttStarting so releasing the finger to tap the OS dialog
+  // does not trigger a spurious "说话时间太短啦" toast.
+  const hasMic = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+  if (!hasMic) {
     const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO, {
       title: "用麦克风发送语音消息",
       message: "按住说话时录音并转成文字发给爱弥斯。",
@@ -206,6 +228,14 @@ export async function beginVoiceNote(): Promise<string | null> {
     if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
       return "没有麦克风权限，可以在系统设置里打开";
     }
+    return "已开启麦克风权限，请重新按住说话";
+  }
+
+  const seq = ++pttSeq;
+  pttStarting = true;
+  pttCancelledSeq = 0;
+  pttFinishRequestedSeq = 0;
+  try {
     if (seq !== pttSeq || pttCancelledSeq === seq || pttFinishRequestedSeq === seq) {
       return null;
     }

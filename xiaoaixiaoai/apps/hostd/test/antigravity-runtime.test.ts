@@ -667,3 +667,112 @@ test("AntigravityRuntime preserves latest user and assistant context across long
   assert.equal(detail.messages[1]?.text, "已完成上一轮诊断，下面开始跑全量测试。");
   assert.equal(detail.messages[detail.messages.length - 1]?.text, "run_command：Run check #16");
 });
+
+test("AntigravityRuntime exposes run_command exit codes, stdout/stderr, background task results/logs, and >32k replies", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "xa-ag-runcmd-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+
+  const brainDir = join(root, "brain");
+  const sessionDir = join(brainDir, "ag-runcmd-1");
+  const logsDir = join(sessionDir, ".system_generated", "logs");
+  const tasksDir = join(sessionDir, ".system_generated", "tasks");
+  mkdirSync(logsDir, { recursive: true });
+  mkdirSync(tasksDir, { recursive: true });
+
+  const runningLogPath = join(tasksDir, "task-9002.log");
+  writeFileSync(runningLogPath, "compiling arm64-v8a...\n> Task :app:assembleRelease\n");
+  const finishedLogPath = join(tasksDir, "task-9001.log");
+  writeFileSync(finishedLogPath, "ℹ tests 125\nℹ pass 125\nℹ fail 0\n");
+
+  const longReply = `HEAD_42K_${"测".repeat(42_000)}_TAIL_42K`;
+  const steps: unknown[] = [
+    { step_index: 1, type: "USER_INPUT", content: "<USER_REQUEST>\n跑一下全量验证和编译\n</USER_REQUEST>" },
+    {
+      step_index: 2,
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      content: "",
+      tool_calls: [
+        { name: "default_api:run_command", args: { toolSummary: "Sync tsc check" } },
+        { name: "default_api:run_command", args: { toolSummary: "Failing unit test" } },
+      ],
+    },
+    {
+      step_index: 3,
+      type: "GENERIC",
+      status: "DONE",
+      content: "Created At: 2026-11-22T08:00:00+08:00\nCompleted At: 2026-11-22T08:00:02+08:00\nCommand exited with code 0.\n\nCommand output:\nprotocol tsc exit: 0\nrelay tsc exit: 0",
+    },
+    {
+      step_index: 4,
+      type: "GENERIC",
+      status: "DONE",
+      content: "Created At: 2026-11-22T08:00:03+08:00\nCompleted At: 2026-11-22T08:00:05+08:00\nCommand exited with code 1.\n\nCommand output:\nAssertionError: expected 1 to equal 2",
+    },
+    {
+      step_index: 5,
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      content: "",
+      tool_calls: [
+        { name: "default_api:run_command", args: { toolSummary: "Background relay tests" } },
+        { name: "default_api:run_command", args: { toolSummary: "Background APK build" } },
+      ],
+    },
+    {
+      step_index: 6,
+      type: "GENERIC",
+      status: "RUNNING",
+      content: "Created At: 2026-11-22T08:01:00+08:00\nTool is running as a background task with task id: ag-runcmd-1/task-9001\nTask logs are available at: file:///" + finishedLogPath.replace(/\\/g, "/"),
+    },
+    {
+      step_index: 7,
+      type: "GENERIC",
+      status: "RUNNING",
+      content: "Created At: 2026-11-22T08:01:05+08:00\nTool is running as a background task with task id: ag-runcmd-1/task-9002",
+    },
+    {
+      step_index: 8,
+      type: "SYSTEM_MESSAGE",
+      status: "DONE",
+      content: `<SYSTEM_MESSAGE>\n[Message] sender=ag-runcmd-1/task-9001 content=Task id "ag-runcmd-1/task-9001" finished with result:\nCommand exited with code 0.\n\nCommand output:\nℹ tests 125\nℹ pass 125\nℹ fail 0\n\nLog: file:///${finishedLogPath.replace(/\\/g, "/")}\n</SYSTEM_MESSAGE>`,
+    },
+    {
+      step_index: 9,
+      type: "PLANNER_RESPONSE",
+      status: "DONE",
+      content: `${longReply.slice(0, 2000)}...`,
+      truncated_fields: ["content"],
+    },
+  ];
+  const fullSteps = steps.map((s: any) => (s.step_index === 9 ? { ...s, content: longReply, truncated_fields: undefined } : s));
+  writeFileSync(join(logsDir, "transcript.jsonl"), `${steps.map((s) => JSON.stringify(s)).join("\n")}\n`);
+  writeFileSync(join(logsDir, "transcript_full.jsonl"), `${fullSteps.map((s) => JSON.stringify(s)).join("\n")}\n`);
+
+  const rt = new AntigravityRuntime({ brainDir });
+  const [proj] = await rt.list();
+  const detail = await rt.detail(proj!.id, "ag-runcmd-1", 20);
+  const tools = detail.messages.filter((m) => m.role === "tool");
+  assert.equal(tools.length, 4);
+
+  assert.equal(tools[0]!.isError, false);
+  assert.match(tools[0]!.text, /exit=0/);
+  assert.match(tools[0]!.text, /relay tsc exit: 0/);
+
+  assert.equal(tools[1]!.isError, true);
+  assert.match(tools[1]!.text, /exit=1/);
+  assert.match(tools[1]!.text, /AssertionError/);
+
+  assert.equal(tools[2]!.isError, false);
+  assert.match(tools[2]!.text, /后台任务已完成 \(exit=0\)/);
+  assert.match(tools[2]!.text, /pass 125/);
+  assert.match(tools[2]!.text, /task-9001\.log/);
+
+  assert.equal(tools[3]!.isError, false);
+  assert.match(tools[3]!.text, /后台运行中 \(task-9002\)/);
+  assert.match(tools[3]!.text, /assembleRelease/);
+  assert.match(tools[3]!.text, /task-9002\.log/);
+
+  const reply = detail.messages.find((m) => m.role === "assistant")?.text ?? "";
+  assert.equal(reply, longReply);
+});

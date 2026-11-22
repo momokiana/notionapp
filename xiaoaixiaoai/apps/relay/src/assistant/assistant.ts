@@ -162,19 +162,19 @@ const CONTEXT_ITEMS = 30;
 const VOICE_CONTEXT_ITEMS = 6;
 const ACTION_TTL_MS = 10 * 60_000;
 const MAX_TOOL_ROUNDS = 8;
-const TOOL_RESULT_MAX_CHARS = 16_000;
-const READ_PAGE_DEFAULT_CHARS = 12_000;
+const TOOL_RESULT_MAX_CHARS = 32_000;
+const READ_PAGE_DEFAULT_CHARS = 20_000;
 const READ_PAGE_MIN_CHARS = 1_000;
-const READ_PAGE_MAX_CHARS = 14_000;
-const EVENT_USER_MAX_CHARS = 4_000;
-const EVENT_ASSISTANT_MAX_CHARS = 32_000;
+const READ_PAGE_MAX_CHARS = 28_000;
+const EVENT_USER_MAX_CHARS = 8_000;
+const EVENT_ASSISTANT_MAX_CHARS = 64_000;
 /** A wake-up reads; it never proposes anything (4.6). */
 const WAKE_TOOLS = new Set(["read_agent"]);
 const WAKE_ROUNDS = 3;
 const WAKE_CONCURRENCY = 2;
 const TOUCH_WINDOW_MS = 2 * 60 * 60_000;
-const WAKE_READ_CONV_CHARS = 6_000;
-const WAKE_READ_TERM_CHARS = 4_000;
+const WAKE_READ_CONV_CHARS = 14_000;
+const WAKE_READ_TERM_CHARS = 8_000;
 const HARNESS_NAMES: Record<string, string> = {
   "claude-code": "Claude Code",
   claude: "Claude Code",
@@ -739,14 +739,14 @@ export class Assistant {
   /** Answers one transcribed utterance in a local voice call and returns the clean spoken line. */
   async speakTurn(
     userText: string,
-    opts: { turnId?: string; signal: AbortSignal; onStep?: (step: string) => void },
+    opts: { turnId?: string; signal: AbortSignal; onStep?: (step: string) => void; deferRecord?: boolean },
   ): Promise<string> {
     const cleanIn = userText.trim();
     if (!cleanIn) return "";
     this.voiceLine("user", cleanIn, opts.turnId);
     if (!this.llm) {
       const msg = "我现在只能陪你聊，后台模型还没配好。";
-      this.voiceLine("assistant", msg, opts.turnId);
+      if (!opts.deferRecord) this.voiceLine("assistant", msg, opts.turnId);
       return msg;
     }
     const task = async (): Promise<string> => {
@@ -774,7 +774,7 @@ export class Assistant {
         emitSteps(run.steps);
         const script = splitScript(run.text || "好了。");
         const cleanOut = stripMd(noEmoji(filterTalk(script.say))).trim() || "好了。";
-        if (!opts.signal.aborted) this.voiceLine("assistant", cleanOut, opts.turnId);
+        if (!opts.signal.aborted && !opts.deferRecord) this.voiceLine("assistant", cleanOut, opts.turnId);
         this.event({
           kind: "assistant.turn",
           msg: `local call ${Date.now() - t0}ms: "${clip(oneLine(cleanIn), 120)}" -> "${clip(cleanOut, 120)}"`,
@@ -1867,7 +1867,7 @@ export class Assistant {
       !!this.findVoiceHost() &&
       this.host.devices().some((d) => d.kind === "viewer" && d.online);
 
-    const noticeTs = this.now();
+    const noticeTs = this.nextNoticeTs();
     const item = this.put({
       id: itemId,
       ts: noticeTs,
@@ -2161,7 +2161,7 @@ export class Assistant {
     let timer: NodeJS.Timeout | undefined;
     const t0 = Date.now();
     try {
-      const running = this.run([{ role: "user", content: clip(material, 4000) }], { occasion: "woken", signal: ac.signal, allow: tools ? WAKE_TOOLS : new Set(), maxRounds: tools ? WAKE_ROUNDS : 1 });
+      const running = this.run([{ role: "user", content: clip(material, 10_000) }], { occasion: "woken", signal: ac.signal, allow: tools ? WAKE_TOOLS : new Set(), maxRounds: tools ? WAKE_ROUNDS : 1 });
       // Late is the same as never: the fixed sentence goes out instead.
       const late = new Promise<null>((resolve) => {
         timer = setTimeout(() => {
@@ -2213,10 +2213,21 @@ export class Assistant {
     const asked = events.filter((e) => e.kind === "user_message" && !e.synthetic).pop();
     const said = [...events].reverse().find((e) => e.kind === "assistant_message" && e.text.trim());
     const failed = new Set(events.flatMap((e) => (e.kind === "tool_result" && e.is_error ? [e.call_id] : [])));
+    const resultsByCall = new Map<string, string>();
+    for (const e of events) {
+      if (e.kind === "tool_result" && e.call_id && typeof e.output === "string" && e.output.trim()) {
+        resultsByCall.set(e.call_id, e.output.trim());
+      }
+    }
     const did = events
       .flatMap((e) => (e.kind === "tool_call" ? [e] : []))
       .slice(-8)
-      .map((e) => `${failed.has(e.call_id) ? "[出错] " : ""}${e.name}：${clip(oneLine(toolInput(e.input)), 120)}`);
+      .map((e) => {
+        const resOut = e.call_id ? resultsByCall.get(e.call_id) : undefined;
+        const statusLine = resOut ? resOut.split("\n").find((l) => /^状态：/.test(l.trim())) : undefined;
+        const base = `${failed.has(e.call_id) ? "[出错] " : ""}${e.name}：${clip(oneLine(toolInput(e.input)), 120)}`;
+        return statusLine ? `${base}（${clip(statusLine.replace(/^状态：/, "").trim(), 100)}）` : base;
+      });
     if (!said && !did.length) return null;
     const askedText = asked?.kind === "user_message" ? clip(asked.text.trim(), 600) : undefined;
     const spoken = asked?.kind === "user_message" ? this.relayedFrom(a.key, asked.text) : undefined;
@@ -2233,7 +2244,7 @@ export class Assistant {
       asked: askedText,
       spoken,
       first,
-      said: said?.kind === "assistant_message" ? headTail(said.text.trim(), 2000, 1200) : undefined,
+      said: said?.kind === "assistant_message" ? headTail(said.text.trim(), 4500, 3500) : undefined,
       did: did.join("\n") || undefined,
     });
   }
@@ -2272,8 +2283,16 @@ export class Assistant {
     });
   }
 
+  private lastNoticeTs = 0;
+
+  private nextNoticeTs(): number {
+    const t = Math.max(this.now(), this.lastNoticeTs + 1);
+    this.lastNoticeTs = t;
+    return t;
+  }
+
   private async emit(n: Omit<Notice, "id" | "ts">): Promise<void> {
-    const notice: Notice = { ...n, id: newId("n"), ts: this.now() };
+    const notice: Notice = { ...n, id: newId("n"), ts: this.nextNoticeTs() };
     this.store.putNotice(notice.id, notice.ts, notice);
     const itemId = `item-${notice.id}`;
     this.put({ id: itemId, ts: notice.ts, role: "notice", text: [notice.body, notice.details].filter(Boolean).join("\n"), notice });
@@ -2483,7 +2502,7 @@ const TOOLS: ToolDef[] = [
         limit: { type: "number", description: "对话条数，默认 24" },
         lines: { type: "number", description: "终端行数，默认 60" },
         offset: { type: "number", description: "分页读取的起始字符偏移（从 0 开始）；不填默认返回最新一页" },
-        max_chars: { type: "number", description: "单页最多返回字符数，默认 12000，最大 14000" },
+        max_chars: { type: "number", description: "单页最多返回字符数，默认 20000，最大 28000" },
       },
       required: ["agent"],
     },
@@ -2612,7 +2631,7 @@ const TOOLS: ToolDef[] = [
         limit: { type: "number", description: "读最近多少条，默认 30" },
         before: { type: "string", description: "接着读更早的内容时，填上一次结果里给的 before" },
         offset: { type: "number", description: "同一批对话超长时分页读取的起始字符偏移（从 0 开始）；不填默认返回最新一页" },
-        max_chars: { type: "number", description: "单页最多返回字符数，默认 12000，最大 14000" },
+        max_chars: { type: "number", description: "单页最多返回字符数，默认 20000，最大 28000" },
       },
       required: ["session"],
     },
@@ -2925,9 +2944,28 @@ function renderEvents(events: ConvEvent[]): string {
         out.push(arg ? `[它调用工具] ${e.name}：${arg}` : `[它调用工具] ${e.name}`);
         break;
       }
-      case "tool_result":
-        if (e.is_error) out.push(`[它的工具出错] ${clip(oneLine(e.output), 200)}`);
+      case "tool_result": {
+        const rawOut = typeof e.output === "string" ? e.output.trim() : "";
+        if (e.is_error) {
+          out.push(`[它的工具出错${e.name ? `:${e.name}` : ""}] ${clip(rawOut, 3500)}`);
+        } else if (rawOut) {
+          const toolName = (e.name ?? "").toLowerCase();
+          const isCommandTool =
+            toolName === "run_command" ||
+            toolName === "exec_command" ||
+            toolName === "bash" ||
+            toolName === "shell" ||
+            toolName === "terminal" ||
+            /\n状态：|\bCommand exited with code\b|\bexit=\d+/i.test(rawOut);
+          const isPlaceholder = rawOut === `${e.name ?? "tool"}（调用）` || !rawOut.includes("\n");
+          if (isCommandTool && !isPlaceholder) {
+            out.push(`[工具输出:${e.name || "command"}]\n${clip(rawOut, 4000)}`);
+          } else if (isCommandTool && /\bexit=|\bCommand exited|状态：|日志：/i.test(rawOut)) {
+            out.push(`[工具输出:${e.name || "command"}] ${clip(rawOut, 4000)}`);
+          }
+        }
         break;
+      }
       case "turn_end":
         out.push("[这一轮结束]");
         break;

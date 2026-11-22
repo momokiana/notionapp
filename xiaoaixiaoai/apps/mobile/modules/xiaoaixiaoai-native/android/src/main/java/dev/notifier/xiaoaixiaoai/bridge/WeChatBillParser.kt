@@ -42,7 +42,7 @@ object WeChatBillParser {
     "入账",
   )
 
-  private val EXPENSE_HINTS = listOf(
+  private val STRONG_EXPENSE_HINTS = listOf(
     "已支付",
     "成功付款",
     "扫二维码付款",
@@ -51,15 +51,19 @@ object WeChatBillParser {
     "付款给",
     "向.+付款",
     "转账给",
-    "消费",
     "扣款",
     "自动续费",
     "免密支付",
     "支付金额",
     "发出红包",
+  )
+
+  private val EXPENSE_HINTS = STRONG_EXPENSE_HINTS + listOf(
+    "消费",
     "付款",
   )
 
+  private val AMOUNT_AFTER_VERB = Regex("""(?:已支付|付款成功|成功付款|支付成功|扣款|收款到账|已收钱|收到转账|收到红包|已存入零钱|已退回|退款到账|付款|支付|收款|转出|转账)\s*(?:[￥¥]|人民币)?\s*(\d{1,7}(?:\.\d{1,2})?)\s*元?""")
   private val AMOUNT_YUAN = Regex("""(?:[￥¥]|人民币)?\s*(\d{1,7}(?:\.\d{1,2})?)\s*元""")
   private val AMOUNT_SYMBOL = Regex("""[￥¥]\s*(\d{1,7}(?:\.\d{1,2})?)""")
   private val PAYEE_PREFIX = Regex("""(?:收款方|付款方|商户|来自|向)[：:\s]*([^\n，,。；;￥¥]{1,28}?)(?=\s*(?:付款|已支付|支付成功|支付|收款|转账|消费|[￥¥]|\d+(?:\.\d+)?元|$))""")
@@ -90,7 +94,11 @@ object WeChatBillParser {
     }
     if (IGNORE_PATTERNS.any { combined.contains(it) }) return null
 
+    val hasStrongExpense = STRONG_EXPENSE_HINTS.any {
+      if (it.contains(".+")) Regex(it).containsMatchIn(combined) else combined.contains(it)
+    }
     val direction = when {
+      hasStrongExpense -> "expense"
       INCOME_HINTS.any { combined.contains(it) } -> "income"
       EXPENSE_HINTS.any { if (it.contains(".+")) Regex(it).containsMatchIn(combined) else combined.contains(it) } -> "expense"
       else -> return null
@@ -106,7 +114,7 @@ object WeChatBillParser {
   }
 
   private fun extractAmountCents(text: String): Long? {
-    val m = AMOUNT_YUAN.find(text) ?: AMOUNT_SYMBOL.find(text) ?: return null
+    val m = AMOUNT_AFTER_VERB.find(text) ?: AMOUNT_YUAN.find(text) ?: AMOUNT_SYMBOL.find(text) ?: return null
     val num = m.groupValues[1]
     return try {
       val bd = BigDecimal(num)

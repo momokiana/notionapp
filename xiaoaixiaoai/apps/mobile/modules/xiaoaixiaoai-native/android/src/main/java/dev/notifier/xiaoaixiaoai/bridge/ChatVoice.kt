@@ -212,7 +212,7 @@ internal object ChatVoice {
     if (bytes.isEmpty()) return
     synchronized(playLock) {
       if (playId != utteranceId) {
-        startSpeechLocked(ctx.applicationContext, utteranceId, 48_000)
+        startSpeechLocked(ctx.applicationContext, utteranceId, playRate)
       }
       if (playId == utteranceId) {
         playQueue.addLast(bytes)

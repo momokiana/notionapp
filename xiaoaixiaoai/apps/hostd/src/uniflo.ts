@@ -461,7 +461,7 @@ export class UnifloAdapter {
     limit = 80,
     before?: string,
   ): Promise<{ events: ConvEvent[]; more: boolean; nextBefore: string | null }> {
-    const q = new URLSearchParams({ limit: String(Math.min(Math.max(limit, 1), 300)), max_text: "32000" });
+    const q = new URLSearchParams({ limit: String(Math.min(Math.max(limit, 1), 300)), max_text: "64000" });
     if (before) q.set("before", before);
     const r = await this.get(`/v1/sessions/${encodeURIComponent(sessionKey)}/events?${q}`);
     const events = (r.events ?? []) as Array<ConvEvent & Record<string, unknown>>;
@@ -471,9 +471,9 @@ export class UnifloAdapter {
         .filter((e): e is ConvEvent & Record<string, unknown> => e !== null)
         .map((e) => {
           const out = { ...e, pos: e.pos === undefined || e.pos === null ? undefined : String(e.pos) };
-          // Tool output can be huge; the phone shows a preview.
-          if (e.kind === "tool_result" && typeof e.output === "string" && e.output.length > 4000) {
-            return { ...out, output: `${e.output.slice(0, 4000)}\n…`, truncated: true } as ConvEvent;
+          // Tool output can be huge; keep enough head+tail for tests and errors.
+          if (e.kind === "tool_result" && typeof e.output === "string" && e.output.length > 8000) {
+            return { ...out, output: `${e.output.slice(0, 8000)}\n…`, truncated: true } as ConvEvent;
           }
           return out as ConvEvent;
         }),

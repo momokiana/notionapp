@@ -92,7 +92,7 @@ export class LocalVoiceCall {
   private silenceFrames = 0;
   private userSpeaking = false;
 
-  // Active turn / barge-in cancellation state.
+  // Active turn / barge-in cancellation & phone playback tracking.
   private epoch = 0;
   private activeAbort: AbortController | null = null;
   private activeVoiceReqId: string | null = null;
@@ -100,6 +100,13 @@ export class LocalVoiceCall {
   private activeTurnId: string | null = null;
   private activeText = "";
   private activeAudible = false;
+  private activeVoiceLineTurnId: string | null = null;
+  private activeVoiceLineRecorded = false;
+  private activeTotalChunks = 0;
+  private activePlayedChunks = 0;
+  private activeSentMs = 0;
+  private activeStreamingDone = false;
+  private playbackTimer: NodeJS.Timeout | null = null;
   private pendingNotices: string[] = [];
 
   constructor(phone: WebSocket, deviceId: string, cfg: LocalLiveConfig, assistant: Assistant, log: (m: string) => void) {
@@ -164,6 +171,20 @@ export class LocalVoiceCall {
     }
     if (msg.action === "ping") {
       this.toPhone({ action: "pong", data: { ...(typeof msg.timestamp === "number" ? { timestamp: msg.timestamp } : {}) } });
+      return;
+    }
+    if (msg.action === "playback.chunk.completed") {
+      const runId = typeof msg.run_id === "string" ? msg.run_id : "";
+      if (runId && runId === this.activeRunId) {
+        this.activePlayedChunks++;
+      }
+      return;
+    }
+    if (msg.action === "playback.completed" || msg.action === "playback.stopped") {
+      const runId = typeof msg.run_id === "string" ? msg.run_id : "";
+      if (runId && runId === this.activeRunId) {
+        this.finishPlayback(runId, msg.action === "playback.stopped");
+      }
       return;
     }
     if (msg.action === "mic_state" && typeof msg.enabled === "boolean") {
@@ -244,6 +265,7 @@ export class LocalVoiceCall {
 
     if (pcm.length < MIN_SPEECH_BYTES) {
       this.toPhone({ action: "input.transcript.done", data: { text: "", turn: turnNum } });
+      this.drainPendingNotice();
       return;
     }
     const myEpoch = ++this.epoch;
@@ -254,21 +276,86 @@ export class LocalVoiceCall {
       });
   }
 
+  private clearPlaybackTimer(): void {
+    if (this.playbackTimer) {
+      clearTimeout(this.playbackTimer);
+      this.playbackTimer = null;
+    }
+  }
+
+  private recordSpokenLine(text: string, interrupted: boolean): void {
+    if (this.activeVoiceLineRecorded || !this.activeVoiceLineTurnId) return;
+    const clean = text.trim();
+    if (!clean) return;
+    this.activeVoiceLineRecorded = true;
+    this.assistant.voiceLine("assistant", interrupted ? `${clean}…` : clean, this.activeVoiceLineTurnId);
+  }
+
+  private estimateSpokenPrefix(): string {
+    const full = this.activeText.trim();
+    if (!full) return "";
+    if (this.activeTotalChunks <= 0 || this.activePlayedChunks >= this.activeTotalChunks) return full;
+    if (this.activePlayedChunks <= 0) {
+      // At least a short opening phrase may already be heard while chunk 0 is mid-play.
+      const chars = Array.from(full);
+      return chars.slice(0, Math.max(1, Math.min(chars.length, Math.ceil(chars.length * 0.25)))).join("");
+    }
+    const ratio = Math.min(1, this.activePlayedChunks / this.activeTotalChunks);
+    const chars = Array.from(full);
+    return chars.slice(0, Math.max(1, Math.round(chars.length * ratio))).join("");
+  }
+
+  private finishPlayback(runId: string, stopped: boolean): void {
+    if (runId !== this.activeRunId) return;
+    this.clearPlaybackTimer();
+    if (!stopped && this.activeAudible) {
+      this.recordSpokenLine(this.activeText, false);
+    }
+    this.activeRunId = null;
+    this.activeTurnId = null;
+    this.activeText = "";
+    this.activeAudible = false;
+    this.activeVoiceLineTurnId = null;
+    this.activeVoiceLineRecorded = false;
+    this.activeTotalChunks = 0;
+    this.activePlayedChunks = 0;
+    this.activeSentMs = 0;
+    this.activeStreamingDone = false;
+    this.drainPendingNotice();
+  }
+
+  private drainPendingNotice(): void {
+    if (this.ended || this.userSpeaking || this.activeAbort || this.activeRunId || !this.pendingNotices.length) return;
+    const nextLine = this.pendingNotices.shift()!;
+    const noticeEpoch = ++this.epoch;
+    this.turnChain = this.turnChain.then(() => this.speakNotice(nextLine, noticeEpoch)).catch(() => {});
+  }
+
   private interruptActiveTurn(): void {
     this.epoch++;
-    if (!this.activeAbort) return;
+    if (!this.activeAbort && !this.activeRunId) return;
     const runId = this.activeRunId;
     const turnId = this.activeTurnId ?? String(this.turnSeq);
     const voiceReqId = this.activeVoiceReqId;
-    const partialText = this.activeText;
     const wasAudible = this.activeAudible;
-    this.activeAbort.abort();
+    const partialText = wasAudible ? this.estimateSpokenPrefix() : "";
+    if (wasAudible && partialText) {
+      this.recordSpokenLine(partialText, true);
+    }
+    this.clearPlaybackTimer();
+    this.activeAbort?.abort();
     this.activeAbort = null;
     this.activeRunId = null;
     this.activeTurnId = null;
     this.activeVoiceReqId = null;
     this.activeText = "";
     this.activeAudible = false;
+    this.activeVoiceLineTurnId = null;
+    this.activeVoiceLineRecorded = false;
+    this.activeTotalChunks = 0;
+    this.activePlayedChunks = 0;
+    this.activeSentMs = 0;
+    this.activeStreamingDone = false;
 
     if (runId) {
       this.toPhone({ action: "response.audio.stop", data: { run_id: runId, turn_id: turnId, reason: "interrupted" } });
@@ -276,8 +363,8 @@ export class LocalVoiceCall {
         this.toPhone({ action: "response.interrupted", data: { run_id: runId, turn_id: turnId, text: partialText } });
       }
     }
-    if (this.hostId) {
-      void this.assistant.callVoiceHost(this.hostId, "voice.cancel", voiceReqId ? { requestId: voiceReqId } : {}, 5_000).catch(() => {});
+    if (this.hostId && voiceReqId) {
+      void this.assistant.callVoiceHost(this.hostId, "voice.cancel", { requestId: voiceReqId }, 5_000).catch(() => {});
     }
   }
 
@@ -286,13 +373,21 @@ export class LocalVoiceCall {
     const ac = new AbortController();
     const runId = randomUUID();
     const turnKey = String(turnNum);
+    const voiceLineTurnId = `${this.id}-${turnNum}`;
     const asrReqId = randomUUID().toLowerCase();
+    this.clearPlaybackTimer();
     this.activeAbort = ac;
     this.activeRunId = runId;
     this.activeTurnId = turnKey;
     this.activeVoiceReqId = asrReqId;
     this.activeText = "";
     this.activeAudible = false;
+    this.activeVoiceLineTurnId = voiceLineTurnId;
+    this.activeVoiceLineRecorded = false;
+    this.activeTotalChunks = 0;
+    this.activePlayedChunks = 0;
+    this.activeSentMs = 0;
+    this.activeStreamingDone = false;
 
     let taskId: string | null = null;
     let lastStep = "";
@@ -310,8 +405,9 @@ export class LocalVoiceCall {
       if (!userText) return;
 
       const reply = await this.assistant.speakTurn(userText, {
-        turnId: `${this.id}-${turnNum}`,
+        turnId: voiceLineTurnId,
         signal: ac.signal,
+        deferRecord: true,
         onStep: (step) => {
           if (this.ended || ac.signal.aborted || myEpoch !== this.epoch) return;
           taskId ??= randomUUID();
@@ -328,6 +424,9 @@ export class LocalVoiceCall {
       await this.speakReply(reply.trim(), runId, turnKey, ac.signal, myEpoch);
       if (!this.ended && !ac.signal.aborted && myEpoch === this.epoch) {
         this.toPhone({ action: "response.ended", data: { run_id: runId, turn_id: turnKey, status: "completed" } });
+        if (!this.activeAudible) {
+          this.recordSpokenLine(reply.trim(), false);
+        }
       }
     } catch (e) {
       if (taskId) {
@@ -340,15 +439,18 @@ export class LocalVoiceCall {
     } finally {
       if (this.activeAbort === ac) {
         this.activeAbort = null;
-        this.activeRunId = null;
-        this.activeTurnId = null;
         this.activeVoiceReqId = null;
+        if (this.activeRunId === runId && this.activeAudible && !this.ended && !ac.signal.aborted && myEpoch === this.epoch) {
+          // Keep run armed for barge-in until phone sends `playback.completed` (or estimated playback duration + slack).
+          this.activeStreamingDone = true;
+          const waitMs = Math.min(60_000, Math.max(1500, Math.ceil(this.activeSentMs) + 1500));
+          this.clearPlaybackTimer();
+          this.playbackTimer = setTimeout(() => this.finishPlayback(runId, false), waitMs);
+        } else if (this.activeRunId === runId) {
+          this.finishPlayback(runId, ac.signal.aborted);
+        }
       }
-      if (!this.ended && !this.userSpeaking && !this.activeAbort && this.pendingNotices.length > 0) {
-        const nextLine = this.pendingNotices.shift()!;
-        const noticeEpoch = ++this.epoch;
-        this.turnChain = this.turnChain.then(() => this.speakNotice(nextLine, noticeEpoch)).catch(() => {});
-      }
+      this.drainPendingNotice();
     }
   }
 
@@ -385,10 +487,14 @@ export class LocalVoiceCall {
       }
       this.toPhone({ action: "output.transcript.updated", data: { text: spokenSoFar, run_id: runId, turn_id: turnKey } });
 
+      const rate = typeof res.sampleRate === "number" && res.sampleRate > 0 ? res.sampleRate : OUTPUT_SAMPLE_RATE;
       for (const b64 of res.chunksBase64) {
         if (this.ended || signal.aborted || myEpoch !== this.epoch || this.phone.readyState !== WebSocket.OPEN) return;
+        const pcmBuf = Buffer.from(b64, "base64");
+        this.activeTotalChunks++;
+        this.activeSentMs += (pcmBuf.length / 2 / rate) * 1000;
         this.toPhone({ action: "response.audio.context", data: { chunk_id: `${runId}-${chunkSeq++}`, run_id: runId, turn_id: turnKey } });
-        this.phone.send(Buffer.from(b64, "base64"), { binary: true });
+        this.phone.send(pcmBuf, { binary: true });
       }
     }
 
@@ -404,11 +510,18 @@ export class LocalVoiceCall {
     const ac = new AbortController();
     const runId = randomUUID();
     const turnKey = `n-${++this.turnSeq}`;
+    this.clearPlaybackTimer();
     this.activeAbort = ac;
     this.activeRunId = runId;
     this.activeTurnId = turnKey;
     this.activeText = "";
     this.activeAudible = false;
+    this.activeVoiceLineTurnId = null;
+    this.activeVoiceLineRecorded = true;
+    this.activeTotalChunks = 0;
+    this.activePlayedChunks = 0;
+    this.activeSentMs = 0;
+    this.activeStreamingDone = false;
     try {
       await this.speakReply(line, runId, turnKey, ac.signal, myEpoch);
       if (!this.ended && !ac.signal.aborted && myEpoch === this.epoch) {
@@ -417,17 +530,24 @@ export class LocalVoiceCall {
     } finally {
       if (this.activeAbort === ac) {
         this.activeAbort = null;
-        this.activeRunId = null;
-        this.activeTurnId = null;
         this.activeVoiceReqId = null;
+        if (this.activeRunId === runId && this.activeAudible && !this.ended && !ac.signal.aborted && myEpoch === this.epoch) {
+          this.activeStreamingDone = true;
+          const waitMs = Math.min(60_000, Math.max(1500, Math.ceil(this.activeSentMs) + 1500));
+          this.clearPlaybackTimer();
+          this.playbackTimer = setTimeout(() => this.finishPlayback(runId, false), waitMs);
+        } else if (this.activeRunId === runId) {
+          this.finishPlayback(runId, ac.signal.aborted);
+        }
       }
+      this.drainPendingNotice();
     }
   }
 
   private onNotice(n: Notice): void {
     if (!this.ready || this.ended) return;
     const line = n.body.startsWith("到点了") ? n.body : `对了，${n.body}`;
-    const busy = this.userSpeaking || !!this.activeAbort;
+    const busy = this.userSpeaking || !!this.activeAbort || !!this.activeRunId;
     this.toPhone({ action: "relay.notice", data: { id: n.id, line, how: busy ? "next" : "now" } });
     if (busy) {
       this.pendingNotices = [...this.pendingNotices, line].slice(-3);
@@ -449,8 +569,14 @@ export class LocalVoiceCall {
     releaseCall(this);
     this.detach();
     this.epoch++;
+    this.clearPlaybackTimer();
+    if (this.activeAudible && !this.activeVoiceLineRecorded) {
+      this.recordSpokenLine(this.estimateSpokenPrefix(), !this.activeStreamingDone);
+    }
     this.activeAbort?.abort();
     this.activeAbort = null;
+    this.activeRunId = null;
+    this.activeAudible = false;
     this.toPhone({ action: "relay.state", data: { state: "closed", message: why } });
     try {
       this.phone.close(1000, "call ended");

@@ -78,9 +78,20 @@ class Notifier(private val ctx: Context) {
   private var backoff = 2_000L
   private var target: Prefs.Pairing? = null
   @Volatile private var lastActivityAt = 0L
+  @Volatile private var pingSentAt = 0L
   @Volatile var connected = false
     private set
   private val retry = Runnable { connect() }
+  private val pingWatchdog = Runnable {
+    if (!running) return@Runnable
+    val sent = pingSentAt
+    if (sent > 0L && lastActivityAt < sent) {
+      pingSentAt = 0L
+      main.removeCallbacks(retry)
+      backoff = 2_000L
+      connect()
+    }
+  }
   private var netCallback: ConnectivityManager.NetworkCallback? = null
 
   fun start() {
@@ -92,23 +103,61 @@ class Notifier(private val ctx: Context) {
     target = prefs.pairing() ?: return
     running = true
     lastActivityAt = SystemClock.elapsedRealtime()
+    pingSentAt = 0L
     connect()
     watchNetwork()
   }
 
-  /** Called when the keepalive alarm or OS wake fires: reconnects immediately if dead or frozen in Doze. */
+  /**
+   * Called when the keepalive alarm or OS wake fires: probes idle sockets with an app-level ping
+   * instead of tearing down healthy silent connections every 5 minutes.
+   */
   fun ensureAlive() {
     if (!running || target?.let(prefs::matches) != true) {
       start()
       return
     }
-    val stale = SystemClock.elapsedRealtime() - lastActivityAt > 75_000L
-    if (!connected || ws == null || stale) {
+    Thread { LedgerSync.flushPending(ctx) }.start()
+    val now = SystemClock.elapsedRealtime()
+    val curWs = ws
+    if (!connected || curWs == null) {
       main.post {
         if (!running) return@post
         main.removeCallbacks(retry)
+        main.removeCallbacks(pingWatchdog)
+        pingSentAt = 0L
         backoff = 2_000L
         connect()
+      }
+      return
+    }
+    if (now - lastActivityAt > 65_000L) {
+      val prevPing = pingSentAt
+      if (prevPing > 0L && lastActivityAt < prevPing && now - prevPing > 12_000L) {
+        main.post {
+          if (!running) return@post
+          main.removeCallbacks(retry)
+          main.removeCallbacks(pingWatchdog)
+          pingSentAt = 0L
+          backoff = 2_000L
+          connect()
+        }
+        return
+      }
+      pingSentAt = now
+      val ok = try { curWs.send("""{"type":"ping"}""") } catch (_: Throwable) { false }
+      if (!ok) {
+        main.post {
+          if (!running) return@post
+          main.removeCallbacks(retry)
+          main.removeCallbacks(pingWatchdog)
+          pingSentAt = 0L
+          backoff = 2_000L
+          connect()
+        }
+      } else {
+        main.removeCallbacks(pingWatchdog)
+        main.postDelayed(pingWatchdog, 12_000L)
       }
     }
   }
@@ -116,7 +165,9 @@ class Notifier(private val ctx: Context) {
   fun stop() {
     running = false
     target = null
+    pingSentAt = 0L
     main.removeCallbacks(retry)
+    main.removeCallbacks(pingWatchdog)
     try { ws?.close(1000, "bye") } catch (_: Throwable) {}
     ws = null
     connected = false
@@ -169,6 +220,8 @@ class Notifier(private val ctx: Context) {
           if (!current(webSocket, pair)) return@post
           connected = true
           lastActivityAt = SystemClock.elapsedRealtime()
+          pingSentAt = 0L
+          main.removeCallbacks(pingWatchdog)
           backoff = 2_000L
           XiaoaiBus.emit("onNotifier", mapOf("connected" to true, "reason" to "open"))
         }
@@ -176,11 +229,14 @@ class Notifier(private val ctx: Context) {
 
       override fun onMessage(webSocket: WebSocket, text: String) {
         lastActivityAt = SystemClock.elapsedRealtime()
+        pingSentAt = 0L
+        main.removeCallbacks(pingWatchdog)
         val o = try { JSONObject(text) } catch (_: Throwable) { return }
         when (o.optString("type")) {
           "hello" -> main.post {
             if (current(webSocket, pair)) prefs.seedCursor(pair, since)
           }
+          "pong" -> Unit
           "notice" -> {
             val n = o.optJSONObject("notice") ?: return
             main.post { if (current(webSocket, pair)) handle(pair, n) }

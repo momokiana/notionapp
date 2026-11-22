@@ -27,7 +27,7 @@ object LedgerSync {
 
   fun submitOrQueue(ctx: Context, bill: ParsedWeChatBill, externalId: String, ts: Long) {
     val prefs = Prefs(ctx)
-    val pair = prefs.pairing() ?: return
+    val pair = prefs.ledgerPairing() ?: return
     val payload = JSONObject().apply {
       put("direction", bill.direction)
       put("amountCents", bill.amountCents)
@@ -63,7 +63,7 @@ object LedgerSync {
 
   fun flushPending(ctx: Context) {
     val prefs = Prefs(ctx)
-    val pair = prefs.pairing() ?: return
+    val pair = prefs.ledgerPairing() ?: return
     val queued = prefs.drainPendingLedger()
     if (queued.isEmpty()) return
     val remaining = mutableListOf<JSONObject>()

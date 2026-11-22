@@ -249,7 +249,11 @@ export function toggleMute() {
 }
 
 export function dismissCallMessage() {
-  useVoice.setState({ message: null, status: "idle" });
+  useVoice.setState((s) =>
+    s.status === "connecting" || s.status === "ready"
+      ? { message: null }
+      : { message: null, status: "idle" },
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ package dev.notifier.xiaoaixiaoai.bridge
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioFormat
@@ -13,6 +14,8 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
 import android.util.Log
@@ -76,7 +79,9 @@ class VoiceCall(
     .build()
   private var ws: WebSocket? = null
   private val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+  private val mainHandler = Handler(Looper.getMainLooper())
   private var focus: AudioFocusRequest? = null
+  private var deviceCallback: AudioDeviceCallback? = null
   private var prevMode = AudioManager.MODE_NORMAL
   private var record: AudioRecord? = null
   private var track: AudioTrack? = null
@@ -84,9 +89,29 @@ class VoiceCall(
 
   @Volatile private var ended = false
   @Volatile private var ready = false
+  @Volatile private var focusPaused = false
   @Volatile var muted = false
     private set
   @Volatile private var micLevel = 0f
+
+  private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+    if (ended) return@OnAudioFocusChangeListener
+    when (change) {
+      AudioManager.AUDIOFOCUS_LOSS,
+      AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+      AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+        focusPaused = true
+        try { track?.pause() } catch (_: Throwable) {}
+      }
+      AudioManager.AUDIOFOCUS_GAIN -> {
+        focusPaused = false
+        try {
+          routeOutput()
+          track?.play()
+        } catch (_: Throwable) {}
+      }
+    }
+  }
 
   // Playback ledger; guarded by `lock`.
   private val lock = Any()
@@ -146,11 +171,29 @@ class VoiceCall(
       .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
       .build()
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(attrs).build()
+      focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+        .setAudioAttributes(attrs)
+        .setOnAudioFocusChangeListener(focusListener, mainHandler)
+        .build()
       am.requestAudioFocus(focus!!)
+    } else {
+      @Suppress("DEPRECATION")
+      am.requestAudioFocus(focusListener, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN)
     }
     am.mode = AudioManager.MODE_IN_COMMUNICATION
     routeOutput()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && deviceCallback == null) {
+      val cb = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+          if (!ended) try { routeOutput() } catch (_: Throwable) {}
+        }
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+          if (!ended) try { routeOutput() } catch (_: Throwable) {}
+        }
+      }
+      am.registerAudioDeviceCallback(cb, mainHandler)
+      deviceCallback = cb
+    }
 
     val minIn = AudioRecord.getMinBufferSize(MIC_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
     @Suppress("MissingPermission")
@@ -221,6 +264,10 @@ class VoiceCall(
     record = null
     track = null
     try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        deviceCallback?.let { am.unregisterAudioDeviceCallback(it) }
+        deviceCallback = null
+      }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) am.clearCommunicationDevice()
       else {
         @Suppress("DEPRECATION")
@@ -228,6 +275,10 @@ class VoiceCall(
       }
       am.mode = prevMode
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focus?.let { am.abandonAudioFocusRequest(it) }
+      else {
+        @Suppress("DEPRECATION")
+        am.abandonAudioFocus(focusListener)
+      }
     } catch (_: Throwable) {}
   }
 
@@ -243,14 +294,18 @@ class VoiceCall(
       while (off < frame.size && !ended) {
         val n = rec.read(frame, off, frame.size - off)
         if (n <= 0) {
-          if (n < 0) return
+          if (n < 0) {
+            if (!ended) end("麦克风采集异常，通话已结束")
+            return
+          }
           continue
         }
         off += n
       }
-      micLevel = if (muted) 0f else rms(frame, frame.size)
+      val silentNow = muted || focusPaused
+      micLevel = if (silentNow) 0f else rms(frame, frame.size)
       // Silence keeps flowing while muted: the model expects a continuous realtime stream.
-      if (ready) ws?.send((if (muted) silence else frame).toByteString(0, frame.size))
+      if (ready) ws?.send((if (silentNow) silence else frame).toByteString(0, frame.size))
     }
   }
 
@@ -516,7 +571,7 @@ class VoiceCall(
   fun setMuted(value: Boolean) {
     muted = value
     if (ready) ws?.send(JSONObject().put("action", "mic_state").put("enabled", !value).toString())
-    XiaoaiBus.emit("onCall", mapOf("state" to "ready", "muted" to value))
+    XiaoaiBus.emit("onCall", mapOf("state" to (if (ready) "ready" else "connecting"), "muted" to value))
   }
 
   fun hangup() {
