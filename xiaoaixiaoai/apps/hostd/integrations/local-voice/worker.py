@@ -23,10 +23,6 @@ CONFIG = json.loads(os.environ.get("LOCAL_VOICE_CONFIG_JSON", "{}") or "{}")
 CHUNK_BYTES = 15360
 TARGET_OUT_RATE = 48000
 TARGET_ASR_RATE = 16000
-DEFAULT_TOP_K = 20
-DEFAULT_TOP_P = 0.6
-DEFAULT_TEMPERATURE = 0.6
-DEFAULT_SPEED = 0.85
 
 _cancelled_ids: set[str] = set()
 _asr_model = None
@@ -152,10 +148,9 @@ def _handle_synthesize(msg: dict) -> dict:
     msg_id = msg.get("id")
     request_id = str(msg.get("requestId") or "")
     text = re.sub(r"\s+", " ", str(msg.get("text") or "")).strip()
-    raw_speed = msg.get("speed")
-    speed = float(raw_speed) if raw_speed is not None else DEFAULT_SPEED
+    speed = float(msg.get("speed") or 1.0)
     if not (0.5 <= speed <= 1.5):
-        speed = DEFAULT_SPEED
+        speed = 1.0
 
     if request_id and request_id in _cancelled_ids:
         _cancelled_ids.discard(request_id)
@@ -179,9 +174,9 @@ def _handle_synthesize(msg: dict) -> dict:
         "ref_audio_path": ref_audio,
         "prompt_text": ref_text,
         "prompt_lang": ref_lang,
-        "top_k": DEFAULT_TOP_K,
-        "top_p": DEFAULT_TOP_P,
-        "temperature": DEFAULT_TEMPERATURE,
+        "top_k": 15,
+        "top_p": 1.0,
+        "temperature": 1.0,
         "text_split_method": "cut1",
         "batch_size": 1,
         "speed_factor": speed,

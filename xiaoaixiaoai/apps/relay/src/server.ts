@@ -210,7 +210,6 @@ export class Relay {
       persona: a?.persona,
       voice: hasVoice,
       chatVoice: opts.live?.provider === "local",
-      chatVoiceSpeed: opts.live?.provider === "local" ? opts.live.speed : undefined,
       confirm: opts.assistantConfirm,
       ...opts.assistantTiming,
       host: {

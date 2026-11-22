@@ -284,7 +284,7 @@ function voiceSetup(e: (n: string) => string | undefined, file: FileConfig, out:
     out.live = {
       provider: "local",
       model: v("MODEL") ?? fv.model ?? "aemeath-v2proplus",
-      ...(speed && speed > 0 ? { speed } : { speed: 0.85 }),
+      ...(speed && speed > 0 ? { speed } : { speed: 1.0 }),
       ...(hostId ? { hostId } : {}),
     };
     out.summary.voice = "local";
