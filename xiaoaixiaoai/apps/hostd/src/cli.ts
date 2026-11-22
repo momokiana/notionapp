@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, platform } from "node:os";
@@ -10,6 +11,7 @@ import { parsePairInput, parsePairLink } from "@xiaoaixiaoai/protocol";
 import type { Agent, Device, JoinClaim, JoinTicket, LogEntry, PairCode, PairResponse, RpcMethod, ServerFrame } from "@xiaoaixiaoai/protocol";
 import { CONFIG_PATH, CONTROL_SOCKET, loadConfig, saveConfig, type HostConfig } from "./config.ts";
 import { Host, HOSTD_VERSION } from "./host.ts";
+import { DEFAULT_LOCAL_WEB_PORT, resolveLocalWebPort, startLocalWebBridge, type LocalWebBridge } from "./local-web.ts";
 import { loadRuntimeSessions } from "./runtime-sessions.ts";
 import { localRelayProxy } from "./relay-proxy.ts";
 import { IS_WINDOWS } from "./platform.ts";
@@ -37,6 +39,9 @@ Setup
   pair  (alias: invite)
         Show a one-time QR + code that adds a phone (scan it) or another computer.
   status    Show login and connection state.
+  desktop   [--port 18546] [--no-open]
+        Start the local loopback desktop web console (http://127.0.0.1:18546/app/)
+        and bridge directly to your relay, bypassing system proxy rules.
 ${SERVICE_HELP}
 
 Updates
@@ -74,6 +79,8 @@ async function main(): Promise<void> {
       return pair(rest);
     case "status":
       return status();
+    case "desktop":
+      return desktop(rest);
     case "service":
       return serviceCommand(rest);
     case "devices":
@@ -340,8 +347,23 @@ async function runDaemon(argv: string[]): Promise<void> {
   server.listen(CONTROL_SOCKET);
 
   await host.start();
+  let localWeb: LocalWebBridge | null = null;
+  const webPort = values["runtime-only"] ? null : resolveLocalWebPort();
+  if (webPort !== null) {
+    try {
+      localWeb = await startLocalWebBridge({
+        relayServer: cfg.server,
+        port: webPort,
+        relayAgent: localRelayProxy(values["relay-proxy"], cfg.server),
+        log: (m) => console.log(m),
+      });
+    } catch (e) {
+      console.warn(`[local-web] disabled on port ${webPort}: ${(e as Error).message}`);
+    }
+  }
   watchForUpdates((m) => console.log(`[hostd] ${m}`), "xiaoaixiaoai update");
   const shutdown = () => {
+    void localWeb?.close();
     host.stop();
     server.close();
     if (!IS_WINDOWS) rmSync(CONTROL_SOCKET, { force: true });
@@ -349,6 +371,49 @@ async function runDaemon(argv: string[]): Promise<void> {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+}
+
+function openBrowserUrl(url: string): void {
+  if (IS_WINDOWS) {
+    spawn("cmd", ["/c", "start", "", url], { detached: true, windowsHide: true, stdio: "ignore" }).unref();
+  } else if (process.platform === "darwin") {
+    spawn("open", [url], { detached: true, stdio: "ignore" }).unref();
+  } else {
+    spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref();
+  }
+}
+
+async function desktop(argv: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args: argv,
+    options: { port: { type: "string" }, "no-open": { type: "boolean", default: false }, "relay-proxy": { type: "string" } },
+  });
+  const cfg = needConfig();
+  const port = values.port ? resolveLocalWebPort(values.port) ?? DEFAULT_LOCAL_WEB_PORT : DEFAULT_LOCAL_WEB_PORT;
+  const url = `http://127.0.0.1:${port}/app/`;
+  const alreadyUp = await fetch(`http://127.0.0.1:${port}/v1/health`, { signal: AbortSignal.timeout(1200) })
+    .then((r) => r.ok)
+    .catch(() => false);
+  if (alreadyUp) {
+    console.log(`Desktop console ready at ${url}`);
+    if (!values["no-open"]) openBrowserUrl(url);
+    return;
+  }
+  const bridge = await startLocalWebBridge({
+    relayServer: cfg.server,
+    port,
+    relayAgent: localRelayProxy(values["relay-proxy"], cfg.server),
+    log: (m) => console.log(m),
+  });
+  console.log(`Desktop console listening at ${bridge.url} (press Ctrl+C to stop)`);
+  if (!values["no-open"]) openBrowserUrl(bridge.url);
+  await new Promise<void>((resolveStop) => {
+    const closeNow = () => {
+      void bridge.close().finally(() => resolveStop());
+    };
+    process.once("SIGINT", closeNow);
+    process.once("SIGTERM", closeNow);
+  });
 }
 
 // ---------------------------------------------------------------------------
