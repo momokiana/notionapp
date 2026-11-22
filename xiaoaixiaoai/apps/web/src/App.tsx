@@ -74,6 +74,54 @@ function fmtRel(ts: number): string {
   return `${Math.floor(diff / 86400)}天前`;
 }
 
+class ViewErrorBoundary extends React.Component<
+  { resetKey: string; onBack: () => void; children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidUpdate(prevProps: { resetKey: string }) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="page-scroll" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div className="card" style={{ maxWidth: 460, textAlign: "center" }}>
+            <h3 style={{ color: "var(--error)" }}>当前面板渲染出错</h3>
+            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14, wordBreak: "break-word" }}>
+              {this.state.error.message}
+            </div>
+            <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
+              <button type="button" className="icon-btn" onClick={() => this.setState({ error: null })}>
+                重试当前页面
+              </button>
+              <button
+                type="button"
+                className="icon-btn primary"
+                onClick={() => {
+                  this.setState({ error: null });
+                  this.props.onBack();
+                }}
+              >
+                返回总控台
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export function App() {
   const [auth, setAuth] = useState<StoredAuth | null>(() => loadAuth());
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -150,9 +198,9 @@ export function App() {
       if (!api) return;
       try {
         const [p, m] = await Promise.all([api.getProfile(), api.getMemories(q)]);
-        setProfile(p.profile);
-        setPresets(p.presets);
-        setMemories(m.items);
+        setProfile(p.profile ?? null);
+        setPresets(Array.isArray(p.presets) ? p.presets : []);
+        setMemories(Array.isArray(m.memories) ? m.memories : []);
       } catch {}
     },
     [api],
@@ -242,7 +290,10 @@ export function App() {
           setProfile(frame.profile);
           break;
         case "assistant_memories":
-          void api.getMemories().then((r) => alive && setMemories(r.items)).catch(() => {});
+          void api
+            .getMemories()
+            .then((r) => alive && setMemories(Array.isArray(r.memories) ? r.memories : []))
+            .catch(() => {});
           break;
         case "ledger_updated":
           void refreshLedger();
@@ -541,6 +592,7 @@ export function App() {
       </header>
 
       {/* Main Content */}
+      <ViewErrorBoundary resetKey={tab} onBack={() => setTab("console")}>
       {tab === "console" && (
         <div className="workspace">
           {/* Left Sidebar: Devices + Agents */}
@@ -982,27 +1034,28 @@ export function App() {
           memories={memories}
           onRefreshMemories={async (q) => {
             const res = await api.getMemories(q);
-            setMemories(res.items);
+            setMemories(Array.isArray(res.memories) ? res.memories : []);
           }}
           onAddMemory={async (input) => {
             await api.addMemory(input);
             const res = await api.getMemories();
-            setMemories(res.items);
+            setMemories(Array.isArray(res.memories) ? res.memories : []);
           }}
           onDeleteMemory={async (id) => {
             await api.deleteMemory(id);
             const res = await api.getMemories();
-            setMemories(res.items);
+            setMemories(Array.isArray(res.memories) ? res.memories : []);
           }}
           onExportMemories={async () => (await api.exportMemories()).markdown}
           onSaveProfile={async (patch) => {
             const res = await api.updateProfile(patch);
-            setProfile(res.profile);
-            setPresets(res.presets);
+            setProfile(res.profile ?? null);
+            setPresets(Array.isArray(res.presets) ? res.presets : []);
           }}
           onToast={showToast}
         />
       )}
+      </ViewErrorBoundary>
 
       {/* Floating Live Call Overlay */}
       {callSnap && (

@@ -64,6 +64,8 @@ export function LedgerView({
       await onUpdateConfig({ balanceCents: cents });
       setBalanceInput("");
       onToast("已校准当前余额");
+    } catch (err) {
+      onToast(`校准失败：${(err as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -80,6 +82,8 @@ export function LedgerView({
       await onUpdateConfig({ savingsGoalCents: cents });
       setSavingsInput("");
       onToast("已更新月底保底目标");
+    } catch (err) {
+      onToast(`更新失败：${(err as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -97,6 +101,8 @@ export function LedgerView({
       await onAddFixed({ name: fixedName.trim(), amountCents: cents });
       setFixedName("");
       setFixedYuan("");
+    } catch (err) {
+      onToast(`添加失败：${(err as Error).message}`);
     } finally {
       setBusy(false);
     }
@@ -114,6 +120,8 @@ export function LedgerView({
       await onAddTx({ direction: txDir, amountCents: cents, title: txTitle.trim() });
       setTxTitle("");
       setTxYuan("");
+    } catch (err) {
+      onToast(`记账失败：${(err as Error).message}`);
     } finally {
       setBusy(false);
     }

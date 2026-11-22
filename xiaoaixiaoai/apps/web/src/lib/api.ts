@@ -194,20 +194,19 @@ export const createRelayApi = (auth: StoredAuth) => ({
     personaText?: string;
     presetId?: string;
     autoMemory?: boolean;
-    reset?: boolean;
   }) =>
     apiFetch<{ profile: AssistantPersonaConfig; presets: PersonaPresetSummary[] }>(auth.server, "/v1/assistant/profile", {
       token: auth.token,
       body: patch,
     }),
   getMemories: (q?: string) =>
-    apiFetch<{ items: AssistantMemoryItem[]; total: number }>(
+    apiFetch<{ memories: AssistantMemoryItem[]; total: number }>(
       auth.server,
       `/v1/assistant/memories${q ? `?q=${encodeURIComponent(q)}` : ""}`,
       { token: auth.token },
     ),
   addMemory: (input: { category: MemoryCategory; content: string; pinned?: boolean }) =>
-    apiFetch<{ item: AssistantMemoryItem }>(auth.server, "/v1/assistant/memories", {
+    apiFetch<{ item: AssistantMemoryItem; replaced?: boolean }>(auth.server, "/v1/assistant/memories", {
       token: auth.token,
       body: input,
     }),

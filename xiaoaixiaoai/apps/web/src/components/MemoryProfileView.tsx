@@ -16,7 +16,13 @@ interface Props {
   onAddMemory: (input: { category: MemoryCategory; content: string; pinned?: boolean }) => Promise<void>;
   onDeleteMemory: (id: string) => Promise<void>;
   onExportMemories: () => Promise<string>;
-  onSaveProfile: (patch: { name?: string; userCall?: string; personaText?: string; presetId?: string; autoMemory?: boolean; reset?: boolean }) => Promise<void>;
+  onSaveProfile: (patch: {
+    name?: string;
+    userCall?: string;
+    personaText?: string;
+    presetId?: string;
+    autoMemory?: boolean;
+  }) => Promise<void>;
   onToast: (msg: string) => void;
 }
 
@@ -31,6 +37,9 @@ export function MemoryProfileView({
   onSaveProfile,
   onToast,
 }: Props) {
+  const safePresets = Array.isArray(presets) ? presets : [];
+  const safeMemories = Array.isArray(memories) ? memories : [];
+
   const [name, setName] = useState(profile?.name ?? "爱弥斯");
   const [userCall, setUserCall] = useState(profile?.userCall ?? "");
   const [personaText, setPersonaText] = useState(profile?.personaText ?? "");
@@ -44,10 +53,10 @@ export function MemoryProfileView({
 
   useEffect(() => {
     if (!profile) return;
-    setName(profile.name);
-    setUserCall(profile.userCall);
-    setPersonaText(profile.personaText);
-    setAutoMemory(profile.autoMemory);
+    setName(profile.name ?? "爱弥斯");
+    setUserCall(profile.userCall ?? "");
+    setPersonaText(profile.personaText ?? "");
+    setAutoMemory(profile.autoMemory ?? true);
   }, [profile]);
 
   const handleSave = async () => {
@@ -55,16 +64,47 @@ export function MemoryProfileView({
     try {
       await onSaveProfile({ name: name.trim(), userCall: userCall.trim(), personaText, autoMemory });
       onToast("人设配置已保存并同步到所有设备");
+    } catch (err) {
+      onToast(`保存失败：${(err as Error).message}`);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleApplyPreset = async (presetId: string) => {
+  const handleApplyPreset = async (preset: PersonaPresetSummary) => {
     setSaving(true);
     try {
-      await onSaveProfile({ presetId });
-      onToast("已切换人设模板");
+      await onSaveProfile({
+        presetId: preset.id,
+        userCall: preset.userCall,
+        personaText: preset.personaText,
+      });
+      onToast(`已切换人设模板：${preset.label}`);
+    } catch (err) {
+      onToast(`切换模板失败：${(err as Error).message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleResetDefault = async () => {
+    const def = safePresets.find((p) => p.id === "wuthering_aemeath") ?? safePresets[0];
+    if (!def) {
+      onToast("暂未加载默认模板，请稍后重试");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSaveProfile({
+        name: "爱弥斯",
+        presetId: def.id,
+        userCall: def.userCall,
+        personaText: def.personaText,
+        autoMemory: true,
+      });
+      onToast("已恢复默认爱弥斯人设");
+    } catch (err) {
+      onToast(`恢复默认失败：${(err as Error).message}`);
     } finally {
       setSaving(false);
     }
@@ -78,8 +118,27 @@ export function MemoryProfileView({
       await onAddMemory({ category: cat, content: newContent.trim() });
       setNewContent("");
       onToast("已写入长期记忆");
+    } catch (err) {
+      onToast(`写入失败：${(err as Error).message}`);
     } finally {
       setAdding(false);
+    }
+  };
+
+  const handleSearch = async () => {
+    try {
+      await onRefreshMemories(query.trim() || undefined);
+    } catch (err) {
+      onToast(`搜索失败：${(err as Error).message}`);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await onDeleteMemory(id);
+      onToast("已删除该条记忆");
+    } catch (err) {
+      onToast(`删除失败：${(err as Error).message}`);
     }
   };
 
@@ -108,24 +167,20 @@ export function MemoryProfileView({
             <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
               <Sparkles size={16} style={{ color: "var(--accent-text)" }} /> 人设与称呼设置
             </h3>
-            <button
-              type="button"
-              className="mini-btn"
-              disabled={saving}
-              onClick={() => void onSaveProfile({ reset: true }).then(() => onToast("已恢复默认爱弥斯人设"))}
-            >
+            <button type="button" className="mini-btn" disabled={saving} onClick={() => void handleResetDefault()}>
               <RotateCcw size={12} /> 恢复默认
             </button>
           </div>
 
-          {presets.length > 0 && (
+          {safePresets.length > 0 && (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-              {presets.map((p) => (
+              {safePresets.map((p) => (
                 <button
                   key={p.id}
                   type="button"
+                  disabled={saving}
                   className={`chip-btn ${profile?.presetId === p.id ? "active" : ""}`}
-                  onClick={() => void handleApplyPreset(p.id)}
+                  onClick={() => void handleApplyPreset(p)}
                   title={p.summary}
                 >
                   {p.label}
@@ -174,7 +229,7 @@ export function MemoryProfileView({
         <div className="card">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
-              <BookHeart size={16} style={{ color: "var(--accent-text)" }} /> 长期记忆库 ({memories.length})
+              <BookHeart size={16} style={{ color: "var(--accent-text)" }} /> 长期记忆库 ({safeMemories.length})
             </h3>
             <button type="button" className="mini-btn" onClick={() => void handleExport()}>
               <Download size={12} /> 导出 Markdown
@@ -208,18 +263,18 @@ export function MemoryProfileView({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void onRefreshMemories(query.trim() || undefined);
+                if (e.key === "Enter") void handleSearch();
               }}
               placeholder="搜索记忆关键词…"
             />
-            <button type="button" className="icon-btn" onClick={() => void onRefreshMemories(query.trim() || undefined)}>
+            <button type="button" className="icon-btn" onClick={() => void handleSearch()}>
               <Search size={14} />
             </button>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 520, overflowY: "auto" }}>
-            {memories.length === 0 && <div style={{ fontSize: 13, color: "var(--faint)" }}>暂无记忆条目</div>}
-            {memories.map((m) => {
+            {safeMemories.length === 0 && <div style={{ fontSize: 13, color: "var(--faint)" }}>暂无记忆条目</div>}
+            {safeMemories.map((m) => {
               const catLabel = MEMORY_CATEGORIES.find((c) => c.id === m.category)?.label ?? m.category;
               return (
                 <div key={m.id} style={{ padding: "9px 11px", borderRadius: 12, background: "var(--surface-2)", display: "flex", justifyContent: "space-between", gap: 10 }}>
@@ -234,7 +289,7 @@ export function MemoryProfileView({
                     type="button"
                     className="mini-btn"
                     style={{ alignSelf: "flex-start" }}
-                    onClick={() => void onDeleteMemory(m.id)}
+                    onClick={() => void handleDelete(m.id)}
                     title="删除记忆"
                   >
                     <Trash2 size={12} />

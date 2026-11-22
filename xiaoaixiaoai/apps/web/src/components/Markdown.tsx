@@ -69,7 +69,7 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
 }
 
 export function Markdown({ text }: { text: string }) {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let i = 0;
   let k = 0;

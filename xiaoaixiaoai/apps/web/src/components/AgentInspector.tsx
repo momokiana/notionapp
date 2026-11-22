@@ -389,14 +389,20 @@ export function AgentInspector({ agent, device, socket, onClose, onToast }: Prop
       return;
     }
     try {
-      // runtime agents use `runtime:<runtime>:<projectId>:<sessionId>` in localId when coming from runtime bridge
-      const parts = agent.localId.split(":");
-      if (agent.source === "runtime" && parts.length >= 3 && (parts[0] === "dsh" || parts[0] === "codex" || parts[0] === "antigravity")) {
-        const reqId = crypto.randomUUID ? crypto.randomUUID() : "00000000-0000-4000-8000-000000000001";
+      // Runtime bridge encodes localId as `<runtime>~<projectId>~<sessionId>`.
+      const parts = agent.localId.split("~");
+      if (agent.source === "runtime" && parts.length === 3 && (parts[0] === "dsh" || parts[0] === "codex" || parts[0] === "antigravity")) {
+        const reqId =
+          typeof crypto?.randomUUID === "function"
+            ? crypto.randomUUID()
+            : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+                const r = (Math.random() * 16) | 0;
+                return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+              });
         await socket.rpc(agent.deviceId, "runtimeSessions.answer", {
           runtime: parts[0],
           projectId: parts[1]!,
-          sessionId: parts.slice(2).join(":"),
+          sessionId: parts[2]!,
           requestId: reqId,
           callId: pq.callId,
           answers,
