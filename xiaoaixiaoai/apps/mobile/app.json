@@ -3,7 +3,7 @@
     "name": "小爱小爱",
     "slug": "xiaoaixiaoai",
     "scheme": "xiaoaixiaoai",
-    "version": "0.3.6",
+    "version": "0.3.7",
     "orientation": "portrait",
     "icon": "./assets/brand/starlight-launcher.png",
     "userInterfaceStyle": "automatic",
