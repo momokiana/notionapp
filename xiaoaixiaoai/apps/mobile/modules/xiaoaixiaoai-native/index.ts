@@ -33,9 +33,11 @@ interface XiaoaiNativeModule {
   finishSpeech?(utteranceId: string): void;
   stopSpeech?(utteranceId: string | null): void;
   configureNotifier(server: string | null, token: string | null, enabled: boolean, kinds: string[], name: string | null): void;
-  notifierState(): { enabled: boolean; connected: boolean; notificationsAllowed: boolean; batteryUnrestricted: boolean };
+  notifierState(): { enabled: boolean; connected: boolean; notificationsAllowed: boolean; channelSoundAllowed?: boolean; batteryUnrestricted: boolean };
   requestBatteryExemption(): void;
   openNotificationSettings(): void;
+  openAlertChannelSettings?(): void;
+  playAlertSound?(): void;
   openAppDetails?(): void;
   notificationAccessEnabled?(): boolean;
   openNotificationAccessSettings?(): void;

@@ -17,15 +17,26 @@ export const alertsSupported = !!XiaoaiNative;
 interface AlertsState {
   connected: boolean;
   notificationsAllowed: boolean;
+  channelSoundAllowed: boolean;
   batteryUnrestricted: boolean;
 }
 
-export const useAlerts = create<AlertsState>()(() => ({ connected: false, notificationsAllowed: true, batteryUnrestricted: false }));
+export const useAlerts = create<AlertsState>()(() => ({
+  connected: false,
+  notificationsAllowed: true,
+  channelSoundAllowed: true,
+  batteryUnrestricted: false,
+}));
 
 export function refreshAlertState() {
   if (!XiaoaiNative) return;
   const s = XiaoaiNative.notifierState();
-  useAlerts.setState({ connected: s.connected, notificationsAllowed: s.notificationsAllowed, batteryUnrestricted: s.batteryUnrestricted });
+  useAlerts.setState({
+    connected: s.connected,
+    notificationsAllowed: s.notificationsAllowed,
+    channelSoundAllowed: s.channelSoundAllowed ?? true,
+    batteryUnrestricted: s.batteryUnrestricted,
+  });
 }
 
 XiaoaiNative?.addListener("onNotifier", (e) => {

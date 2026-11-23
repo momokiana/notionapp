@@ -256,7 +256,7 @@ export default function AssistantScreen() {
         </Card>
       ) : null}
 
-      {!error && !isMockServer(server) && alertsSupported && alertsOn && !alertBannerHidden && (!alerts.notificationsAllowed || !alerts.batteryUnrestricted) ? (
+      {!error && !isMockServer(server) && alertsSupported && alertsOn && !alertBannerHidden && (!alerts.notificationsAllowed || !alerts.channelSoundAllowed || !alerts.batteryUnrestricted) ? (
         <Card
           flat
           style={{
@@ -264,29 +264,37 @@ export default function AssistantScreen() {
             marginBottom: space.xs,
             paddingHorizontal: space.md,
             paddingVertical: space.sm,
-            backgroundColor: !alerts.notificationsAllowed ? p.errorContainer : p.accentContainer,
+            backgroundColor: !alerts.notificationsAllowed || !alerts.channelSoundAllowed ? p.errorContainer : p.accentContainer,
             flexDirection: "row",
             alignItems: "center",
             gap: space.sm,
           }}
         >
           <MaterialCommunityIcons
-            name={!alerts.notificationsAllowed ? "bell-off-outline" : "battery-alert-variant-outline"}
+            name={!alerts.notificationsAllowed ? "bell-off-outline" : !alerts.channelSoundAllowed ? "volume-off" : "battery-alert-variant-outline"}
             size={18}
-            color={!alerts.notificationsAllowed ? p.error : p.accentText}
+            color={!alerts.notificationsAllowed || !alerts.channelSoundAllowed ? p.error : p.accentText}
           />
           <Text style={{ flex: 1, color: p.ink, fontSize: 12.5, lineHeight: 18 }}>
             {!alerts.notificationsAllowed
               ? "系统通知权限未开启，后台收不到推送。"
-              : "手机省电策略限制了后台连接，可能只有点进 App 才能收到新消息。"}
+              : !alerts.channelSoundAllowed
+                ? "「agent 提醒」铃声被系统静音了，收通知不会响起爱弥斯「叮咚」。"
+                : "手机省电策略限制了后台连接，可能只有点进 App 才能收到新消息。"}
           </Text>
           <Button
             compact
             mode="contained-tonal"
-            onPress={() => (!alerts.notificationsAllowed ? XiaoaiNative?.openNotificationSettings() : XiaoaiNative?.requestBatteryExemption())}
+            onPress={() =>
+              !alerts.notificationsAllowed
+                ? XiaoaiNative?.openNotificationSettings()
+                : !alerts.channelSoundAllowed
+                  ? (XiaoaiNative?.openAlertChannelSettings?.() ?? XiaoaiNative?.openNotificationSettings())
+                  : XiaoaiNative?.requestBatteryExemption()
+            }
             style={{ borderRadius: radius.pill }}
           >
-            {!alerts.notificationsAllowed ? "去开启" : "放开后台"}
+            {!alerts.notificationsAllowed ? "去开启" : !alerts.channelSoundAllowed ? "开铃声" : "放开后台"}
           </Button>
           {alerts.notificationsAllowed ? (
             <Pressable

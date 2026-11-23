@@ -3,8 +3,11 @@ package dev.notifier.xiaoaixiaoai.bridge
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.Uri
@@ -23,20 +26,35 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-// Android settings are bound to these IDs; changing them would discard notification preferences.
-const val ALERT_CHANNEL = "pocket_alerts"
+// Android settings are bound to these IDs; changing them replaces old cached channel preferences.
+const val ALERT_CHANNEL = "pocket_alerts_v2"
+private const val LEGACY_ALERT_CHANNEL = "pocket_alerts"
 const val STATUS_CHANNEL = "pocket_status_v2"
 private const val LEGACY_STATUS_CHANNEL = "pocket_status"
+
+internal fun alertSoundUri(ctx: Context): Uri {
+  // Keep a direct R.raw reference so Android resource shrinking never strips the WAV asset.
+  val rawId = ctx.resources.getIdentifier("aemeath_dingdong", "raw", ctx.packageName).takeIf { it != 0 }
+    ?: R.raw.aemeath_dingdong
+  return Uri.parse("${ContentResolver.SCHEME_ANDROID_RESOURCE}://${ctx.packageName}/$rawId")
+}
 
 fun ensureChannels(ctx: Context) {
   if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
   val nm = ctx.getSystemService(NotificationManager::class.java)
   nm.deleteNotificationChannel(LEGACY_STATUS_CHANNEL)
+  nm.deleteNotificationChannel(LEGACY_ALERT_CHANNEL)
   if (nm.getNotificationChannel(ALERT_CHANNEL) == null) {
+    val attrs = AudioAttributes.Builder()
+      .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+      .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+      .build()
     nm.createNotificationChannel(
       NotificationChannel(ALERT_CHANNEL, "agent 提醒", NotificationManager.IMPORTANCE_HIGH).apply {
         description = "agent 在等你、跑完了，以及你让助理设的提醒"
         enableVibration(true)
+        vibrationPattern = longArrayOf(0, 140, 80, 140)
+        setSound(alertSoundUri(ctx), attrs)
       },
     )
   }
@@ -49,6 +67,56 @@ fun ensureChannels(ctx: Context) {
         enableVibration(false)
       },
     )
+  }
+}
+
+fun alertChannelSoundAllowed(ctx: Context): Boolean {
+  if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) return false
+  if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+  ensureChannels(ctx)
+  val ch = ctx.getSystemService(NotificationManager::class.java).getNotificationChannel(ALERT_CHANNEL) ?: return true
+  return ch.importance >= NotificationManager.IMPORTANCE_DEFAULT && ch.sound != null
+}
+
+@Volatile private var previewPlayer: MediaPlayer? = null
+private val previewLock = Any()
+
+/** Plays the bundled Aemeath "dingdong" chime on the notification audio stream for in-settings audition. */
+fun playAlertSound(ctx: Context) {
+  val uri = alertSoundUri(ctx)
+  val player = MediaPlayer()
+  try {
+    player.setAudioAttributes(
+      AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+        .build(),
+    )
+    player.setDataSource(ctx, uri)
+    player.setOnCompletionListener { mp ->
+      synchronized(previewLock) {
+        if (previewPlayer === mp) previewPlayer = null
+      }
+      try { mp.release() } catch (_: Throwable) {}
+    }
+    player.setOnErrorListener { mp, _, _ ->
+      synchronized(previewLock) {
+        if (previewPlayer === mp) previewPlayer = null
+      }
+      try { mp.release() } catch (_: Throwable) {}
+      true
+    }
+    player.prepare()
+    val old = synchronized(previewLock) {
+      val prev = previewPlayer
+      previewPlayer = player
+      prev
+    }
+    try { old?.stop() } catch (_: Throwable) {}
+    try { old?.release() } catch (_: Throwable) {}
+    player.start()
+  } catch (_: Throwable) {
+    try { player.release() } catch (_: Throwable) {}
   }
 }
 
@@ -314,7 +382,7 @@ fun post(ctx: Context, id: String, title: String, body: String, path: String = "
   val nm = NotificationManagerCompat.from(ctx)
   if (!nm.areNotificationsEnabled()) return
   val icon = ctx.applicationInfo.icon.takeIf { it != 0 } ?: android.R.drawable.ic_dialog_info
-  val n = NotificationCompat.Builder(ctx, ALERT_CHANNEL)
+  val b = NotificationCompat.Builder(ctx, ALERT_CHANNEL)
     .setSmallIcon(notificationIcon(ctx, icon))
     .setContentTitle(title)
     .setContentText(body)
@@ -323,10 +391,14 @@ fun post(ctx: Context, id: String, title: String, body: String, path: String = "
     .setCategory(NotificationCompat.CATEGORY_REMINDER)
     .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
     .setAutoCancel(true)
+    .setSilent(VoiceCall.current != null)
     .setContentIntent(openAppIntent(ctx, path))
-    .build()
+  if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && VoiceCall.current == null) {
+    b.setSound(alertSoundUri(ctx))
+    b.setVibrate(longArrayOf(0, 140, 80, 140))
+  }
   try {
-    nm.notify(id.hashCode(), n)
+    nm.notify(id.hashCode(), b.build())
   } catch (_: SecurityException) {
     // POST_NOTIFICATIONS was revoked; nothing to show.
   }

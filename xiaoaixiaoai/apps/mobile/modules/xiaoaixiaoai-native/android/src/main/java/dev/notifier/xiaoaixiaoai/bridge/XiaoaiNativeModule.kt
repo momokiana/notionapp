@@ -3,6 +3,7 @@ package dev.notifier.xiaoaixiaoai.bridge
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
@@ -102,6 +103,7 @@ class XiaoaiNativeModule : Module() {
         "enabled" to p.notify,
         "connected" to (XiaoaiService.notifier?.connected ?: false),
         "notificationsAllowed" to NotificationManagerCompat.from(context).areNotificationsEnabled(),
+        "channelSoundAllowed" to alertChannelSoundAllowed(context),
         "batteryUnrestricted" to (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(context.packageName),
       )
     }
@@ -122,6 +124,25 @@ class XiaoaiNativeModule : Module() {
         .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       context.startActivity(i)
+    }
+
+    /** Opens the Android channel screen for `agent 提醒` so ColorOS/MIUI sound/banner switches are one tap away. */
+    Function("openAlertChannelSettings") {
+      ensureChannels(context)
+      val i = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+          .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+          .putExtra(Settings.EXTRA_CHANNEL_ID, ALERT_CHANNEL)
+      } else {
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+          .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+      }
+      i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      context.startActivity(i)
+    }
+
+    Function("playAlertSound") {
+      playAlertSound(context)
     }
 
     /** Opens App Info so OEMs (e.g. ColorOS/MIUI) can allow full background activity and auto-start. */

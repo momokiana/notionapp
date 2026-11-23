@@ -19,6 +19,11 @@ test("小爱小爱 has an independent Android identity matching the shared link 
   const notifier = await text("modules/xiaoaixiaoai-native/android/src/main/java/dev/notifier/xiaoaixiaoai/bridge/Notifier.kt");
   assert.ok(notifier.includes(`Uri.parse("${APP_SCHEME}://$path")`));
   assert.equal(notifier.includes("herdrpocket://"), false);
+  assert.ok(notifier.includes('const val ALERT_CHANNEL = "pocket_alerts_v2"'));
+  assert.ok(notifier.includes("R.raw.aemeath_dingdong"));
+  const sound = await readFile(new URL("modules/xiaoaixiaoai-native/android/src/main/res/raw/aemeath_dingdong.wav", appRoot));
+  assert.equal(sound.subarray(0, 4).toString(), "RIFF");
+  assert.equal(sound.subarray(8, 12).toString(), "WAVE");
   assert.equal(apkAssetName("0.1.0"), "xiaoaixiaoai-0.1.0-android-arm64.apk");
 });
 

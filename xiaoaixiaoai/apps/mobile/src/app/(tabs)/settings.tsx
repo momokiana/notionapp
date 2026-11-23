@@ -229,6 +229,18 @@ export default function SettingsScreen() {
               <Row icon="bell-off-outline" tone="error" title="通知被关掉了" sub="去系统设置里允许 小爱小爱 发通知" onPress={() => XiaoaiNative?.openNotificationSettings()} />
             </>
           ) : null}
+          {alertsSupported && s.alertsOn && alerts.notificationsAllowed && !alerts.channelSoundAllowed ? (
+            <>
+              <Divider />
+              <Row
+                icon="volume-off"
+                tone="error"
+                title="「agent 提醒」铃声被系统关掉了"
+                sub="去系统通道里开启“允许通知/铃声”，才能听到爱弥斯「叮咚」"
+                onPress={() => XiaoaiNative?.openAlertChannelSettings?.() ?? XiaoaiNative?.openNotificationSettings()}
+              />
+            </>
+          ) : null}
           {alertsSupported && s.alertsOn && !alerts.batteryUnrestricted ? (
             <>
               <Divider />
@@ -240,7 +252,20 @@ export default function SettingsScreen() {
               <Divider />
               <Row icon="cog-outline" title="应用后台与自启动设置" sub="若只点进 App 才收得到通知，请到「应用信息 → 耗电管理」允许完全后台行为，并打开自启动" onPress={() => XiaoaiNative?.openAppDetails?.()} />
               <Divider />
-              <Row icon="bell-ring-outline" title="发一条测试提醒" sub="看看通知能不能送到这台手机" onPress={() => XiaoaiNative?.testNotice("爱弥斯：测试提醒", "能看到这条，说明 agent 的提醒也能送到。")} />
+              <Row
+                icon="tune"
+                title="系统提醒通道与铃声"
+                sub="直达手机的「agent 提醒」设置，确认开启横幅和响铃"
+                onPress={() => XiaoaiNative?.openAlertChannelSettings?.() ?? XiaoaiNative?.openNotificationSettings()}
+              />
+              {XiaoaiNative?.playAlertSound ? (
+                <>
+                  <Divider />
+                  <Row icon="music-note-outline" title="试听爱弥斯「叮咚」" sub="预览专属通知提示音（需手机未开静音）" onPress={() => XiaoaiNative?.playAlertSound?.()} />
+                </>
+              ) : null}
+              <Divider />
+              <Row icon="bell-ring-outline" title="发一条测试提醒" sub="用系统「agent 提醒」通道弹出通知并响起爱弥斯「叮咚」" onPress={() => XiaoaiNative?.testNotice("爱弥斯：叮咚~", "收到这条提醒，说明专属「叮咚」通知音效也能正常送达。")} />
             </>
           ) : null}
         </Card>
